@@ -11,6 +11,8 @@ import urllib.request
 import urllib.error
 from pathlib import Path
 import time  # für weichen Dongle-Reset
+import uuid
+import threading
 
 from flask import (
     Flask,
@@ -20,9 +22,7 @@ from flask import (
     render_template_string,
     send_file,
     send_from_directory,
-    jsonify,
-    session,
-    Response,
+    jsonify,    session,
 
 )
 
@@ -81,6 +81,9 @@ ADMIN_GPIO_IMAGE = "/home/peter/autodarts-data/GPIO_Setup.jpeg"
 SETTINGS_PATH = "/var/lib/autodarts/webpanel-settings.json"
 AUTODARTS_UPDATE_LOG = "/var/log/autodarts_update.log"
 AUTODARTS_UPDATE_STATE = "/var/lib/autodarts/autodarts-update-state.json"
+AUTODARTS_UPDATE_CHECK = "/var/lib/autodarts/autodarts-update-check.json"
+AUTOUPDATE_SERVICE = "autodartsupdater.service"
+PINGTEST_STATE_DIR = "/var/lib/autodarts/pingtests"
 
 DEFAULT_SETTINGS = {
     "admin_password": "1234",
@@ -142,9 +145,21 @@ AP_SSID_CHOICES = SETTINGS["ap_ssid_choices"]
 AUTODARTS_VERSION_CACHE = {"ts": 0.0, "v": None}
 AUTODARTS_VERSION_CACHE_TTL_SEC = 10.0
 
+# === leichte Caches für Statusdaten (reduziert subprocess-Last) ===
+INDEX_STATS_CACHE = {'ts': 0.0, 'data': None}
+INDEX_STATS_TTL_SEC = 2.0  # Startseite: Statuswerte max. alle 2s neu holen
+
+WIFI_SIGNAL_CACHE = {'ts': 0.0, 'v': None}
+WIFI_SIGNAL_CACHE_TTL_SEC = 5.0  # Signalstärke nur auf Knopfdruck, kurz cachen
+
+
 PI_MONITOR_SCRIPT = "/usr/local/bin/pi_monitor_test.sh"
 PI_MONITOR_CSV = "/var/log/pi_monitor_test.csv"
 PI_MONITOR_README = "/var/log/pi_monitor_test_README.txt"
+
+PI_MONITOR_STATE = "/tmp/autodarts_pi_monitor_state.json"
+PI_MONITOR_PIDFILE = "/tmp/autodarts_pi_monitor.pid"
+PI_MONITOR_OUTLOG = "/var/log/pi_monitor_test.out"
 
 EXTENSIONS_DIR = "/var/lib/autodarts/extensions"
 USR_LOCAL_BIN_DIR = "/usr/local/bin"
@@ -172,48 +187,48 @@ def get_wifi_status():
             ["nmcli", "-t", "-f", "DEVICE,STATE,CONNECTION", "device"],
             capture_output=True,
             text=True,
+            timeout=1.5,
         )
         if result.returncode == 0:
             for line in result.stdout.splitlines():
-                parts = line.split(":")
+                parts = line.strip().split(":", 2)
                 if len(parts) >= 3 and parts[0] == dev:
                     state = parts[1]
-                    if state == "connected":
-                        cn = parts[2].strip()
-                        if cn != "--":
-                            conn_name = cn
+                    conn_name = parts[2] or None
+                    if state != "connected":
+                        conn_name = None
+                    break
+    except Exception:
+        conn_name = None
+
+    if not conn_name:
+        return None, None
+
+    # 2) SSID aus der Connection auslesen
+    try:
+        result = subprocess.run(
+            ["nmcli", "-t", "-f", "802-11-wireless.ssid", "connection", "show", conn_name],
+            capture_output=True,
+            text=True,
+            timeout=1.5,
+        )
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                if line.startswith("802-11-wireless.ssid:"):
+                    val = line.split(":", 1)[1].strip()
+                    if val:
+                        ssid = val
                     break
     except Exception:
         pass
 
-    # 2) aus dem Connection-Profil die echte SSID holen
-    if conn_name:
-        try:
-            res2 = subprocess.run(
-                ["nmcli", "-t", "-f", "802-11-wireless.ssid", "connection", "show", conn_name],
-                capture_output=True,
-                text=True,
-            )
-            if res2.returncode == 0:
-                for line in res2.stdout.splitlines():
-                    if line.startswith("802-11-wireless.ssid:"):
-                        val = line.split(":", 1)[1].strip()
-                        if val:
-                            ssid = val
-                            break
-        except Exception:
-            pass
-
-        # Fallback: wenn keine SSID gefunden wurde, nimm wenigstens den Connection-Namen
-        if ssid is None:
-            ssid = conn_name
-
-    # 3) IPv4-Adresse vom Interface holen
+    # 3) IPv4-Adresse auslesen
     try:
         result = subprocess.run(
             ["nmcli", "-t", "-f", "IP4.ADDRESS", "device", "show", dev],
             capture_output=True,
             text=True,
+            timeout=1.5,
         )
         if result.returncode == 0:
             for line in result.stdout.splitlines():
@@ -228,26 +243,153 @@ def get_wifi_status():
     return ssid, ip
 
 
-def get_wifi_signal_percent() -> int | None:
-    """
-    Liefert die Signalstärke (0-100) des aktuell verbundenen WLANs am WIFI_INTERFACE.
-    Ressourcenschonend: wird nur beim Seitenaufruf ermittelt (kein Loop).
-    """
-    dev = WIFI_INTERFACE
+def _get_default_route_interface() -> str | None:
+    """Return interface used for the default route (best proxy for "home network" interface)."""
     try:
-        # nmcli liefert SIGNAL bereits als 0..100
         r = subprocess.run(
-            ["nmcli", "-t", "-f", "IN-USE,SIGNAL,SSID", "device", "wifi", "list", "ifname", dev],
+            ["ip", "route", "get", "1.1.1.1"],
             capture_output=True,
             text=True,
-            timeout=2.0,
+            timeout=1.2,
         )
         if r.returncode != 0:
             return None
-        for line in r.stdout.splitlines():
-            # Format: *:70:MyWifi
+        # example: "1.1.1.1 via 192.168.1.1 dev wlan0 src 192.168.1.50 uid 1000"
+        m = re.search(r"\bdev\s+(\S+)", r.stdout or "")
+        if not m:
+            return None
+        dev = m.group(1).strip()
+        if dev == AP_INTERFACE:
+            return None
+        return dev
+    except Exception:
+        return None
+
+
+def _get_connected_wifi_interface(prefer: str | None = None) -> str | None:
+    """
+    Best-effort: return a connected WiFi interface (via nmcli), excluding the AP interface/profile.
+    Preference order:
+      1) 'prefer' if connected
+      2) interface connected to WIFI_CONNECTION_NAME (e.g. Autodarts-Net)
+      3) first connected WiFi excluding AP
+    """
+    try:
+        r = subprocess.run(
+            ["nmcli", "-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device"],
+            capture_output=True,
+            text=True,
+            timeout=1.5,
+        )
+        if r.returncode != 0:
+            return None
+
+        connected: list[tuple[str, str]] = []
+        for line in (r.stdout or "").splitlines():
+            parts = line.split(":", 3)
+            if len(parts) != 4:
+                continue
+            dev, typ, state, conn = [p.strip() for p in parts]
+            if typ != "wifi" or state != "connected":
+                continue
+            # exclude AP interface / AP connection profile
+            if dev == AP_INTERFACE or conn == AP_CONNECTION_NAME:
+                continue
+            connected.append((dev, conn))
+
+        if not connected:
+            return None
+
+        if prefer:
+            for dev, _conn in connected:
+                if dev == prefer:
+                    return dev
+
+        for dev, conn in connected:
+            if WIFI_CONNECTION_NAME and conn == WIFI_CONNECTION_NAME:
+                return dev
+
+        return connected[0][0]
+    except Exception:
+        return None
+
+def _wifi_signal_from_proc(iface: str) -> int | None:
+    """
+    Very lightweight signal read via /proc/net/wireless.
+    Returns percent (0..100) or None if iface not present / not wireless.
+    """
+    try:
+        with open("/proc/net/wireless", "r", encoding="utf-8", errors="ignore") as f:
+            lines = f.read().splitlines()
+        for line in lines:
+            line = line.strip()
+            if not line.startswith(iface + ":"):
+                continue
+            # Example columns: iface: status link level noise ...
+            # link quality is usually 0..70 in column 2
+            parts = line.split()
+            if len(parts) < 3:
+                return None
+            # parts[1] is status, parts[2] is link quality (e.g. "70.")
+            q_str = parts[2].strip().rstrip(".")
+            q = float(q_str)
+            # Convert 0..70 to 0..100
+            pct = int(round((q / 70.0) * 100.0))
+            if pct < 0:
+                pct = 0
+            if pct > 100:
+                pct = 100
+            return pct
+    except Exception:
+        return None
+
+
+def _wifi_signal_from_iw(iface: str) -> int | None:
+    """Get signal strength as percent using 'iw dev <iface> link' (no scan)."""
+    try:
+        r = subprocess.run(
+            ["iw", "dev", iface, "link"],
+            capture_output=True,
+            text=True,
+            timeout=1.2,
+        )
+        if r.returncode != 0:
+            return None
+        out = (r.stdout or "").strip()
+        if not out or "Not connected" in out:
+            return None
+        m = re.search(r"signal:\s*(-?\d+)\s*dBm", out)
+        if not m:
+            return None
+        dbm = int(m.group(1))
+        # Map -90..-30 dBm roughly to 0..100%
+        pct = int(round((dbm + 90) * 100 / 60))
+        if pct < 0:
+            pct = 0
+        if pct > 100:
+            pct = 100
+        return pct
+    except FileNotFoundError:
+        return None
+    except Exception:
+        return None
+
+
+def _wifi_signal_from_nmcli(iface: str) -> int | None:
+    """Fallback: nmcli scan-less signal strength (0..100)."""
+    try:
+        r = subprocess.run(
+            ["nmcli", "-t", "--rescan", "no", "-f", "IN-USE,SIGNAL,SSID", "device", "wifi", "list", "ifname", iface],
+            capture_output=True,
+            text=True,
+            timeout=1.5,
+        )
+        if r.returncode != 0:
+            return None
+        for line in (r.stdout or "").splitlines():
+            # Format usually: *:70:MyWifi
             parts = line.split(":", 2)
-            if len(parts) >= 2 and parts[0].strip() == "*":
+            if len(parts) >= 2 and parts[0].strip() in ("*", "yes", "Yes", "YES"):
                 try:
                     return int(parts[1].strip())
                 except Exception:
@@ -256,6 +398,61 @@ def get_wifi_signal_percent() -> int | None:
         return None
     return None
 
+
+def get_wifi_signal_percent() -> int | None:
+    """
+    Liefert die Signalstärke (0-100) **für die Heimnetz-Verbindung** (nicht den AP).
+
+    Ressourcenschonend:
+      1) /proc/net/wireless (kein Scan)
+      2) iw dev <iface> link (kein Scan)
+      3) nmcli --rescan no (Fallback)
+    """
+    # Ziel: Heimnetz-Interface finden (wlan0), AP (wlan_ap) ignorieren
+    home_iface = None
+
+    # 1) Wenn WIFI_INTERFACE gesetzt ist (z.B. wlan0), das bevorzugen
+    if WIFI_INTERFACE and WIFI_INTERFACE != AP_INTERFACE:
+        home_iface = WIFI_INTERFACE
+
+    # 2) Falls das nicht klappt: Interface mit Default-Route (Internet)
+    if not home_iface:
+        home_iface = _get_default_route_interface()
+
+    # 3) Fallback: nmcli connected wifi (AP ausgeschlossen)
+    if not home_iface:
+        home_iface = _get_connected_wifi_interface(prefer=WIFI_INTERFACE if WIFI_INTERFACE else None)
+
+    candidates: list[str] = []
+    if home_iface:
+        candidates.append(home_iface)
+
+    # Safety fallback: wenn oben nix gefunden, aber WIFI_INTERFACE existiert
+    if WIFI_INTERFACE and WIFI_INTERFACE not in candidates and WIFI_INTERFACE != AP_INTERFACE:
+        candidates.append(WIFI_INTERFACE)
+
+    for dev in candidates:
+        if not dev or dev == AP_INTERFACE:
+            continue
+
+        # 1) /proc/net/wireless
+        sig = _wifi_signal_from_proc(dev)
+        if sig is not None:
+            return sig
+
+        # 2) iw link
+        sig = _wifi_signal_from_iw(dev)
+        if sig is not None:
+            return sig
+
+        # 3) nmcli fallback
+        sig = _wifi_signal_from_nmcli(dev)
+        if sig is not None:
+            return sig
+
+    return None
+
+
 def wifi_dongle_present() -> bool:
     """Prüft, ob der WLAN-USB-Dongle (WIFI_INTERFACE) als WiFi-Device beim NetworkManager sichtbar ist."""
     try:
@@ -263,6 +460,7 @@ def wifi_dongle_present() -> bool:
             ["nmcli", "-t", "-f", "DEVICE,TYPE", "device"],
             capture_output=True,
             text=True,
+            timeout=1.5,
         )
         if result.returncode != 0:
             return False
@@ -276,126 +474,6 @@ def wifi_dongle_present() -> bool:
         return False
     except Exception:
         return False
-
-
-# ---------------- Verbindungstest (Ping zum Router) ----------------
-
-def get_default_gateway(interface: str | None = None) -> str | None:
-    """
-    Ermittelt das Default-Gateway (Router-IP).
-    Wenn interface gesetzt ist (z.B. wlan0), bevorzugen wir die Default-Route über dieses Interface.
-    """
-    try:
-        r = subprocess.run(["ip", "route", "show", "default"], capture_output=True, text=True, timeout=1.5)
-        if r.returncode != 0:
-            return None
-        lines = [ln.strip() for ln in (r.stdout or "").splitlines() if ln.strip()]
-        if not lines:
-            return None
-
-        def parse_line(line: str) -> tuple[str | None, str | None]:
-            # Beispiel: "default via 192.168.0.1 dev wlan0 proto dhcp metric 600"
-            m = re.search(r"\bvia\s+(\d+\.\d+\.\d+\.\d+)\b", line)
-            gw = m.group(1) if m else None
-            m2 = re.search(r"\bdev\s+(\S+)\b", line)
-            dev = m2.group(1) if m2 else None
-            return gw, dev
-
-        # Prefer matching interface
-        if interface:
-            for ln in lines:
-                gw, dev = parse_line(ln)
-                if gw and dev == interface:
-                    return gw
-
-        # Fallback: first default route with gateway
-        for ln in lines:
-            gw, _ = parse_line(ln)
-            if gw:
-                return gw
-    except Exception:
-        return None
-    return None
-
-
-def _sse(data: dict) -> str:
-    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
-
-
-def ping_test_generator(total: int = 30) :
-    """
-    Streamt Fortschritt + Ergebnis als SSE (Server-Sent Events).
-    Zielt auf den Router (Default Gateway), damit man die Stabilität zum Router sieht.
-    """
-    gw = get_default_gateway(WIFI_INTERFACE)
-    if not gw:
-        yield _sse({"done": True, "error": "Kein Router (Default-Gateway) gefunden. Bitte zuerst mit dem Heim-WLAN verbinden."})
-        return
-
-    yield _sse({"start": True, "target": gw, "total": total})
-
-    cmd = ["ping", "-O", "-n", "-c", str(total), "-W", "1", "-i", "0.2", gw]
-
-    try:
-        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-    except Exception as e:
-        yield _sse({"done": True, "error": f"Ping konnte nicht gestartet werden: {e}"})
-        return
-
-    last_seq = 0
-    received = 0
-    rtts: list[float] = []
-
-    # Wir zählen "gesendet" über icmp_seq (auch bei Packetloss)
-    for raw in (p.stdout or []):
-        line = (raw or "").strip()
-        mseq = re.search(r"icmp_seq=(\d+)", line)
-        if not mseq:
-            continue
-
-        seq = int(mseq.group(1))
-        if seq > last_seq:
-            last_seq = seq  # Fortschritt (1..total)
-
-        # Erfolg?
-        if "bytes from" in line:
-            received += 1
-            mt = re.search(r"time=([\d\.]+)\s*ms", line)
-            if mt:
-                try:
-                    rtts.append(float(mt.group(1)))
-                except Exception:
-                    pass
-
-        # Event push (auch bei Timeouts)
-        yield _sse({"progress": True, "sent": last_seq, "total": total, "received": received})
-
-    try:
-        p.wait(timeout=3.0)
-    except Exception:
-        try:
-            p.kill()
-        except Exception:
-            pass
-
-    # Stats berechnen (nur aus Antworten)
-    if rtts:
-        tmin = min(rtts)
-        tmax = max(rtts)
-        tavg = sum(rtts) / len(rtts)
-    else:
-        tmin = tmax = tavg = None
-
-    yield _sse({
-        "done": True,
-        "sent": total,
-        "received": received,
-        "min_ms": (round(tmin, 2) if tmin is not None else None),
-        "max_ms": (round(tmax, 2) if tmax is not None else None),
-        "avg_ms": (round(tavg, 2) if tavg is not None else None),
-        "target": gw,
-    })
-
 
 
 def interpret_nmcli_error(stdout: str, stderr: str):
@@ -449,6 +527,7 @@ def get_ap_ssid():
             ["nmcli", "-t", "-f", "802-11-wireless.ssid", "connection", "show", AP_CONNECTION_NAME],
             capture_output=True,
             text=True,
+            timeout=1.5,
         )
         if result.returncode != 0:
             return None
@@ -466,180 +545,16 @@ def get_ap_ssid():
 # ---------------- System / Stats ----------------
 
 def is_autodarts_active() -> bool:
-    r = subprocess.run(
-        ["systemctl", "is-active", AUTODARTS_SERVICE],
-        capture_output=True,
-        text=True,
-    )
-    return r.stdout.strip() == "active"
-
-
-def _systemd_execstart_path(service_name: str) -> str | None:
-    """Versucht den ExecStart-Pfad aus systemd herauszulesen (z.B. /home/peter/.local/bin/autodarts)."""
     try:
-        out = subprocess.run(
-            ["systemctl", "show", "-p", "ExecStart", service_name],
+        r = subprocess.run(
+            ["systemctl", "is-active", AUTODARTS_SERVICE],
             capture_output=True,
             text=True,
-            timeout=1.5,
+            timeout=1.0,
         )
-        if out.returncode != 0:
-            return None
-        line = (out.stdout or "").strip()
-        # Beispiele:
-        # ExecStart=/home/peter/.local/bin/autodarts
-        # ExecStart={ path=/home/peter/.local/bin/autodarts ; argv[]=/home/peter/.local/bin/autodarts ; ... }
-        m = re.search(r"/[^\s;]+", line)
-        if m:
-            p = m.group(0).strip()
-            return p if os.path.exists(p) else p  # exist check optional
+        return r.stdout.strip() == "active"
     except Exception:
-        pass
-    return None
-
-
-def get_autodarts_binary_path() -> str | None:
-    """Findet das Autodarts Binary möglichst robust."""
-    # 1) aus systemd
-    p = _systemd_execstart_path(AUTODARTS_SERVICE)
-    if p:
-        return p
-
-    # 2) typische Orte (User/Root)
-    candidates = [
-        os.path.expanduser("~/.local/bin/autodarts"),
-        "/home/peter/.local/bin/autodarts",
-        "/home/pi/.local/bin/autodarts",
-        "/root/.local/bin/autodarts",
-        "/usr/local/bin/autodarts",
-        "/usr/bin/autodarts",
-    ]
-    for c in candidates:
-        if c and os.path.exists(c):
-            return c
-    return None
-
-
-def get_autodarts_version() -> str | None:
-    """Liest die installierte Autodarts-Version (über autodarts --version)."""
-    # Cache (damit die Startseite nicht träge wird)
-    try:
-        now = time.time()
-        if (now - float(AUTODARTS_VERSION_CACHE.get("ts", 0.0))) < AUTODARTS_VERSION_CACHE_TTL_SEC:
-            v = AUTODARTS_VERSION_CACHE.get("v")
-            if v:
-                return str(v)
-    except Exception:
-        pass
-    bin_path = get_autodarts_binary_path()
-    if not bin_path:
-        return None
-    try:
-        r = subprocess.run([bin_path, "--version"], capture_output=True, text=True, timeout=1.5)
-        if r.returncode != 0:
-            # fallback: manche Tools nutzen -V
-            r = subprocess.run([bin_path, "-V"], capture_output=True, text=True, timeout=1.5)
-        out = (r.stdout or r.stderr or "").strip()
-        m = re.search(r"(\d+\.\d+\.\d+(?:-[A-Za-z0-9.]+)?)", out)
-        ver = m.group(1) if m else (out.splitlines()[0] if out else None)
-        try:
-            AUTODARTS_VERSION_CACHE["ts"] = time.time()
-            AUTODARTS_VERSION_CACHE["v"] = ver
-        except Exception:
-            pass
-        return ver
-    except Exception:
-        return None
-
-
-def _get_autodarts_updater_path() -> str | None:
-    """Versucht updater.sh zu finden (wird vom offiziellen Installer angelegt)."""
-    # Neben dem autodarts binary
-    bin_path = get_autodarts_binary_path()
-    if bin_path:
-        d = os.path.dirname(bin_path)
-        cand = os.path.join(d, "updater.sh")
-        if os.path.exists(cand):
-            return cand
-
-    # typische Orte
-    candidates = [
-        os.path.expanduser("~/.local/bin/updater.sh"),
-        "/home/peter/.local/bin/updater.sh",
-        "/home/pi/.local/bin/updater.sh",
-        "/root/.local/bin/updater.sh",
-    ]
-    for c in candidates:
-        if c and os.path.exists(c):
-            return c
-    return None
-
-
-def load_update_state() -> dict:
-    try:
-        with open(AUTODARTS_UPDATE_STATE, "r", encoding="utf-8") as f:
-            return json.load(f) or {}
-    except Exception:
-        return {}
-
-
-def save_update_state(state: dict):
-    try:
-        os.makedirs(os.path.dirname(AUTODARTS_UPDATE_STATE), exist_ok=True)
-        with open(AUTODARTS_UPDATE_STATE, "w", encoding="utf-8") as f:
-            json.dump(state, f, indent=2)
-    except Exception:
-        pass
-
-
-def start_autodarts_update_background() -> tuple[bool, str]:
-    """Startet ein Autodarts-Update im Hintergrund und loggt nach AUTODARTS_UPDATE_LOG."""
-    # Läuft schon?
-    state = load_update_state()
-    pid = state.get("pid")
-    if pid:
-        try:
-            os.kill(int(pid), 0)
-            return False, "Update läuft bereits."
-        except Exception:
-            pass  # PID tot -> weiter
-
-    # Command bestimmen
-    cmd = SETTINGS.get("autodarts_update_cmd") or ""
-    cmd = cmd.strip()
-
-    updater = _get_autodarts_updater_path()
-    if not cmd:
-        if updater:
-            cmd = updater
-        else:
-            # Fallback auf offiziellen Installer (holt auch updater.sh neu)
-            cmd = "bash <(curl -sL get.autodarts.io)"
-
-    # Log-File öffnen
-    try:
-        os.makedirs(os.path.dirname(AUTODARTS_UPDATE_LOG), exist_ok=True)
-    except Exception:
-        pass
-
-    try:
-        logf = open(AUTODARTS_UPDATE_LOG, "a", encoding="utf-8")
-        logf.write("\n\n===== Autodarts Update gestartet: %s =====\n" % time.strftime("%Y-%m-%d %H:%M:%S"))
-        logf.flush()
-
-        # in bash ausführen (für process substitution)
-        p = subprocess.Popen(
-            ["bash", "-lc", cmd],
-            stdout=logf,
-            stderr=logf,
-            close_fds=True,
-        )
-
-        save_update_state({"pid": p.pid, "started": time.strftime("%Y-%m-%d %H:%M:%S"), "cmd": cmd})
-        return True, "Update gestartet."
-    except Exception as e:
-        return False, f"Update konnte nicht gestartet werden: {e}"
-
+        return False
 
 
 def get_system_stats():
@@ -684,6 +599,7 @@ def get_system_stats():
             ["vcgencmd", "measure_temp"],
             capture_output=True,
             text=True,
+            timeout=1.0,
         )
         if out.returncode == 0:
             s = out.stdout.strip()
@@ -704,6 +620,41 @@ def get_system_stats():
 
     return cpu_pct, mem_used, mem_total, temp_c
 
+def get_index_stats_cached():
+    """
+    Sammel-Status für die Startseite (mit kurzem Cache), damit nicht bei jedem Reload
+    viele externe Tools gestartet werden (systemctl/nmcli/vcgencmd).
+    """
+    now = time.time()
+    try:
+        if INDEX_STATS_CACHE.get('data') and (now - float(INDEX_STATS_CACHE.get('ts', 0.0))) < INDEX_STATS_TTL_SEC:
+            return INDEX_STATS_CACHE['data']
+    except Exception:
+        pass
+
+    ssid, ip = get_wifi_status()
+    autodarts_active = is_autodarts_active()
+    autodarts_version = get_autodarts_version()
+    cpu_pct, mem_used, mem_total, temp_c = get_system_stats()
+    current_ap_ssid = get_ap_ssid()
+    wifi_ok = bool(ssid and ip)
+    dongle_ok = wifi_ok or wifi_dongle_present()
+
+    data = (
+        ssid, ip,
+        autodarts_active, autodarts_version,
+        cpu_pct, mem_used, mem_total, temp_c,
+        wifi_ok, dongle_ok,
+        current_ap_ssid,
+    )
+    try:
+        INDEX_STATS_CACHE['ts'] = now
+        INDEX_STATS_CACHE['data'] = data
+    except Exception:
+        pass
+    return data
+
+
 
 # ---------------- Notes / Cam config ----------------
 
@@ -720,6 +671,160 @@ def save_cam_config(config: dict):
     os.makedirs(os.path.dirname(CAM_CONFIG_PATH), exist_ok=True)
     with open(CAM_CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(config, f, indent=2)
+
+
+
+# --- V4L2 Probe Helpers (robustere Kamera-Auswahl & bessere Fehlermeldungen) ---
+V4L2CTL_TIMEOUT = 1.5
+
+def _v4l2ctl(args: list[str], timeout: float = V4L2CTL_TIMEOUT):
+    """Run v4l2-ctl with timeout; returns CompletedProcess or None."""
+    try:
+        return subprocess.run(
+            ["v4l2-ctl", *args],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+
+def probe_v4l2_device(dev: str) -> dict:
+    """Probe device for pixel formats and discrete resolutions.
+
+    Returns:
+      {
+        ok: bool,
+        formats: set[str],
+        resolutions: dict[str, list[tuple[int,int]]],  # fmt -> [(w,h), ...]
+        error: str|None,
+        raw: str
+      }
+    """
+    r = _v4l2ctl(["-d", dev, "--list-formats-ext"])
+    if not r:
+        return {"ok": False, "formats": set(), "resolutions": {}, "error": "v4l2-ctl nicht verfügbar oder Timeout.", "raw": ""}
+
+    raw = (r.stdout or "") + ("\n" + (r.stderr or "") if r.stderr else "")
+    if r.returncode != 0:
+        # Häufig: Permission denied / Not a capture device / busy
+        err = (r.stderr or r.stdout or "").strip() or f"v4l2-ctl returncode {r.returncode}"
+        return {"ok": False, "formats": set(), "resolutions": {}, "error": err, "raw": raw}
+
+    fmt = None
+    formats: set[str] = set()
+    resolutions: dict[str, list[tuple[int, int]]] = {}
+
+    re_fmt = re.compile(r"Pixel\s+Format:\s+'([A-Z0-9]+)'")
+    re_size = re.compile(r"Size:\s+Discrete\s+(\d+)x(\d+)")
+    for line in (r.stdout or "").splitlines():
+        m = re_fmt.search(line)
+        if m:
+            fmt = m.group(1)
+            formats.add(fmt)
+            resolutions.setdefault(fmt, [])
+            continue
+        m = re_size.search(line)
+        if m and fmt:
+            w, h = int(m.group(1)), int(m.group(2))
+            if (w, h) not in resolutions[fmt]:
+                resolutions[fmt].append((w, h))
+
+    return {"ok": True, "formats": formats, "resolutions": resolutions, "error": None, "raw": raw}
+
+def _best_resolution_for_formats(resolutions: dict[str, list[tuple[int,int]]], preferred_formats: list[str]) -> tuple[str|None, str|None]:
+    """Pick best (format, WxH) based on preferences and available discrete sizes."""
+    # Prefer common sizes if present, otherwise max area.
+    preferred_sizes = [(1920,1080),(1600,1200),(1280,720),(1024,768),(800,600),(640,480)]
+    for fmt in preferred_formats:
+        sizes = resolutions.get(fmt) or []
+        if not sizes:
+            continue
+        for wh in preferred_sizes:
+            if wh in sizes:
+                return fmt, f"{wh[0]}x{wh[1]}"
+        # fallback: largest area
+        w,h = max(sizes, key=lambda x: x[0]*x[1])
+        return fmt, f"{w}x{h}"
+    return None, None
+
+def _pick_best_video_device(video_devs: list[str]) -> str | None:
+    """Pick best /dev/videoX from a physical camera group.
+
+    Preference:
+      - device that supports MJPG (best for mjpg_streamer)
+      - else device that supports YUYV
+      - else first device that at least responds to v4l2-ctl
+    """
+    best = None
+    best_score = -1
+    for dev in video_devs:
+        p = probe_v4l2_device(dev)
+        if not p.get("ok"):
+            # still might be usable; but score low
+            score = 0
+        else:
+            fmts = p.get("formats", set())
+            if "MJPG" in fmts:
+                score = 3
+            elif "YUYV" in fmts:
+                score = 2
+            elif fmts:
+                score = 1
+            else:
+                score = 0
+        if score > best_score:
+            best_score = score
+            best = dev
+    return best
+
+def _v4l2_device_info(dev: str) -> dict:
+    """Return basic v4l2 device info using 'v4l2-ctl -D'."""
+    r = _v4l2ctl(["-d", dev, "-D"], timeout=0.9)
+    if not r or r.returncode != 0:
+        return {}
+    info = {}
+    for line in (r.stdout or "").splitlines():
+        if ":" not in line:
+            continue
+        k, v = line.split(":", 1)
+        k = k.strip().lower()
+        v = v.strip()
+        if k in ("driver name", "card type", "bus info"):
+            info[k] = v
+    return info
+
+
+def _is_probably_camera_device(dev: str) -> bool:
+    """Heuristic to avoid false positives like codec/ISP/decoder nodes."""
+    info = _v4l2_device_info(dev)
+    card = (info.get("card type") or "").lower()
+    bus = (info.get("bus info") or "").lower()
+
+    bad = ["codec", "isp", "rpivid", "v4l2loopback", "loopback", "virtual", "m2m", "mem2mem", "decoder", "encoder"]
+    if any(b in card for b in bad) or any(b in bus for b in bad):
+        return False
+
+    # Must have at least one format we can stream
+    p = probe_v4l2_device(dev)
+    if not p.get("ok"):
+        return False
+    fmts = p.get("formats", set()) or set()
+    if not fmts:
+        return False
+
+    # Prefer USB cameras
+    if "usb" in bus:
+        return True
+
+    # CSI / sensor-style names
+    good = ["camera", "webcam", "uvc", "unicam", "csi", "ov", "imx", "ar", "gc", "s5k"]
+    if any(g in card for g in good) or any(g in bus for g in good):
+        return True
+
+    # Unknown: be conservative to prevent ghost-devices when no camera is attached
+    return False
+
 
 
 def detect_cameras(desired_count: int):
@@ -767,22 +872,34 @@ def detect_cameras(desired_count: int):
             # Gruppen filtern: echte Kameras bevorzugen, System/Meta-Geräte eher raus
             def _looks_like_camera(name: str) -> bool:
                 n = (name or "").lower()
-                # typische Meta/ISP Geräte raus
-                if "bcm2835" in n or "isp" in n or "codec" in n or "rp1" in n:
+
+                # harte Ausschlüsse: typische System/Codec/ISP/Decoder-Geräte
+                bad = ["codec", "isp", "rpivid", "v4l2loopback", "loopback", "virtual", "m2m", "mem2mem", "decoder", "encoder"]
+                if any(b in n for b in bad):
                     return False
-                # typische Kamera-Wörter rein
-                if "usb" in n or "camera" in n or "webcam" in n or "uvc" in n:
+
+                # USB-Kameras erkennt man meist direkt
+                if "usb" in n or "uvc" in n or "webcam" in n or "camera" in n:
                     return True
-                # unbekannt: trotzdem erlauben (manche Dongles haben komische Namen)
-                return True
+
+                # CSI/Sensoren (ov9732, imx219, ...)
+                sensor = ["ov", "imx", "ar", "gc", "s5k", "unicam", "csi"]
+                if any(s in n for s in sensor):
+                    return True
+
+                # Default: konservativ, sonst findet man ohne Kamera gerne 'Geistergeräte'
+                return False
 
             cam_groups = [g for g in groups if _looks_like_camera(g[0])]
 
             devices = []
             for name, videos in cam_groups:
                 videos_sorted = sorted(videos)
-                dev = videos_sorted[0]  # erstes /dev/videoX der Gruppe
-                devices.append(dev)
+                # Einige Kameras liefern mehrere /dev/videoX Nodes (Meta/H264/etc.).
+                # Wir wählen nach Möglichkeit den Node, der MJPG (oder YUYV) anbietet.
+                dev = _pick_best_video_device(videos_sorted) or videos_sorted[0]
+                if _is_probably_camera_device(dev):
+                    devices.append(dev)
                 if len(devices) >= desired_count:
                     break
 
@@ -798,7 +915,7 @@ def detect_cameras(desired_count: int):
     found = []
     for idx in range(MAX_VIDEO_INDEX):
         dev = f"/dev/video{idx}"
-        if os.path.exists(dev):
+        if os.path.exists(dev) and _is_probably_camera_device(dev):
             found.append(dev)
             if len(found) >= desired_count:
                 break
@@ -815,10 +932,19 @@ def service_exists(service_name: str) -> bool:
     return any(os.path.exists(p) for p in candidates)
 
 
-def service_is_active(service_name: str) -> bool:
-    r = subprocess.run(["systemctl", "is-active", service_name], capture_output=True, text=True)
-    return r.stdout.strip() == "active"
+# systemctl helper (verhindert Hänger durch blockierende systemctl-Aufrufe)
+SYSTEMCTL_CHECK_TIMEOUT = 2.0
+SYSTEMCTL_ACTION_TIMEOUT = 20.0
 
+def _run_systemctl(args: list[str], timeout: float):
+    try:
+        return subprocess.run(["systemctl", *args], capture_output=True, text=True, timeout=timeout)
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return None
+
+def service_is_active(service_name: str) -> bool:
+    r = _run_systemctl(["is-active", service_name], timeout=SYSTEMCTL_CHECK_TIMEOUT)
+    return bool(r and r.stdout.strip() == "active")
 
 def _systemd_execstart_path(service_name: str) -> str | None:
     """Versucht den ExecStart-Pfad aus systemd herauszulesen (z.B. /home/peter/.local/bin/autodarts)."""
@@ -989,15 +1115,172 @@ def start_autodarts_update_background() -> tuple[bool, str]:
 
 
 def service_enable_now(service_name: str):
-    subprocess.run(["systemctl", "enable", "--now", service_name], capture_output=True, text=True)
-
+    _run_systemctl(["enable", "--now", service_name], timeout=SYSTEMCTL_ACTION_TIMEOUT)
 
 def service_disable_now(service_name: str):
-    subprocess.run(["systemctl", "disable", "--now", service_name], capture_output=True, text=True)
-
+    _run_systemctl(["disable", "--now", service_name], timeout=SYSTEMCTL_ACTION_TIMEOUT)
 
 def service_restart(service_name: str):
-    subprocess.run(["systemctl", "restart", service_name], capture_output=True, text=True)
+    _run_systemctl(["restart", service_name], timeout=SYSTEMCTL_ACTION_TIMEOUT)
+
+def service_is_enabled(service_name: str) -> bool:
+    r = _run_systemctl(["is-enabled", service_name], timeout=SYSTEMCTL_CHECK_TIMEOUT)
+    return bool(r and r.stdout.strip() == "enabled")
+
+def autodarts_autoupdate_is_enabled() -> bool | None:
+    if not service_exists(AUTOUPDATE_SERVICE):
+        return None
+    return service_is_enabled(AUTOUPDATE_SERVICE)
+
+def autodarts_set_autoupdate(enabled: bool) -> tuple[bool, str]:
+    if not service_exists(AUTOUPDATE_SERVICE):
+        return False, f"{AUTOUPDATE_SERVICE} nicht gefunden."
+    try:
+        if enabled:
+            subprocess.run(["systemctl", "enable", "--now", AUTOUPDATE_SERVICE], capture_output=True, text=True)
+            return True, "Auto-Update aktiviert."
+        subprocess.run(["systemctl", "disable", "--now", AUTOUPDATE_SERVICE], capture_output=True, text=True)
+        return True, "Auto-Update deaktiviert."
+    except Exception as e:
+        return False, f"Auto-Update konnte nicht geändert werden: {e}"
+
+
+# ---------------- Update-Check (nur bei Klick) ----------------
+
+def load_update_check() -> dict:
+    try:
+        with open(AUTODARTS_UPDATE_CHECK, "r", encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+def save_update_check(d: dict):
+    os.makedirs(os.path.dirname(AUTODARTS_UPDATE_CHECK), exist_ok=True)
+    with open(AUTODARTS_UPDATE_CHECK, "w", encoding="utf-8") as f:
+        json.dump(d, f, indent=2)
+
+def _get_platform_arch_for_autodarts() -> tuple[str, str]:
+    # Plattform ist im Installer 'linux'
+    platform = "linux"
+    arch = subprocess.run(["uname", "-m"], capture_output=True, text=True).stdout.strip()
+    if arch in ("x86_64", "amd64"):
+        arch = "amd64"
+    elif arch in ("aarch64", "arm64"):
+        arch = "arm64"
+    elif arch == "armv7l":
+        arch = "armv7l"
+    return platform, arch
+
+def _get_updater_channel() -> str:
+    # Versuche CHANNEL aus updater.sh zu lesen (latest/beta)
+    updater = _get_autodarts_updater_path()
+    if updater:
+        try:
+            for line in Path(updater).read_text(encoding="utf-8", errors="ignore").splitlines():
+                if line.startswith("CHANNEL="):
+                    v = line.split("=", 1)[1].strip().strip('"').strip("'")
+                    if v:
+                        return v
+        except Exception:
+            pass
+    return "latest"
+
+def fetch_latest_autodarts_version(channel: str | None = None, timeout_s: float = 2.5) -> str | None:
+    try:
+        platform, arch = _get_platform_arch_for_autodarts()
+        ch = (channel or _get_updater_channel()).strip() or "latest"
+        # Installer nutzt:
+        # latest: detection/latest/<platform>/<arch>/RELEASES.json
+        # beta:   detection/beta/<platform>/<arch>/RELEASES.json
+        url = f"https://get.autodarts.io/detection/{ch}/{platform}/{arch}/RELEASES.json"
+        req = urllib.request.Request(url, headers={"User-Agent": "AutodartsPanel"})
+        with urllib.request.urlopen(req, timeout=timeout_s) as r:
+            data = json.loads(r.read().decode("utf-8", errors="ignore") or "{}")
+        cv = str(data.get("currentVersion", "")).strip()
+        if cv.startswith("v"):
+            cv = cv[1:]
+        return cv or None
+    except Exception:
+        return None
+
+
+# ---------------- Verbindungstest (Ping) ----------------
+
+PING_JOBS: dict[str, dict] = {}
+
+def get_default_gateway() -> str | None:
+    # Default-Route -> Gateway IP
+    try:
+        r = subprocess.run(["ip", "route", "show", "default"], capture_output=True, text=True)
+        if r.returncode != 0:
+            return None
+        # Beispiel: 'default via 192.168.178.1 dev wlan0 ...'
+        m = re.search(r"default\s+via\s+(\d+\.\d+\.\d+\.\d+)", r.stdout)
+        return m.group(1) if m else None
+    except Exception:
+        return None
+
+def _ping_worker(job_id: str, target: str, count: int):
+    job = PING_JOBS.get(job_id)
+    if not job:
+        return
+    times = []
+    received = 0
+    try:
+        p = subprocess.Popen(
+            ["ping", "-n", "-c", str(count), target],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            universal_newlines=True,
+        )
+        job["pid"] = p.pid
+        for line in p.stdout or []:
+            # icmp_seq=1 time=12.3 ms
+            m = re.search(r"icmp_seq=(\d+).*time=([0-9\.]+)\s*ms", line)
+            if m:
+                seq = int(m.group(1))
+                t = float(m.group(2))
+                times.append(t)
+                received = len(times)
+                job["progress"] = max(job.get("progress", 0), seq)
+                job["received"] = received
+        p.wait()
+        # Summary parse (optional)
+        # '30 packets transmitted, 30 received, 0% packet loss, time ...'
+        # We prefer our measured times for min/avg/max.
+    except Exception as e:
+        job["error"] = str(e)
+
+    if times:
+        job["min_ms"] = round(min(times), 2)
+        job["max_ms"] = round(max(times), 2)
+        job["avg_ms"] = round(sum(times) / len(times), 2)
+    job["done"] = True
+
+def start_ping_test(count: int = 30) -> tuple[bool, str, str | None]:
+    gw = get_default_gateway()
+    if not gw:
+        return False, "Kein Gateway gefunden (nicht verbunden?).", None
+    job_id = uuid.uuid4().hex[:10]
+    PING_JOBS[job_id] = {
+        "target": gw,
+        "count": int(count),
+        "started": time.time(),
+        "progress": 0,
+        "received": 0,
+        "done": False,
+        "min_ms": None,
+        "max_ms": None,
+        "avg_ms": None,
+        "error": None,
+        "pid": None,
+    }
+    th = threading.Thread(target=_ping_worker, args=(job_id, gw, int(count)), daemon=True)
+    th.start()
+    return True, "Ping gestartet.", job_id
+
 
 
 # ---------------- WLED reachability ----------------
@@ -1202,11 +1485,8 @@ def load_wled_config() -> dict:
 
 def save_wled_config(cfg: dict):
     os.makedirs(os.path.dirname(WLED_CONFIG_PATH), exist_ok=True)
-    tmp = WLED_CONFIG_PATH + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
+    with open(WLED_CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2)
-    os.replace(tmp, WLED_CONFIG_PATH)
-
 
 
 def get_enabled_wled_hosts(cfg: dict) -> list[str]:
@@ -1330,6 +1610,163 @@ def tail_file(path: str, n: int = 20, max_chars: int = 6000) -> str:
 
 # ---------------- darts-caller start-custom.sh read/write ----------------
 
+# === Pi monitor test: status/lock helpers (leichtgewichtig, damit man nicht mehrfach startet) ===
+def _pid_cmdline_contains(pid: int, needle: str) -> bool:
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            cmd = f.read().decode("utf-8", "ignore").replace("\x00", " ")
+        return needle in cmd
+    except Exception:
+        return False
+
+
+def _is_pi_monitor_running(pid: int | None) -> bool:
+    if not pid or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except Exception:
+        return False
+    # sicherstellen, dass es wirklich unser Script ist (pid reuse vermeiden)
+    return _pid_cmdline_contains(pid, "pi_monitor_test.sh")
+
+
+def _read_pi_monitor_state() -> dict:
+    state: dict = {}
+    try:
+        with open(PI_MONITOR_STATE, "r", encoding="utf-8") as f:
+            state = json.load(f) or {}
+    except Exception:
+        state = {}
+    pid = None
+    try:
+        with open(PI_MONITOR_PIDFILE, "r", encoding="utf-8") as f:
+            pid = int((f.read() or "").strip() or "0")
+    except Exception:
+        pid = None
+
+    running = _is_pi_monitor_running(pid)
+    now = time.time()
+    started_ts = float(state.get("started_ts") or 0)
+    ends_ts = float(state.get("ends_ts") or 0)
+    interval_s = int(state.get("interval_s") or 0)
+    duration_min = int(state.get("duration_min") or 0)
+    remaining_sec = max(0, int(ends_ts - now)) if ends_ts else 0
+
+    if not running:
+        # stale files aufräumen, wenn Prozess wirklich weg ist
+        try:
+            if os.path.exists(PI_MONITOR_PIDFILE):
+                os.remove(PI_MONITOR_PIDFILE)
+        except Exception:
+            pass
+        try:
+            if os.path.exists(PI_MONITOR_STATE):
+                os.remove(PI_MONITOR_STATE)
+        except Exception:
+            pass
+
+    return {
+        "running": bool(running),
+        "pid": int(pid) if (pid and running) else None,
+        "started_ts": started_ts if started_ts else None,
+        "ends_ts": ends_ts if ends_ts else None,
+        "interval_s": interval_s if interval_s else None,
+        "duration_min": duration_min if duration_min else None,
+        "remaining_sec": remaining_sec if running else 0,
+    }
+
+
+def get_pi_monitor_status() -> dict:
+    st = _read_pi_monitor_state()
+    if not st.get("running"):
+        return {"running": False, "msg": "Nicht aktiv."}
+
+    # menschenlesbare Infos
+    try:
+        started = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(st["started_ts"]))
+    except Exception:
+        started = ""
+    try:
+        ends = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(st["ends_ts"]))
+    except Exception:
+        ends = ""
+    return {
+        "running": True,
+        "msg": f"Läuft (PID {st.get('pid')}). Start: {started} · Ende: {ends}",
+        **st,
+    }
+
+
+def start_pi_monitor(interval_s: int, duration_min: int) -> dict:
+    # Guard: nicht mehrfach starten
+    st = _read_pi_monitor_state()
+    if st.get("running"):
+        return {"ok": False, "running": True, "msg": "Pi Monitor läuft bereits – bitte warten bis er fertig ist."}
+
+    if interval_s < 1 or interval_s > 3600:
+        return {"ok": False, "running": False, "msg": "Intervall ungültig."}
+    if duration_min < 1 or duration_min > 24 * 60:
+        return {"ok": False, "running": False, "msg": "Dauer ungültig."}
+
+    if not os.path.exists(PI_MONITOR_SCRIPT):
+        return {"ok": False, "running": False, "msg": f"Script nicht gefunden: {PI_MONITOR_SCRIPT}"}
+
+    # Command bauen (wenn nicht root → sudo -n, damit es nicht hängen kann)
+    cmd = [PI_MONITOR_SCRIPT, str(interval_s), str(duration_min)]
+    if os.geteuid() != 0:
+        cmd = ["sudo", "-n"] + cmd
+
+    # Output mitschreiben (hilft bei Debug, kost kaum was)
+    try:
+        out = open(PI_MONITOR_OUTLOG, "a", encoding="utf-8")
+    except Exception:
+        out = open(os.devnull, "w", encoding="utf-8")
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=out,
+            stderr=out,
+            start_new_session=True,
+        )
+    except Exception as e:
+        try:
+            out.close()
+        except Exception:
+            pass
+        return {"ok": False, "running": False, "msg": f"Start fehlgeschlagen: {e}"}
+
+    now = time.time()
+    ends = now + (duration_min * 60)
+    state = {
+        "started_ts": now,
+        "ends_ts": ends,
+        "interval_s": interval_s,
+        "duration_min": duration_min,
+    }
+    try:
+        with open(PI_MONITOR_STATE, "w", encoding="utf-8") as f:
+            json.dump(state, f)
+        with open(PI_MONITOR_PIDFILE, "w", encoding="utf-8") as f:
+            f.write(str(proc.pid))
+    except Exception:
+        pass
+
+    return {"ok": True, "running": True, "msg": "Pi Monitor gestartet.", **get_pi_monitor_status()}
+
+
+def stop_pi_monitor() -> dict:
+    st = _read_pi_monitor_state()
+    if not st.get("running"):
+        return {"ok": True, "running": False, "msg": "Nicht aktiv."}
+    pid = st.get("pid")
+    try:
+        os.kill(int(pid), 15)  # SIGTERM
+    except Exception as e:
+        return {"ok": False, "running": True, "msg": f"Konnte nicht stoppen: {e}"}
+    return {"ok": True, "running": False, "msg": "Stop gesendet."}
+
 def _read_var_from_line(line: str) -> str:
     if "=" not in line:
         return ""
@@ -1435,19 +1872,16 @@ def help_page():
 
 @app.route("/", methods=["GET"])
 def index():
-    ssid, ip = get_wifi_status()
-    wifi_signal = get_wifi_signal_percent()
-    gateway_ip = get_default_gateway(WIFI_INTERFACE) if (ssid and ip) else None
-    can_ping_test = bool(gateway_ip)
-    autodarts_active = is_autodarts_active()
-    autodarts_version = get_autodarts_version()
-    cpu_pct, mem_used, mem_total, temp_c = get_system_stats()
+    (
+        ssid, ip,
+        autodarts_active, autodarts_version,
+        cpu_pct, mem_used, mem_total, temp_c,
+        wifi_ok, dongle_ok,
+        current_ap_ssid,
+    ) = get_index_stats_cached()
+    wifi_signal = None  # Signalstärke wird nur auf Knopfdruck geladen
     ad_restarted = request.args.get("ad_restarted") == "1"
 
-    current_ap_ssid = get_ap_ssid()
-
-    wifi_ok = bool(ssid and ip)
-    dongle_ok = wifi_ok or wifi_dongle_present()
 
     cam_config = load_cam_config()
     camera_mode = bool(cam_config.get("camera_mode", False))
@@ -1492,19 +1926,20 @@ def index():
     # WLED / LED-Bänder (User-UI: nur Ein/Aus)
     wled_cfg = load_wled_config()
 
+    wled_master_enabled = bool(wled_cfg.get("master_enabled", True))
+
     admin_unlocked = bool(session.get('admin_unlocked', False))
     adminerr = request.args.get('adminerr')
     adminmsg = (request.args.get('adminmsg') or '').strip()
     adminok = (request.args.get('adminok') == '1')
 
+    msg = request.args.get('msg', '')
+    autoupdate_enabled = autodarts_autoupdate_is_enabled()
+    update_check = load_update_check()
+    update_available = bool(update_check.get('installed') and update_check.get('latest') and update_check.get('installed') != update_check.get('latest'))
+
     update_state = load_update_state() if admin_unlocked else {}
     update_log_tail = tail_file(AUTODARTS_UPDATE_LOG, n=25, max_chars=3500) if admin_unlocked else ""
-
-    # Wenn aus Versehen ein altes Setup "master_enabled": false gesetzt hat,
-    # drehen wir das still wieder auf – sonst wirkt "Ein/Aus" kaputt.
-    if not bool(wled_cfg.get("master_enabled", True)):
-        wled_cfg["master_enabled"] = True
-        save_wled_config(wled_cfg)
 
     wled_targets = wled_cfg.get("targets", []) or []
     while len(wled_targets) < 3:
@@ -1532,6 +1967,7 @@ def index():
     admin_gpio_exists = os.path.exists(ADMIN_GPIO_IMAGE)
     pi_csv_tail = tail_file(PI_MONITOR_CSV, n=20)
     pi_csv_exists = os.path.exists(PI_MONITOR_CSV)
+    pi_mon_status = get_pi_monitor_status()
     pi_readme_exists = os.path.exists(PI_MONITOR_README)
 
     html = """
@@ -1580,17 +2016,13 @@ def index():
     .ad-off { background:#b91c1c33; border:1px solid #b91c1c; color:#fecaca; }
     .slot-card { border:1px solid #333; border-radius:10px; padding:10px 12px; margin:10px 0; }
     .slot-row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between; }
-  
-    .overlay { position:fixed; inset:0; background:rgba(0,0,0,0.75); display:none; align-items:center; justify-content:center; z-index:2000; padding:16px; }
-    .overlay-card { max-width:520px; width:100%; background:#1c1c1c; border:1px solid #333; border-radius:14px; padding:16px; box-shadow:0 0 20px rgba(0,0,0,0.6); }
-    progress { width:100%; height:18px; }
-</style>
+  </style>
 </head>
 <body>
 
-  {% if cpu_pct is not none or mem_used is not none or temp_c is not none %}
+  {% if cpu_pct is not none or mem_used is not none or temp_c is not none or autoupdate_enabled is not none %}
   <div class="sysinfo">
-    <h3>Pi-Status</h3>
+    <h3>Mini PC</h3>
     {% if cpu_pct is not none %}
       <div class="sysinfo-row">CPU: {{ cpu_pct }}%</div>
     {% endif %}
@@ -1600,6 +2032,22 @@ def index():
     {% if temp_c is not none %}
       <div class="sysinfo-row">Temp: {{ "%.1f"|format(temp_c) }} °C</div>
     {% endif %}
+    {% if autoupdate_enabled is not none %}
+      <div class="sysinfo-row" style="margin-top:6px;">
+        Auto-Update:
+        {% if autoupdate_enabled %}
+          <span style="color:#6be26b; font-weight:700;">AN</span>
+        {% else %}
+          <span style="color:#ff6b6b; font-weight:700;">AUS</span>
+        {% endif %}
+      </div>
+      <form method="post" action="{{ url_for('autoupdate_toggle') }}" style="margin-top:6px;">
+        <button type="submit" class="btn btn-small" style="width:100%;">
+          {% if autoupdate_enabled %}Auto-Update ausschalten{% else %}Auto-Update einschalten{% endif %}
+        </button>
+      </form>
+    {% endif %}
+
   </div>
   {% endif %}
 
@@ -1614,7 +2062,7 @@ def index():
     </div>
 
     <h1>Willkommen bei der Autodarts Installation</h1>
-    <div class="subtitle">by Peter Rottmann v.1.20 (Multi-WLED)</div>
+    <div class="subtitle">by Peter Rottmann v.1.16 (Multi-WLED)</div>
 
     {% if not wifi_ok %}
       <div style="background:#7f1d1d; border:2px solid #f87171; color:#fee2e2;
@@ -1643,10 +2091,10 @@ def index():
       <p>
         {% if ssid and ip %}
           Erfolgreich mit Ihrem WLAN <strong>{{ ssid }}</strong> verbunden
-          (IP-Adresse: <strong>{{ ip }}</strong>){% if wifi_signal is not none %} · Signal: <strong>{{ wifi_signal }}%</strong>{% endif %}.
+          (IP-Adresse: <strong>{{ ip }}</strong>) · Signal: <strong id="wifiSignalOut">—</strong> <button type="button" class="btn btn-small" id="wifiSignalBtn" onclick="fetchWifiSignal()">Signal anzeigen</button>.
         {% elif ssid and not ip %}
           Mit WLAN <strong>{{ ssid }}</strong> verbunden,
-          aber es wurde keine IPv4-Adresse vergeben.{% if wifi_signal is not none %} (Signal: <strong>{{ wifi_signal }}%</strong>){% endif %}
+          aber es wurde keine IPv4-Adresse vergeben. Signal: <strong id="wifiSignalOut">—</strong> <button type="button" class="btn btn-small" id="wifiSignalBtn" onclick="fetchWifiSignal()">Signal anzeigen</button>
         {% else %}
           Aktuell ist der Mini PC nicht über den USB-WLAN-Dongle mit Ihrem
           Heimnetzwerk verbunden.
@@ -1668,12 +2116,10 @@ def index():
       </p>
       <div class="btn-row">
         <a href="{{ url_for('wifi') }}" class="btn btn-primary">WLAN-Verbindung einrichten / ändern</a>
+        <button type="button" id="pingBtn" class="btn {% if not wifi_ok %}btn-disabled{% endif %}">Verbindungstest (30 Pakete)</button>
       </div>
-      {% if can_ping_test %}
-      <div class="btn-row" style="margin-top:10px;">
-        <button type="button" id="ping_btn" class="btn">Verbindungstest (30 Pakete)</button>
-      </div>
-      {% endif %}
+      <div id="pingResult" class="hint" style="margin-top:10px;"></div>
+
     </div>
 
     <div class="card">
@@ -1814,7 +2260,12 @@ def index():
   <p class="info-msg">Die LED-Steuerung ist auf diesem Mini PC nicht installiert.</p>
 {% endif %}
 
-<form method="post" action="{{ url_for('wled_save_enabled') }}">
+{% if not wled_master_enabled %}
+  <p class="msg-bad">WLED ist global deaktiviert (Master-Schalter AUS). Bitte im Admin-Bereich wieder aktivieren.</p>
+{% endif %}
+
+<form id="wledForm">
+<fieldset {% if not wled_master_enabled %}disabled style="opacity:0.55"{% endif %}>
   {% for b in wled_bands %}
     <div style="border:1px solid #333; border-radius:12px; padding:12px 14px; margin:10px 0;">
       <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center; justify-content:space-between;">
@@ -1836,8 +2287,8 @@ def index():
             {% endif %}
           </span>
 
-          <a id="wled_cfgbtn_{{ b.slot }}" href="{{ url_for('wled_open_slot', slot=b.slot) }}" target="_blank"
-             class="btn btn-small {% if not wled_installed or not b.enabled %}btn-disabled{% endif %}">
+          <a href="{{ url_for('wled_open_slot', slot=b.slot) }}" target="_blank"
+             id="wled_cfgbtn_{{ b.slot }}" class="btn btn-small {% if not wled_installed or not b.enabled %}btn-disabled{% endif %}">
             LED konfigurieren
           </a>
         </div>
@@ -1845,11 +2296,7 @@ def index():
     </div>
   {% endfor %}
 
-  <div class="btn-row" style="margin-top:12px;">
-    <button type="submit" class="btn btn-primary {% if not wled_installed %}btn-disabled{% endif %}">
-      Speichern
-    </button>
-  </div>
+  </fieldset>
 </form>
 
 <script>
@@ -1866,9 +2313,27 @@ def index():
 </script>
 
 <script>
-  (function () {
+  
+  // WLAN-Signalstärke nur auf Knopfdruck abfragen (spart nmcli-Rescan beim Laden)
+  async function fetchWifiSignal(){
+    const out = document.getElementById("wifiSignalOut");
+    const btn = document.getElementById("wifiSignalBtn");
+    if(btn){ btn.classList.add("btn-disabled"); btn.disabled = true; }
+    try{
+      const r = await fetch("{{ url_for('api_wifi_signal') }}", { cache: "no-store" });
+      const j = await r.json();
+      if(out){
+        out.textContent = (j && j.signal !== null && j.signal !== undefined) ? (String(j.signal) + "%") : "n/a";
+      }
+    }catch(e){
+      if(out) out.textContent = "n/a";
+    }finally{
+      if(btn){ btn.classList.remove("btn-disabled"); btn.disabled = false; }
+    }
+  }
+
+(function () {
     const statusUrl = "{{ url_for('api_wled_status') }}";
-    const setUrl = "{{ url_for('api_wled_set_enabled') }}";
 
     function setStatus(slot, state) {
       const el = document.getElementById("wled_status_" + slot);
@@ -1893,19 +2358,11 @@ def index():
       el.innerHTML = '<span class="dot dot-gray"></span>—';
     }
 
-    function setCfgBtn(slot, enabled) {
-      const a = document.getElementById("wled_cfgbtn_" + slot);
-      if (!a) return;
-      if (enabled) a.classList.remove("btn-disabled");
-      else a.classList.add("btn-disabled");
-    }
-
     function refresh() {
       fetch(statusUrl, { cache: "no-store" })
         .then(r => r.json())
         .then(data => {
           (data.bands || []).forEach(b => {
-            setCfgBtn(b.slot, !!b.enabled);
             if (!b.enabled) return setStatus(b.slot, "off");
             if (b.online === true) return setStatus(b.slot, "ok");
             if (b.online === false) return setStatus(b.slot, "bad");
@@ -1915,35 +2372,40 @@ def index():
         .catch(() => {});
     }
 
-    function postEnabled(slot, enabled) {
-      const fd = new FormData();
-      fd.append("slot", String(slot));
-      fd.append("enabled", enabled ? "1" : "0");
-      return fetch(setUrl, { method: "POST", body: fd, cache: "no-store" });
-    }
-
     window.addEventListener("load", refresh);
 
     document.querySelectorAll("input[type=checkbox][name^=wled_enabled_]").forEach(cb => {
-      cb.addEventListener("change", () => {
-        const slot = Number((cb.name || "").split("_").pop());
+      cb.addEventListener("change", async () => {
+        const slot = (cb.name || "").split("_").pop();
         if (!slot) return;
 
-        setCfgBtn(slot, cb.checked);
+        // UI sofort reagieren
         setStatus(slot, cb.checked ? "checking" : "off");
+        const cfgBtn = document.getElementById("wled_cfgbtn_" + slot);
+        if(cfgBtn){
+          if(cb.checked){ cfgBtn.classList.remove("btn-disabled"); }
+          else { cfgBtn.classList.add("btn-disabled"); }
+        }
 
-        postEnabled(slot, cb.checked)
-          .then(r => {
-            if (!r.ok) throw new Error("save_failed");
-            // Nur checken, wenn eingeschaltet (sonst kein Traffic)
-            if (cb.checked) setTimeout(refresh, 200);
-          })
-          .catch(() => {
-            // revert on error
+        // sofort speichern (ohne extra "Speichern"-Knopf)
+        cb.disabled = true;
+        try{
+          const body = new URLSearchParams();
+          body.set("enabled", cb.checked ? "1" : "0");
+          const r = await fetch(`/wled/set-enabled/${slot}`, { method:"POST", body });
+          const j = await r.json().catch(()=>({ok:false,msg:""}));
+          if(!j.ok){
+            // rollback UI falls Fehler
             cb.checked = !cb.checked;
-            setCfgBtn(slot, cb.checked);
-            setStatus(slot, cb.checked ? "bad" : "off");
-          });
+            setStatus(slot, cb.checked ? "checking" : "off");
+          }
+        }catch(e){
+          cb.checked = !cb.checked;
+          setStatus(slot, cb.checked ? "checking" : "off");
+        }finally{
+          cb.disabled = false;
+          setTimeout(refresh, 250);
+        }
       });
     });
   })();
@@ -1985,15 +2447,35 @@ def index():
             Installierte Version: <strong>{{ autodarts_version or 'unbekannt' }}</strong>
           </p>
 
-          <form method="post" action="{{ url_for('admin_autodarts_update') }}"
-                onsubmit="return confirm('Autodarts jetzt aktualisieren?');">
-            <div class="btn-row">
-              <button type="submit" class="btn btn-primary">Autodarts aktualisieren</button>
+          <div class="btn-row">
+              <form method="post" action="{{ url_for('admin_autodarts_check') }}" style="margin:0;">
+                <button type="submit" class="btn">Update prüfen</button>
+              </form>
+
+              <form method="post" action="{{ url_for('admin_autodarts_update') }}"
+                    onsubmit="return confirm('Autodarts jetzt aktualisieren?');" style="margin:0;">
+                <button type="submit" class="btn btn-primary {% if not update_available %}btn-disabled{% endif %}">
+                  {% if update_available %}Update installieren{% else %}Autodarts aktualisieren{% endif %}
+                </button>
+              </form>
             </div>
-            <p class="hint" style="margin-top:6px;">
-              Hinweis: Das Update nutzt das offizielle Autodarts-Update-Script (updater.sh) und schreibt ein Log.
+
+            <p class="hint" style="margin-top:8px;">
+              {% if update_check.latest %}
+                Letzter Check: <strong>{{ update_check.installed or 'unbekannt' }}</strong> → <strong>{{ update_check.latest }}</strong>
+                {% if update_available %}
+                  <span style="color:#ffb347;">(Update verfügbar)</span>
+                {% else %}
+                  <span style="color:#6be26b;">(aktuell)</span>
+                {% endif %}
+              {% else %}
+                Tipp: Erst „Update prüfen“, dann nur bei Bedarf aktualisieren.
+              {% endif %}
             </p>
-          </form>
+
+            <p class="hint" style="margin-top:6px;">
+              Das Update nutzt das offizielle Autodarts-Update-Script (<code>updater.sh</code>) und schreibt ein Log.
+            </p>
 
           {% if update_state.started %}
             <p class="hint" style="margin-top:8px;">
@@ -2063,6 +2545,144 @@ def index():
       <hr style="border:none; border-top:1px solid #333; margin:14px 0;">
 
       <h3 style="margin:0 0 8px;">Pi Monitor Test / Log</h3>
+<div style="margin:10px 0 12px; padding:12px; border:1px solid #333; border-radius:12px; background:#101010;">
+  <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:end;">
+    <div>
+      <label for="piMonInterval">Intervall</label>
+      <select id="piMonInterval">
+        <option value="5">5s</option>
+        <option value="10" selected>10s</option>
+        <option value="15">15s</option>
+        <option value="30">30s</option>
+        <option value="60">60s</option>
+      </select>
+    </div>
+    <div>
+      <label for="piMonDuration">Dauer</label>
+      <select id="piMonDuration">
+        <option value="5">5min</option>
+        <option value="10">10min</option>
+        <option value="15">15min</option>
+        <option value="30" selected>30min</option>
+        <option value="60">60min</option>
+      </select>
+    </div>
+
+    <button id="piMonStartBtn" class="btn">Pi Monitor starten</button>
+    <button id="piMonStopBtn" class="btn btn-danger" style="display:none;">Stop</button>
+  </div>
+
+  <div id="piMonStatusText" class="hint" style="margin-top:8px;"></div>
+</div>
+
+<script>
+  (function(){
+    const statusEl = document.getElementById('piMonStatusText');
+    const startBtn = document.getElementById('piMonStartBtn');
+    const stopBtn  = document.getElementById('piMonStopBtn');
+    const intervalSel = document.getElementById('piMonInterval');
+    const durationSel = document.getElementById('piMonDuration');
+
+    let pollTimer = null;
+
+    function fmtSeconds(s){
+      s = Math.max(0, Number(s||0));
+      const m = Math.floor(s/60);
+      const r = s % 60;
+      if(m <= 0) return r + "s";
+      return m + "m " + r + "s";
+    }
+
+    function setRunningUI(st){
+      const running = !!(st && st.running);
+      if(running){
+        startBtn.classList.add('btn-disabled');
+        startBtn.disabled = true;
+        stopBtn.style.display = 'inline-block';
+        const rem = fmtSeconds(st.remaining_sec || 0);
+        statusEl.textContent = (st.msg || "Läuft…") + (st.remaining_sec != null ? (" · Rest: " + rem) : "");
+      }else{
+        startBtn.classList.remove('btn-disabled');
+        startBtn.disabled = false;
+        stopBtn.style.display = 'none';
+        statusEl.textContent = (st && st.msg) ? st.msg : "Nicht aktiv.";
+      }
+    }
+
+    async function fetchStatus(){
+      try{
+        const rs = await fetch('/api/pi_monitor/status');
+        const st = await rs.json();
+        if(st && st.ok === false){
+          setRunningUI({running:false, msg: st.msg || "Fehler"});
+          return null;
+        }
+        setRunningUI(st);
+        return st;
+      }catch(e){
+        setRunningUI({running:false, msg: "Status nicht erreichbar: " + e});
+        return null;
+      }
+    }
+
+    function startPolling(){
+      if(pollTimer) return;
+      pollTimer = setInterval(async ()=>{
+        const st = await fetchStatus();
+        if(!st || !st.running){
+          clearInterval(pollTimer);
+          pollTimer = null;
+        }
+      }, 5000);
+    }
+
+    startBtn.addEventListener('click', async ()=>{
+      if(startBtn.disabled) return;
+      startBtn.classList.add('btn-disabled');
+      startBtn.disabled = true;
+      statusEl.textContent = "Starte…";
+      const interval_s = parseInt(intervalSel.value, 10);
+      const duration_min = parseInt(durationSel.value, 10);
+      try{
+        const rs = await fetch('/api/pi_monitor/start', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({interval_s, duration_min})
+        });
+        const st = await rs.json();
+        if(!st.ok){
+          setRunningUI({running:false, msg: st.msg || "Start fehlgeschlagen."});
+          return;
+        }
+        setRunningUI(st);
+        startPolling();
+      }catch(e){
+        setRunningUI({running:false, msg:"Start fehlgeschlagen: " + e});
+      }
+    });
+
+    stopBtn.addEventListener('click', async ()=>{
+      stopBtn.classList.add('btn-disabled');
+      stopBtn.disabled = true;
+      try{
+        const rs = await fetch('/api/pi_monitor/stop', {method:'POST'});
+        const st = await rs.json();
+        stopBtn.classList.remove('btn-disabled');
+        stopBtn.disabled = false;
+        await fetchStatus();
+      }catch(e){
+        stopBtn.classList.remove('btn-disabled');
+        stopBtn.disabled = false;
+        statusEl.textContent = "Stop fehlgeschlagen: " + e;
+      }
+    });
+
+    // initialer Status aus Server-Render
+    const initial = {{ pi_mon_status|tojson }};
+    setRunningUI(initial);
+    if(initial && initial.running) startPolling();
+  })();
+</script>
 
       <pre style="background:#0b0b0b; padding:12px; border-radius:10px; border:1px solid #333; overflow:auto; white-space:pre-wrap; margin:0;">
 # 1) Script bearbeiten (falls nötig)
@@ -2121,97 +2741,103 @@ cp /var/log/pi_monitor_test_README.txt ~/
     </footer>
   </div>
 
-  <!-- Verbindungstest Overlay -->
-  <div id="ping_overlay" class="overlay" aria-hidden="true">
-    <div class="overlay-card">
-      <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
-        <div style="font-weight:700; font-size:1.05rem;">Verbindungstest</div>
-        <button type="button" id="ping_close" class="btn btn-small">Schließen</button>
-      </div>
-      <p class="hint" style="margin-top:8px;" id="ping_target">Starte…</p>
-      <progress id="ping_progress" max="30" value="0"></progress>
-      <p style="margin:10px 0 0;" id="ping_text">Bitte warten…</p>
+<div id="pingOverlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:2000; align-items:center; justify-content:center;">
+  <div style="background:#1c1c1c; border:1px solid #333; border-radius:14px; padding:18px 18px; width:min(520px,92vw); box-shadow:0 0 30px rgba(0,0,0,.7);">
+    <div style="font-weight:800; margin-bottom:10px;">Verbindungstest läuft…</div>
+    <div id="pingOverlayText" style="margin-bottom:10px; opacity:.9;">Starte…</div>
+    <div style="height:10px; background:#0b0b0b; border:1px solid #333; border-radius:999px; overflow:hidden;">
+      <div id="pingOverlayBar" style="height:100%; width:0%; background:#3b82f6;"></div>
     </div>
+    <div class="hint" style="margin-top:10px;">Bitte warten – das dauert ca. 30 Sekunden.</div>
   </div>
+</div>
 
 <script>
 (function(){
-  const btn = document.getElementById("ping_btn");
-  const overlay = document.getElementById("ping_overlay");
-  const closeBtn = document.getElementById("ping_close");
-  const prog = document.getElementById("ping_progress");
-  const txt = document.getElementById("ping_text");
-  const tgt = document.getElementById("ping_target");
-  const streamUrl = "{{ url_for('api_pingtest_stream') }}";
-  let es = null;
+  const btn = document.getElementById('pingBtn');
+  const overlay = document.getElementById('pingOverlay');
+  const txt = document.getElementById('pingOverlayText');
+  const bar = document.getElementById('pingOverlayBar');
+  const out = document.getElementById('pingResult');
 
-  function show(){ if (overlay){ overlay.style.display="flex"; overlay.setAttribute("aria-hidden","false"); } }
-  function hide(){ 
-    if (es){ try{ es.close(); }catch(e){} es=null; }
-    if (overlay){ overlay.style.display="none"; overlay.setAttribute("aria-hidden","true"); }
-    if (btn){ btn.disabled=false; btn.classList.remove("btn-disabled"); }
+  function showOverlay(){ if(overlay){ overlay.style.display='flex'; } }
+  function hideOverlay(){ if(overlay){ overlay.style.display='none'; } }
+  function setProgress(done, total){
+    const pct = total ? Math.max(0, Math.min(100, Math.round((done/total)*100))) : 0;
+    if(bar) bar.style.width = pct + '%';
   }
 
-  function start(){
-    if (!btn) return;
-    btn.disabled=true;
-    btn.classList.add("btn-disabled");
-    prog.value = 0;
-    prog.max = 30;
-    txt.textContent = "Starte…";
-    tgt.textContent = "Starte…";
-    show();
+  async function start(){
+    if(!btn || btn.classList.contains('btn-disabled')) return;
+    btn.classList.add('btn-disabled');
+    if(out) out.textContent = '';
+    showOverlay();
+    if(txt) txt.textContent = 'Starte…';
 
-    es = new EventSource(streamUrl);
-    es.onmessage = (ev) => {
-      let data = null;
-      try { data = JSON.parse(ev.data); } catch(e) { return; }
+    try{
+      const r = await fetch('/wifi/ping/start', {method:'POST'});
+      const j = await r.json();
+      if(!j.ok){
+        hideOverlay();
+        if(out) out.textContent = j.msg || 'Ping konnte nicht gestartet werden.';
+        btn.classList.remove('btn-disabled');
+        return;
+      }
+      const jobId = j.job_id;
+      const total = 30;
+      let tries = 0;
 
-      if (data.start){
-        if (data.total) prog.max = data.total;
-        tgt.textContent = data.target ? ("Ziel (Router): " + data.target) : "Ziel: —";
-        txt.textContent = "0 von " + (data.total || 30) + " Paketen…";
-      }
-      if (data.progress){
-        const total = data.total || 30;
-        prog.max = total;
-        prog.value = data.sent || 0;
-        txt.textContent = (data.sent || 0) + " von " + total + " Paketen… (" + (data.received || 0) + " Antworten)";
-      }
-      if (data.done){
-        if (data.error){
-          txt.textContent = "Fehler: " + data.error;
-        } else {
-          const sent = data.sent ?? 30;
-          const rec = data.received ?? 0;
-          const min = (data.min_ms != null) ? data.min_ms + " ms" : "—";
-          const max = (data.max_ms != null) ? data.max_ms + " ms" : "—";
-          const avg = (data.avg_ms != null) ? data.avg_ms + " ms" : "—";
-          txt.innerHTML = 
-            "<strong>" + rec + " von " + sent + " Paketen</strong> wurden erfolgreich gesendet.<br>" +
-            "Schnellstes Paket: <strong>" + min + "</strong><br>" +
-            "Langsamstes Paket: <strong>" + max + "</strong><br>" +
-            "Durchschnitt: <strong>" + avg + "</strong>";
+      const timer = setInterval(async ()=>{
+        tries += 1;
+        try{
+          const rs = await fetch('/wifi/ping/status/' + jobId);
+          const s = await rs.json();
+          if(!s.ok){
+            clearInterval(timer);
+            hideOverlay();
+            if(out) out.textContent = s.msg || 'Fehler beim Status.';
+            btn.classList.remove('btn-disabled');
+            return;
+          }
+
+          const prog = Number(s.progress||0);
+          const recv = Number(s.received||0);
+          if(txt) txt.textContent = `${prog} von ${total} Paketen… (empfangen: ${recv})`;
+          setProgress(prog, total);
+
+          if(s.done){
+            clearInterval(timer);
+            hideOverlay();
+            const sent = total;
+            const rec = recv;
+            let result = `${rec} von ${sent} Paketen wurden erfolgreich gesendet.`;
+            if(s.min_ms!=null && s.max_ms!=null && s.avg_ms!=null){
+              result += ` Schnellstes: ${s.min_ms} ms · Langsamstes: ${s.max_ms} ms · Durchschnitt: ${s.avg_ms} ms`;
+            }
+            if(s.error){
+              result += ` (Hinweis: ${s.error})`;
+            }
+            if(out) out.textContent = result;
+            btn.classList.remove('btn-disabled');
+          }
+        }catch(e){
+          if(tries > 120){
+            clearInterval(timer);
+            hideOverlay();
+            if(out) out.textContent = 'Verbindungstest abgebrochen (Timeout).';
+            btn.classList.remove('btn-disabled');
+          }
         }
-        try{ es.close(); }catch(e){}
-        es = null;
-        btn.disabled=false;
-        btn.classList.remove("btn-disabled");
-      }
-    };
+      }, 600);
 
-    es.onerror = () => {
-      txt.textContent = "Verbindungstest abgebrochen oder fehlgeschlagen.";
-      try{ es.close(); }catch(e){}
-      es = null;
-      btn.disabled=false;
-      btn.classList.remove("btn-disabled");
-    };
+    }catch(e){
+      hideOverlay();
+      if(out) out.textContent = 'Verbindungstest fehlgeschlagen.';
+      btn.classList.remove('btn-disabled');
+    }
   }
 
-  if (btn) btn.addEventListener("click", start);
-  if (closeBtn) closeBtn.addEventListener("click", hide);
-  if (overlay) overlay.addEventListener("click", (e)=>{ if(e.target===overlay) hide(); });
+  if(btn){ btn.addEventListener('click', start); }
 })();
 </script>
 
@@ -2244,6 +2870,7 @@ cp /var/log/pi_monitor_test_README.txt ~/
         wled_installed=wled_installed,
         wled_bands=wled_bands,
         wled_hosts=wled_hosts,
+        wled_master_enabled=wled_master_enabled,
         admin_unlocked=admin_unlocked,
         adminerr=adminerr,
         adminmsg=adminmsg,
@@ -2254,6 +2881,7 @@ cp /var/log/pi_monitor_test_README.txt ~/
         wled_service_active=wled_service_active,
         admin_gpio_exists=admin_gpio_exists,
         pi_csv_tail=pi_csv_tail,
+        pi_mon_status=pi_mon_status,
         pi_csv_exists=pi_csv_exists,
         pi_readme_exists=pi_readme_exists,
         pi_monitor_script=PI_MONITOR_SCRIPT,
@@ -2272,7 +2900,10 @@ cp /var/log/pi_monitor_test_README.txt ~/
         ssid=ssid,
         ip=ip,
         wifi_signal=wifi_signal,
-        can_ping_test=can_ping_test,
+        msg=msg,
+        autoupdate_enabled=autoupdate_enabled,
+        update_check=update_check,
+        update_available=update_available,
         wifi_interface=WIFI_INTERFACE,
     )
 
@@ -2473,6 +3104,38 @@ def wled_toggle():
 
 
 
+
+@app.route("/wled/set-enabled/<int:slot>", methods=["POST"])
+def wled_set_enabled(slot: int):
+    # User-UI: Slot 1..3
+    if slot < 1 or slot > 3:
+        return jsonify({"ok": False, "msg": "Ungültiger Slot."}), 400
+
+    enabled = request.form.get("enabled") == "1"
+    cfg = load_wled_config()
+    cfg["master_enabled"] = True  # User-UI hat keinen Master-Schalter
+
+    targets = cfg.get("targets", []) or []
+    while len(targets) < 3:
+        targets.append({"label": f"Dart LED{len(targets)+1}", "host": "", "enabled": False})
+    targets = targets[:3]
+
+    targets[slot - 1]["enabled"] = bool(enabled)
+    cfg["targets"] = targets
+    save_wled_config(cfg)
+
+    # Service handling
+    if service_exists(DARTS_WLED_SERVICE):
+        hosts = get_enabled_wled_hosts(cfg)
+        if hosts:
+            update_darts_wled_start_custom_weps(hosts)
+            service_enable_now(DARTS_WLED_SERVICE)
+        else:
+            service_disable_now(DARTS_WLED_SERVICE)
+
+    return jsonify({"ok": True})
+
+
 @app.route("/wled/save-enabled", methods=["POST"])
 def wled_save_enabled():
     cfg = load_wled_config()
@@ -2572,6 +3235,28 @@ def _wled_check_one(host: str) -> tuple[bool, str | None]:
     return ok, ip
 
 
+
+@app.route("/api/wifi/signal", methods=["GET"])
+def api_wifi_signal():
+    """Signalstärke (0..100) des aktuellen WLANs – nur auf Knopfdruck."""
+    now = time.time()
+    try:
+        if (now - float(WIFI_SIGNAL_CACHE.get('ts', 0.0))) < WIFI_SIGNAL_CACHE_TTL_SEC:
+            return jsonify({"signal": WIFI_SIGNAL_CACHE.get('v')})
+    except Exception:
+        pass
+
+    sig = get_wifi_signal_percent()
+    try:
+        WIFI_SIGNAL_CACHE['ts'] = now
+        WIFI_SIGNAL_CACHE['v'] = sig
+    except Exception:
+        pass
+    iface = _get_default_route_interface() or _get_connected_wifi_interface(prefer=WIFI_INTERFACE if WIFI_INTERFACE else None) or WIFI_INTERFACE
+    if iface == AP_INTERFACE:
+        iface = WIFI_INTERFACE
+    return jsonify({"signal": sig, "iface": iface})
+
 @app.route("/api/wled/status", methods=["GET"])
 def api_wled_status():
     cfg = load_wled_config()
@@ -2605,53 +3290,40 @@ def api_wled_status():
     return jsonify({"bands": bands})
 
 
-@app.route("/api/wled/set-enabled", methods=["POST"])
-def api_wled_set_enabled():
-    """
-    Speichert Ein/Aus für einen Slot sofort (ohne extra "Speichern"-Klick).
-    """
+# === Pi Monitor Test API (Admin) ===
+@app.route("/api/pi_monitor/status", methods=["GET"])
+def api_pi_monitor_status():
+    if not bool(session.get("admin_unlocked", False)):
+        return jsonify({"ok": False, "msg": "Admin gesperrt."}), 403
+    st = get_pi_monitor_status()
+    st["ok"] = True
+    return jsonify(st)
+
+
+@app.route("/api/pi_monitor/start", methods=["POST"])
+def api_pi_monitor_start():
+    if not bool(session.get("admin_unlocked", False)):
+        return jsonify({"ok": False, "msg": "Admin gesperrt."}), 403
+    data = request.get_json(silent=True) or {}
     try:
-        slot = int((request.form.get("slot") or "0").strip())
+        interval_s = int(data.get("interval_s") or 10)
+        duration_min = int(data.get("duration_min") or 30)
     except Exception:
-        slot = 0
-    enabled = (request.form.get("enabled") or "").strip() in ("1", "true", "True", "on", "yes")
-
-    if slot < 1 or slot > 3:
-        return jsonify({"ok": False, "error": "invalid_slot"}), 400
-
-    cfg = load_wled_config()
-    cfg["master_enabled"] = True  # User-UI hat keinen Master-Schalter
-
-    targets = cfg.get("targets", []) or []
-    while len(targets) < 3:
-        targets.append({"label": f"Dart LED{len(targets)+1}", "host": "", "enabled": False})
-    targets = targets[:3]
-
-    targets[slot - 1]["enabled"] = bool(enabled)
-    cfg["targets"] = targets
-    try:
-        save_wled_config(cfg)
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-    # Service handling: nur wenn installiert/exists
-    if service_exists(DARTS_WLED_SERVICE):
-        hosts = get_enabled_wled_hosts(cfg)
-        if hosts:
-            update_darts_wled_start_custom_weps(hosts)
-            service_enable_now(DARTS_WLED_SERVICE)
-        else:
-            # Keine aktiven Bänder -> Service AUS (keine Ressourcen / keine Logs)
-            service_disable_now(DARTS_WLED_SERVICE)
-
-    return jsonify({"ok": True, "slot": slot, "enabled": bool(enabled)})
+        interval_s, duration_min = 10, 30
+    res = start_pi_monitor(interval_s=interval_s, duration_min=duration_min)
+    if not res.get("ok"):
+        return jsonify(res), 400
+    return jsonify(res)
 
 
-@app.route("/api/pingtest/stream", methods=["GET"])
-def api_pingtest_stream():
-    return Response(ping_test_generator(total=30), mimetype="text/event-stream",
-                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
-
+@app.route("/api/pi_monitor/stop", methods=["POST"])
+def api_pi_monitor_stop():
+    if not bool(session.get("admin_unlocked", False)):
+        return jsonify({"ok": False, "msg": "Admin gesperrt."}), 403
+    res = stop_pi_monitor()
+    if not res.get("ok"):
+        return jsonify(res), 400
+    return jsonify(res)
 
 @app.route("/admin/unlock", methods=["POST"])
 def admin_unlock():
@@ -2669,10 +3341,45 @@ def admin_lock():
     return redirect(url_for("index") + "#admin")
 
 
+@app.route("/admin/autodarts/check", methods=["POST"])
+def admin_autodarts_check():
+    if not bool(session.get("admin_unlocked", False)):
+        return ("Forbidden", 403)
+
+    installed = get_autodarts_version()
+    latest = fetch_latest_autodarts_version()
+    channel = _get_updater_channel()
+    data = {
+        "ts": int(time.time()),
+        "installed": installed,
+        "latest": latest,
+        "channel": channel,
+    }
+    save_update_check(data)
+
+    if installed and latest:
+        if installed == latest:
+            msg = f"Kein Update verfügbar (bereits v{installed})."
+        else:
+            msg = f"Update verfügbar: v{installed} → v{latest}."
+    else:
+        msg = "Update-Check nicht möglich (Version oder Internet nicht verfügbar)."
+
+    return redirect(url_for("index", admin="1", adminmsg=msg, adminok="1") + "#admin")
+
+
 @app.route("/admin/autodarts/update", methods=["POST"])
 def admin_autodarts_update():
     if not bool(session.get("admin_unlocked", False)):
         return ("Forbidden", 403)
+
+    installed = get_autodarts_version()
+    latest = fetch_latest_autodarts_version()
+
+    # Wenn wir sicher wissen, dass es kein Update gibt → nicht starten
+    if installed and latest and installed == latest:
+        msg = f"Kein Update verfügbar (bereits v{installed})."
+        return redirect(url_for("index", admin="1", adminok="1", adminmsg=msg) + "#admin")
 
     ok, msg = start_autodarts_update_background()
     return redirect(url_for("index", admin="1", adminok=("1" if ok else "0"), adminmsg=msg) + "#admin")
@@ -2865,8 +3572,6 @@ def wifi():
     # Aktuellen Status des WLAN-Dongles anzeigen
     ssid_cur, ip_cur = get_wifi_status()
     wifi_signal = get_wifi_signal_percent()
-    gateway_ip = get_default_gateway(WIFI_INTERFACE) if (ssid and ip) else None
-    can_ping_test = bool(gateway_ip)
     if ssid_cur and ip_cur:
         current_info = f"Aktuell verbunden mit <strong>{ssid_cur}</strong> (IP {ip_cur})" + (f" · Signal: <strong>{wifi_signal}%</strong>." if wifi_signal is not None else "." )
     elif ssid_cur and not ip_cur:
@@ -2950,6 +3655,49 @@ def wifi():
     )
 
 
+
+
+@app.route("/autoupdate/toggle", methods=["POST"])
+def autoupdate_toggle():
+    cur = autodarts_autoupdate_is_enabled()
+    if cur is None:
+        return redirect(url_for("index", msg="Auto-Update Service nicht gefunden."))
+
+    ok, msg = autodarts_set_autoupdate(not bool(cur))
+    return redirect(url_for("index", msg=msg))
+
+
+@app.route("/wifi/ping/start", methods=["POST"])
+def wifi_ping_start():
+    ok, msg, job_id = start_ping_test(count=30)
+    return jsonify({"ok": bool(ok), "msg": msg, "job_id": job_id})
+
+
+@app.route("/wifi/ping/status/<job_id>", methods=["GET"])
+def wifi_ping_status(job_id: str):
+    job = PING_JOBS.get(job_id)
+    if not job:
+        return jsonify({"ok": False, "msg": "Job nicht gefunden."}), 404
+
+    # Auto-cleanup nach 15min
+    try:
+        if time.time() - float(job.get("started", 0)) > 900:
+            PING_JOBS.pop(job_id, None)
+    except Exception:
+        pass
+
+    return jsonify({
+        "ok": True,
+        "target": job.get("target"),
+        "count": job.get("count", 30),
+        "progress": job.get("progress", 0),
+        "received": job.get("received", 0),
+        "done": bool(job.get("done", False)),
+        "min_ms": job.get("min_ms"),
+        "max_ms": job.get("max_ms"),
+        "avg_ms": job.get("avg_ms"),
+        "error": job.get("error"),
+    })
 @app.route("/ap", methods=["GET", "POST"])
 def ap_config():
     message = ""
@@ -3104,16 +3852,75 @@ def cam_view(cam_id: int):
 
     port = STREAM_BASE_PORT + (cam_id - 1)
 
+    # Probe device capabilities (hilft bei "gefunden, aber kein Stream")
+    probe = probe_v4l2_device(dev)
+    preferred_formats = ["MJPG", "YUYV"]
+    fmt, res = _best_resolution_for_formats(probe.get("resolutions", {}) if isinstance(probe, dict) else {}, preferred_formats)
+
+    force_yuyv = (fmt == "YUYV")
+
+    input_args = f"input_uvc.so -d {dev}"
+    if res:
+        input_args += f" -r {res}"
+    if force_yuyv:
+        # Einige Kameras liefern kein MJPG, sondern nur YUYV – mjpg_streamer kann das mit -y.
+        input_args += " -y"
+
+    log_path = f"/var/log/autodarts_mjpg_streamer_cam{cam_id}.log"
     try:
-        subprocess.Popen(
-            [
-                "mjpg_streamer",
-                "-i",
-                f"input_uvc.so -d {dev}",
-                "-o",
-                f"output_http.so -p {port}",
-            ]
-        )
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    except Exception:
+        pass
+
+    try:
+        with open(log_path, "a", encoding="utf-8") as logf:
+            logf.write(f"\n--- {time.strftime('%Y-%m-%d %H:%M:%S')} cam{cam_id} dev={dev} args={input_args} ---\n")
+            p = subprocess.Popen(
+                [
+                    "mjpg_streamer",
+                    "-i",
+                    input_args,
+                    "-o",
+                    f"output_http.so -p {port}",
+                ],
+                stdout=logf,
+                stderr=logf,
+            )
+
+        # kurzer Healthcheck: wenn Prozess sofort stirbt, zeigen wir das Log an
+        time.sleep(0.3)
+        if p.poll() is not None:
+            tail = tail_file(log_path, n=120, max_chars=7000)
+            fmts = ""
+            hint = ""
+            if probe.get("ok"):
+                fmts = ", ".join(sorted(list(probe.get("formats") or [])))
+                if fmts:
+                    fmts = f"<p><strong>Erkannte Formate:</strong> {fmts}</p>"
+                if probe.get("formats") and ("MJPG" not in probe["formats"]) and ("YUYV" not in probe["formats"]):
+                    hint = (
+                        "<p style='color:#ffb347'><strong>Hinweis:</strong> Die Kamera bietet kein MJPG/YUYV an "
+                        "(z.B. nur H264). In diesem Fall kann mjpg_streamer oft keinen MJPEG-Stream erzeugen.</p>"
+                    )
+            else:
+                err = (probe.get("error") or "").strip()
+                if err:
+                    fmts = f"<p><strong>v4l2 Probe-Fehler:</strong> {err}</p>"
+
+            return (
+                "<html><body style='font-family:system-ui;background:#111;color:#eee;padding:20px'>"
+                "<h1>Fehler: Kamera-Stream konnte nicht gestartet werden</h1>"
+                f"<p>Device: <code>{dev}</code></p>"
+                f"<p>mjpg_streamer Input: <code>{input_args}</code></p>"
+                f"{fmts}"
+                f"{hint}"
+                "<p>Log (letzte Zeilen):</p>"
+                f"<pre style='white-space:pre-wrap;background:#0b0b0b;border:1px solid #333;padding:12px;border-radius:10px'>{tail}</pre>"
+                f"<p><a style='color:#3b82f6' href='{url_for('index')}'>Zurück</a></p>"
+                "</body></html>",
+                500,
+            )
+
     except FileNotFoundError:
         return (
             "<html><body><h1>Fehler: mjpg_streamer nicht gefunden</h1>"
@@ -3122,6 +3929,7 @@ def cam_view(cam_id: int):
             "</body></html>",
             500,
         )
+
 
     host = request.host.split(":", 1)[0]
     stream_url = f"http://{host}:{port}/?action=stream"
