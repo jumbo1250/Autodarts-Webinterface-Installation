@@ -2586,11 +2586,11 @@ def index():
           </p>
 
           <div class="btn-row">
-              <form method="post" action="{{ url_for('admin_webpanel_check') }}" style="margin:0;">
+              <form method="post" action="{{ url_for('admin_autodarts_check') }}" style="margin:0;">
                 <button type="submit" class="btn">Update prüfen</button>
               </form>
 
-              <form method="post" action="{{ url_for('admin_webpanel_update') }}"
+              <form method="post" action="{{ url_for('admin_autodarts_update') }}"
                     onsubmit="return confirm('Webpanel jetzt aktualisieren?\nHinweis: Der Webpanel-Service startet danach neu.');" style="margin:0;">
                 <button type="submit" class="btn btn-primary {% if not webpanel_update_available %}btn-disabled{% endif %}">
                   {% if webpanel_update_available %}Update installieren{% else %}Webpanel aktualisieren{% endif %}
