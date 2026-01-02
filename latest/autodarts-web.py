@@ -92,8 +92,8 @@ WEBPANEL_UPDATE_LOG = "/var/log/autodarts_webpanel_update.log"
 WEBPANEL_UPDATE_STATE = "/var/lib/autodarts/webpanel-update-state.json"
 WEBPANEL_UPDATE_CHECK = "/var/lib/autodarts/webpanel-update-check.json"
 
-# lokale Version (bei Installation idealerweise zusammen mit autodarts-web.py nach /usr/local/bin/version.txt kopieren)
-WEBPANEL_VERSION_FILE = os.environ.get("WEBPANEL_VERSION_FILE", "/usr/local/bin/version.txt")
+# lokale Version (wird durch autodarts-webpanel-update.sh nach /var/lib/autodarts/webpanel-version.txt geschrieben)
+WEBPANEL_VERSION_FILE = os.environ.get("WEBPANEL_VERSION_FILE", "/var/lib/autodarts/webpanel-version.txt")
 
 # Remote (GitHub Raw) – kann per ENV überschrieben werden
 WEBPANEL_RAW_BASE = os.environ.get(
@@ -1202,49 +1202,61 @@ def save_webpanel_update_state(state: dict):
 
 
 def start_webpanel_update_background() -> tuple[bool, str]:
-    """Startet das Webpanel-Update Script im Hintergrund. Das Script darf den Service neu starten."""
+    """Startet das Webpanel-Update **außerhalb** des Service-CGroups, damit es den Service-Restart überlebt.
+
+    Hintergrund:
+      Das Update-Script restarted am Ende `autodarts-web.service`. Wenn das Update als Child-Prozess
+      innerhalb des Webpanel-Services läuft, würde systemd beim Restart normalerweise auch den Updater killen
+      (KillMode=control-group). Deshalb starten wir es via `systemd-run` in einem eigenen transienten Unit.
+    """
+
     if not os.path.exists(WEBPANEL_UPDATE_SCRIPT):
         return False, f"Update-Script nicht gefunden: {WEBPANEL_UPDATE_SCRIPT}"
 
-    # Läuft schon?
+    # State aktualisieren
     state = load_webpanel_update_state()
-    pid = state.get("pid")
-    if pid:
-        try:
-            os.kill(int(pid), 0)
-            return False, "Webpanel-Update läuft bereits."
-        except Exception:
-            pass
+    state["started"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    state.pop("error", None)
+
+    unit_name = f"autodarts-webpanel-update-{int(time.time())}"
 
     try:
-        os.makedirs(os.path.dirname(WEBPANEL_UPDATE_LOG), exist_ok=True)
-    except Exception:
-        pass
+        cmd = [
+            "sudo", "-n",
+            "systemd-run",
+            "--unit", unit_name,
+            "--no-block",
+            "--collect",
+            WEBPANEL_UPDATE_SCRIPT,
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True)
 
-    # Command bauen (wenn nicht root → sudo -n, damit es nicht hängen kann)
-    cmd = [WEBPANEL_UPDATE_SCRIPT]
-    if os.geteuid() != 0:
-        cmd = ["sudo", "-n"] + cmd
+        if res.returncode == 0:
+            state["unit"] = unit_name
+            state["method"] = "systemd-run"
+            save_webpanel_update_state(state)
+            return True, ""
 
-    try:
-        logf = open(WEBPANEL_UPDATE_LOG, "a", encoding="utf-8")
-        logf.write("\n\n===== Webpanel Update gestartet: %s =====\n" % time.strftime("%Y-%m-%d %H:%M:%S"))
-        logf.write("CMD: %s\n" % " ".join(cmd))
-        logf.flush()
-
-        p = subprocess.Popen(
-            cmd,
-            stdout=logf,
-            stderr=logf,
-            close_fds=True,
+        # Fallback (kann je nach systemd KillMode trotzdem gekillt werden)
+        fallback = f"nohup sudo -n {WEBPANEL_UPDATE_SCRIPT} >> {WEBPANEL_UPDATE_LOG} 2>&1 &"
+        subprocess.Popen(
+            ["bash", "-lc", fallback],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            preexec_fn=os.setsid,
         )
+        state["unit"] = None
+        state["method"] = "nohup-fallback"
+        state["error"] = (res.stderr or res.stdout or "").strip()[:300]
+        save_webpanel_update_state(state)
+        return True, state.get("error", "")
 
-        save_webpanel_update_state({"pid": p.pid, "started": time.strftime("%Y-%m-%d %H:%M:%S"), "cmd": " ".join(cmd)})
-        return True, "Webpanel-Update gestartet. Die Seite lädt in wenigen Sekunden neu (Service-Restart)."
     except Exception as e:
-        return False, f"Webpanel-Update konnte nicht gestartet werden: {e}"
-
-
+        state["unit"] = None
+        state["method"] = "exception"
+        state["error"] = str(e)[:300]
+        save_webpanel_update_state(state)
+        return False, state["error"]
 
 def service_enable_now(service_name: str):
     _run_systemctl(["enable", "--now", service_name], timeout=SYSTEMCTL_ACTION_TIMEOUT)
@@ -2586,11 +2598,11 @@ def index():
           </p>
 
           <div class="btn-row">
-              <form method="post" action="{{ url_for('admin_autodarts_check') }}" style="margin:0;">
+              <form method="post" action="{{ url_for('admin_webpanel_check') }}" style="margin:0;">
                 <button type="submit" class="btn">Update prüfen</button>
               </form>
 
-              <form method="post" action="{{ url_for('admin_autodarts_update') }}"
+              <form method="post" action="{{ url_for('admin_webpanel_update') }}"
                     onsubmit="return confirm('Webpanel jetzt aktualisieren?\nHinweis: Der Webpanel-Service startet danach neu.');" style="margin:0;">
                 <button type="submit" class="btn btn-primary {% if not webpanel_update_available %}btn-disabled{% endif %}">
                   {% if webpanel_update_available %}Update installieren{% else %}Webpanel aktualisieren{% endif %}
@@ -2632,11 +2644,11 @@ def index():
           </p>
 
           <div class="btn-row">
-              <form method="post" action="{{ url_for('admin_autodarts_check') }}" style="margin:0;">
+              <form method="post" action="{{ url_for('admin_webpanel_check') }}" style="margin:0;">
                 <button type="submit" class="btn">Update prüfen</button>
               </form>
 
-              <form method="post" action="{{ url_for('admin_autodarts_update') }}"
+              <form method="post" action="{{ url_for('admin_webpanel_update') }}"
                     onsubmit="return confirm('Autodarts jetzt aktualisieren?');" style="margin:0;">
                 <button type="submit" class="btn btn-primary {% if not update_available %}btn-disabled{% endif %}">
                   {% if update_available %}Update installieren{% else %}Autodarts aktualisieren{% endif %}
@@ -3573,6 +3585,57 @@ def admin_autodarts_update():
     ok, msg = start_autodarts_update_background()
     return redirect(url_for("index", admin="1", adminok=("1" if ok else "0"), adminmsg=msg) + "#admin")
 
+
+@app.route("/admin/webpanel/check", methods=["POST"])
+def admin_webpanel_check():
+    # Admin muss entsperrt sein
+    if not bool(session.get("admin_unlocked", False)):
+        return ("Forbidden", 403)
+
+    installed = get_webpanel_version()
+    latest = fetch_latest_webpanel_version()
+
+    save_webpanel_update_check({
+        "ts": int(time.time()),
+        "installed": installed,
+        "latest": latest,
+    })
+
+    if latest and installed and installed == latest:
+        flash("Webpanel: Kein Update verfügbar.", "info")
+    elif latest:
+        flash(f"Webpanel: Update verfügbar ({installed or 'unknown'} → {latest}).", "success")
+    else:
+        flash("Webpanel: Update-Check fehlgeschlagen.", "warning")
+
+    return redirect(url_for("admin"))
+
+
+@app.route("/admin/webpanel/update", methods=["POST"])
+def admin_webpanel_update():
+    # Admin muss entsperrt sein
+    if not bool(session.get("admin_unlocked", False)):
+        return ("Forbidden", 403)
+
+    installed = get_webpanel_version()
+    latest = fetch_latest_webpanel_version()
+
+    # Wenn latest nicht ermittelbar: erst prüfen lassen
+    if not latest:
+        flash("Webpanel: Konnte 'latest' nicht ermitteln – bitte zuerst 'Update prüfen'.", "warning")
+        return redirect(url_for("admin"))
+
+    if installed and installed == latest:
+        flash("Webpanel: Kein Update verfügbar.", "info")
+        return redirect(url_for("admin"))
+
+    ok, err = start_webpanel_update_background()
+    if ok:
+        flash("Webpanel-Update gestartet. Die Weboberfläche kann kurz neu starten.", "success")
+    else:
+        flash(f"Webpanel-Update konnte nicht gestartet werden: {err or 'unbekannt'}.", "danger")
+
+    return redirect(url_for("admin"))
 
 
 @app.route("/admin/gpio-image", methods=["GET"])
