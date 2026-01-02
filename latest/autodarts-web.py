@@ -85,6 +85,27 @@ AUTODARTS_UPDATE_CHECK = "/var/lib/autodarts/autodarts-update-check.json"
 AUTOUPDATE_SERVICE = "autodartsupdater.service"
 PINGTEST_STATE_DIR = "/var/lib/autodarts/pingtests"
 
+# --- Webpanel (diese Weboberfläche) Update ---
+WEBPANEL_SERVICE = "autodarts-web.service"
+WEBPANEL_UPDATE_SCRIPT = "/usr/local/bin/autodarts-webpanel-update.sh"
+WEBPANEL_UPDATE_LOG = "/var/log/autodarts_webpanel_update.log"
+WEBPANEL_UPDATE_STATE = "/var/lib/autodarts/webpanel-update-state.json"
+WEBPANEL_UPDATE_CHECK = "/var/lib/autodarts/webpanel-update-check.json"
+
+# lokale Version (bei Installation idealerweise zusammen mit autodarts-web.py nach /usr/local/bin/version.txt kopieren)
+WEBPANEL_VERSION_FILE = os.environ.get("WEBPANEL_VERSION_FILE", "/usr/local/bin/version.txt")
+
+# Remote (GitHub Raw) – kann per ENV überschrieben werden
+WEBPANEL_RAW_BASE = os.environ.get(
+    "WEBPANEL_RAW_BASE",
+    "https://raw.githubusercontent.com/jumbo1250/Autodarts-Webinterface-Installation/main/latest",
+)
+WEBPANEL_VERSION_URL = os.environ.get("WEBPANEL_VERSION_URL", WEBPANEL_RAW_BASE + "/version.txt")
+
+# Fallback falls keine lokale Version-Datei existiert
+WEBPANEL_UI_FALLBACK_VERSION = "1.20"
+
+
 DEFAULT_SETTINGS = {
     "admin_password": "1234",
     "ap_ssid_choices": [f"Autodartsinstall{i}" for i in range(1, 11)],
@@ -1114,6 +1135,117 @@ def start_autodarts_update_background() -> tuple[bool, str]:
 
 
 
+# ---------------- Webpanel Update (dieser Flask-Service) ----------------
+
+def get_webpanel_version() -> str | None:
+    """Liest die installierte Webpanel-Version (lokale version.txt)."""
+    candidates = [
+        WEBPANEL_VERSION_FILE,
+        str(Path(BASE_DIR) / "version.txt"),
+    ]
+    for p in candidates:
+        try:
+            if p and os.path.exists(p):
+                v = Path(p).read_text(encoding="utf-8", errors="ignore").strip()
+                v = v.lstrip("v").strip()
+                if v:
+                    return v
+        except Exception:
+            continue
+    return WEBPANEL_UI_FALLBACK_VERSION
+
+
+def fetch_latest_webpanel_version(timeout_s: float = 2.0) -> str | None:
+    """Liest die aktuelle Webpanel-Version aus GitHub (raw version.txt)."""
+    try:
+        req = urllib.request.Request(WEBPANEL_VERSION_URL, headers={"User-Agent": "AutodartsPanel"})
+        with urllib.request.urlopen(req, timeout=timeout_s) as r:
+            v = (r.read().decode("utf-8", errors="ignore") or "").strip()
+        v = v.lstrip("v").strip()
+        return v or None
+    except Exception:
+        return None
+
+
+def load_webpanel_update_check() -> dict:
+    try:
+        with open(WEBPANEL_UPDATE_CHECK, "r", encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+
+def save_webpanel_update_check(d: dict):
+    try:
+        os.makedirs(os.path.dirname(WEBPANEL_UPDATE_CHECK), exist_ok=True)
+        with open(WEBPANEL_UPDATE_CHECK, "w", encoding="utf-8") as f:
+            json.dump(d, f, indent=2)
+    except Exception:
+        pass
+
+
+def load_webpanel_update_state() -> dict:
+    try:
+        with open(WEBPANEL_UPDATE_STATE, "r", encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+
+def save_webpanel_update_state(state: dict):
+    try:
+        os.makedirs(os.path.dirname(WEBPANEL_UPDATE_STATE), exist_ok=True)
+        with open(WEBPANEL_UPDATE_STATE, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2)
+    except Exception:
+        pass
+
+
+def start_webpanel_update_background() -> tuple[bool, str]:
+    """Startet das Webpanel-Update Script im Hintergrund. Das Script darf den Service neu starten."""
+    if not os.path.exists(WEBPANEL_UPDATE_SCRIPT):
+        return False, f"Update-Script nicht gefunden: {WEBPANEL_UPDATE_SCRIPT}"
+
+    # Läuft schon?
+    state = load_webpanel_update_state()
+    pid = state.get("pid")
+    if pid:
+        try:
+            os.kill(int(pid), 0)
+            return False, "Webpanel-Update läuft bereits."
+        except Exception:
+            pass
+
+    try:
+        os.makedirs(os.path.dirname(WEBPANEL_UPDATE_LOG), exist_ok=True)
+    except Exception:
+        pass
+
+    # Command bauen (wenn nicht root → sudo -n, damit es nicht hängen kann)
+    cmd = [WEBPANEL_UPDATE_SCRIPT]
+    if os.geteuid() != 0:
+        cmd = ["sudo", "-n"] + cmd
+
+    try:
+        logf = open(WEBPANEL_UPDATE_LOG, "a", encoding="utf-8")
+        logf.write("\n\n===== Webpanel Update gestartet: %s =====\n" % time.strftime("%Y-%m-%d %H:%M:%S"))
+        logf.write("CMD: %s\n" % " ".join(cmd))
+        logf.flush()
+
+        p = subprocess.Popen(
+            cmd,
+            stdout=logf,
+            stderr=logf,
+            close_fds=True,
+        )
+
+        save_webpanel_update_state({"pid": p.pid, "started": time.strftime("%Y-%m-%d %H:%M:%S"), "cmd": " ".join(cmd)})
+        return True, "Webpanel-Update gestartet. Die Seite lädt in wenigen Sekunden neu (Service-Restart)."
+    except Exception as e:
+        return False, f"Webpanel-Update konnte nicht gestartet werden: {e}"
+
+
+
 def service_enable_now(service_name: str):
     _run_systemctl(["enable", "--now", service_name], timeout=SYSTEMCTL_ACTION_TIMEOUT)
 
@@ -1936,6 +2068,11 @@ def index():
     msg = request.args.get('msg', '')
     autoupdate_enabled = autodarts_autoupdate_is_enabled()
     update_check = load_update_check()
+    webpanel_version = get_webpanel_version()
+    webpanel_check = load_webpanel_update_check() if admin_unlocked else {}
+    webpanel_update_available = bool(webpanel_check.get('installed') and webpanel_check.get('latest') and webpanel_check.get('installed') != webpanel_check.get('latest'))
+    webpanel_state = load_webpanel_update_state() if admin_unlocked else {}
+    webpanel_log_tail = tail_file(WEBPANEL_UPDATE_LOG, n=25, max_chars=3500) if admin_unlocked else ""
     update_available = bool(update_check.get('installed') and update_check.get('latest') and update_check.get('installed') != update_check.get('latest'))
 
     update_state = load_update_state() if admin_unlocked else {}
@@ -2062,7 +2199,7 @@ def index():
     </div>
 
     <h1>Willkommen bei der Autodarts Installation</h1>
-    <div class="subtitle">by Peter Rottmann v.1.16 (Multi-WLED)</div>
+    <div class="subtitle">by Peter Rottmann v.{{ webpanel_version or '1.20' }} (Multi-WLED)</div>
 
     {% if not wifi_ok %}
       <div style="background:#7f1d1d; border:2px solid #f87171; color:#fee2e2;
@@ -2442,7 +2579,54 @@ def index():
 
           <hr style="border:none; border-top:1px solid #333; margin:14px 0;">
 
-          <h3 style="margin:0 0 8px;">Autodarts Software</h3>
+          
+          <h3 style="margin:0 0 8px;">Webpanel Software</h3>
+          <p class="hint" style="margin-top:0;">
+            Installierte Version: <strong>{{ webpanel_version or 'unbekannt' }}</strong>
+          </p>
+
+          <div class="btn-row">
+              <form method="post" action="{{ url_for('admin_webpanel_check') }}" style="margin:0;">
+                <button type="submit" class="btn">Update prüfen</button>
+              </form>
+
+              <form method="post" action="{{ url_for('admin_webpanel_update') }}"
+                    onsubmit="return confirm('Webpanel jetzt aktualisieren?\nHinweis: Der Webpanel-Service startet danach neu.');" style="margin:0;">
+                <button type="submit" class="btn btn-primary {% if not webpanel_update_available %}btn-disabled{% endif %}">
+                  {% if webpanel_update_available %}Update installieren{% else %}Webpanel aktualisieren{% endif %}
+                </button>
+              </form>
+            </div>
+
+            <p class="hint" style="margin-top:8px;">
+              {% if webpanel_check.latest %}
+                Letzter Check: <strong>{{ webpanel_check.installed or 'unbekannt' }}</strong> → <strong>{{ webpanel_check.latest }}</strong>
+                {% if webpanel_update_available %}
+                  <span style="color:#ffb347;">(Update verfügbar)</span>
+                {% else %}
+                  <span style="color:#6be26b;">(aktuell)</span>
+                {% endif %}
+              {% else %}
+                Tipp: Erst „Update prüfen“, dann nur bei Bedarf aktualisieren.
+              {% endif %}
+            </p>
+
+          {% if webpanel_state.started %}
+            <p class="hint" style="margin-top:8px;">
+              Letztes Webpanel-Update gestartet: <code>{{ webpanel_state.started }}</code>
+            </p>
+          {% endif %}
+
+          {% if webpanel_log_tail %}
+            <details style="margin-top:10px;">
+              <summary>Webpanel Update-Log anzeigen</summary>
+              <pre style="background:#0b0b0b; padding:12px; border-radius:10px; border:1px solid #333; overflow:auto; white-space:pre-wrap; margin:10px 0 0;">{{ webpanel_log_tail }}</pre>
+            </details>
+          {% endif %}
+
+          <hr style="border:none; border-top:1px solid #333; margin:14px 0;">
+
+<h3 style="margin:0 0 8px;">Autodarts Software</h3>
           <p class="hint" style="margin-top:0;">
             Installierte Version: <strong>{{ autodarts_version or 'unbekannt' }}</strong>
           </p>
@@ -2905,6 +3089,11 @@ cp /var/log/pi_monitor_test_README.txt ~/
         update_check=update_check,
         update_available=update_available,
         wifi_interface=WIFI_INTERFACE,
+        webpanel_version=webpanel_version,
+        webpanel_check=webpanel_check,
+        webpanel_update_available=webpanel_update_available,
+        webpanel_state=webpanel_state,
+        webpanel_log_tail=webpanel_log_tail,
     )
 
 
