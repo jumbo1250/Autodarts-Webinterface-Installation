@@ -22,9 +22,11 @@ from flask import (
     render_template_string,
     send_file,
     send_from_directory,
-    jsonify,    session,
-
+    jsonify,
+    session,
+    flash,
 )
+
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('AUTODARTS_WEB_SECRET', 'autodarts-web-admin')
@@ -2597,18 +2599,19 @@ def index():
             Installierte Version: <strong>{{ webpanel_version or 'unbekannt' }}</strong>
           </p>
 
-          <div class="btn-row">
-              <form method="post" action="{{ url_for('admin_webpanel_check') }}" style="margin:0;">
-                <button type="submit" class="btn">Update prüfen</button>
-              </form>
+                <div class="btn-row">
+                  <form method="post" action="{{ url_for('admin_webpanel_check') }}" style="margin:0;">
+                    <button type="submit" class="btn">Update prüfen</button>
+                  </form>
 
-              <form method="post" action="{{ url_for('admin_webpanel_update') }}"
-                    onsubmit="return confirm('Webpanel jetzt aktualisieren?\nHinweis: Der Webpanel-Service startet danach neu.');" style="margin:0;">
-                <button type="submit" class="btn btn-primary {% if not webpanel_update_available %}btn-disabled{% endif %}">
-                  {% if webpanel_update_available %}Update installieren{% else %}Webpanel aktualisieren{% endif %}
-                </button>
-              </form>
-            </div>
+                  <form method="post" action="{{ url_for('admin_webpanel_update') }}"
+                        onsubmit="return confirm('Webpanel jetzt aktualisieren?\nHinweis: Der Webpanel-Service startet danach neu.');" style="margin:0;">
+                    <button type="submit" class="btn btn-primary {% if not webpanel_update_available %}btn-disabled{% endif %}">
+                      {% if webpanel_update_available %}Update installieren{% else %}Webpanel aktualisieren{% endif %}
+                    </button>
+                  </form>
+                </div>
+
 
             <p class="hint" style="margin-top:8px;">
               {% if webpanel_check.latest %}
@@ -2643,18 +2646,18 @@ def index():
             Installierte Version: <strong>{{ autodarts_version or 'unbekannt' }}</strong>
           </p>
 
-          <div class="btn-row">
-              <form method="post" action="{{ url_for('admin_webpanel_check') }}" style="margin:0;">
-                <button type="submit" class="btn">Update prüfen</button>
-              </form>
+                <div class="btn-row">
+                  <form method="post" action="{{ url_for('admin_autodarts_check') }}" style="margin:0;">
+                    <button type="submit" class="btn">Update prüfen</button>
+                  </form>
 
-              <form method="post" action="{{ url_for('admin_webpanel_update') }}"
-                    onsubmit="return confirm('Autodarts jetzt aktualisieren?');" style="margin:0;">
-                <button type="submit" class="btn btn-primary {% if not update_available %}btn-disabled{% endif %}">
-                  {% if update_available %}Update installieren{% else %}Autodarts aktualisieren{% endif %}
-                </button>
-              </form>
-            </div>
+                  <form method="post" action="{{ url_for('admin_autodarts_update') }}"
+                        onsubmit="return confirm('Autodarts jetzt aktualisieren?');" style="margin:0;">
+                    <button type="submit" class="btn btn-primary {% if not update_available %}btn-disabled{% endif %}">
+                      {% if update_available %}Update installieren{% else %}Autodarts aktualisieren{% endif %}
+                    </button>
+                  </form>
+                </div>
 
             <p class="hint" style="margin-top:8px;">
               {% if update_check.latest %}
@@ -3608,7 +3611,7 @@ def admin_webpanel_check():
     else:
         flash("Webpanel: Update-Check fehlgeschlagen.", "warning")
 
-    return redirect(url_for("admin"))
+    return redirect(url_for("index", admin="1") + "#admin")
 
 
 @app.route("/admin/webpanel/update", methods=["POST"])
@@ -3623,11 +3626,11 @@ def admin_webpanel_update():
     # Wenn latest nicht ermittelbar: erst prüfen lassen
     if not latest:
         flash("Webpanel: Konnte 'latest' nicht ermitteln – bitte zuerst 'Update prüfen'.", "warning")
-        return redirect(url_for("admin"))
+        return redirect(url_for("index", admin="1") + "#admin")
 
     if installed and installed == latest:
         flash("Webpanel: Kein Update verfügbar.", "info")
-        return redirect(url_for("admin"))
+        return redirect(url_for("index", admin="1") + "#admin")
 
     ok, err = start_webpanel_update_background()
     if ok:
@@ -3635,7 +3638,7 @@ def admin_webpanel_update():
     else:
         flash(f"Webpanel-Update konnte nicht gestartet werden: {err or 'unbekannt'}.", "danger")
 
-    return redirect(url_for("admin"))
+    return redirect(url_for("index", admin="1") + "#admin")
 
 
 @app.route("/admin/gpio-image", methods=["GET"])
