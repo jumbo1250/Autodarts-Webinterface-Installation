@@ -94,10 +94,6 @@ WEBPANEL_UPDATE_LOG = "/var/log/autodarts_webpanel_update.log"
 WEBPANEL_UPDATE_STATE = "/var/lib/autodarts/webpanel-update-state.json"
 WEBPANEL_UPDATE_CHECK = "/var/lib/autodarts/webpanel-update-check.json"
 
-
-# --- System (apt) Update + Reboot ---
-OS_UPDATE_LOG = "/var/log/autodarts_os_update.log"
-OS_UPDATE_STATE = "/var/lib/autodarts/os-update-state.json"
 # lokale Version (wird durch autodarts-webpanel-update.sh nach /var/lib/autodarts/webpanel-version.txt geschrieben)
 WEBPANEL_VERSION_FILE = os.environ.get("WEBPANEL_VERSION_FILE", "/var/lib/autodarts/webpanel-version.txt")
 
@@ -1264,82 +1260,6 @@ def start_webpanel_update_background() -> tuple[bool, str]:
         save_webpanel_update_state(state)
         return False, state["error"]
 
-
-
-
-# ---------------- System Update (apt + reboot) ----------------
-
-def load_os_update_state() -> dict:
-    try:
-        with open(OS_UPDATE_STATE, "r", encoding="utf-8") as f:
-            return json.load(f) or {}
-    except Exception:
-        return {}
-
-
-def save_os_update_state(state: dict):
-    try:
-        os.makedirs(os.path.dirname(OS_UPDATE_STATE), exist_ok=True)
-        with open(OS_UPDATE_STATE, "w", encoding="utf-8") as f:
-            json.dump(state, f, indent=2)
-    except Exception:
-        pass
-
-
-def start_os_update_background() -> tuple[bool, str]:
-    """Startet 'apt update + apt upgrade' im Hintergrund und rebootet danach IMMER.
-
-    Läuft via `systemd-run` in einem eigenen transienten Unit (damit es einen Webpanel-Restart überlebt).
-    """
-
-    state = load_os_update_state()
-    state["started"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    state.pop("error", None)
-
-    unit_name = f"autodarts-os-update-{int(time.time())}"
-
-    # Non-interactive apt (damit es nicht hängen bleibt bei config prompts)
-    cmdline = (
-        f"exec >>{OS_UPDATE_LOG} 2>&1; "
-        f"echo '===== OS Update START {time.strftime('%Y-%m-%d %H:%M:%S')} ====='; "
-        f"apt-get update || echo 'apt-get update FAILED (continue)'; "
-        f"DEBIAN_FRONTEND=noninteractive "
-        f"apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold upgrade "
-        f"|| echo 'apt-get upgrade FAILED (continue)'; "
-        f"echo '===== OS Update DONE -> reboot ====='; "
-        f"sync; /sbin/reboot"
-    )
-
-    try:
-        cmd = [
-            "sudo", "-n",
-            "systemd-run",
-            "--unit", unit_name,
-            "--no-block",
-            "--collect",
-            "bash", "-lc", cmdline,
-        ]
-        res = subprocess.run(cmd, capture_output=True, text=True)
-
-        if res.returncode == 0:
-            state["unit"] = unit_name
-            state["method"] = "systemd-run"
-            save_os_update_state(state)
-            return True, "System-Update gestartet – der Pi rebootet danach automatisch."
-
-        state["unit"] = None
-        state["method"] = "systemd-run-failed"
-        state["error"] = (res.stderr or res.stdout or "").strip()[:300]
-        save_os_update_state(state)
-        return False, f"System-Update konnte nicht gestartet werden: {state['error']}"
-
-    except Exception as e:
-        state["unit"] = None
-        state["method"] = "exception"
-        state["error"] = str(e)[:300]
-        save_os_update_state(state)
-        return False, state["error"]
-
 def service_enable_now(service_name: str):
     _run_systemctl(["enable", "--now", service_name], timeout=SYSTEMCTL_ACTION_TIMEOUT)
 
@@ -2172,9 +2092,6 @@ def index():
     update_state = load_update_state() if admin_unlocked else {}
     update_log_tail = tail_file(AUTODARTS_UPDATE_LOG, n=25, max_chars=3500) if admin_unlocked else ""
 
-    os_update_state = load_os_update_state() if admin_unlocked else {}
-    os_update_log_tail = tail_file(OS_UPDATE_LOG, n=25, max_chars=3500) if admin_unlocked else ""
-
     wled_targets = wled_cfg.get("targets", []) or []
     while len(wled_targets) < 3:
         wled_targets.append({"label": f"Dart LED{len(wled_targets)+1}", "host": "", "enabled": False})
@@ -2233,10 +2150,7 @@ def index():
     .msg-bad { color:#ff6b6b; margin-top:10px; white-space:pre-line; }
     footer { margin-top:24px; font-size:0.75rem; opacity:0.6; text-align:center; }
     .sysinfo { position:fixed; top:10px; right:10px; background:#1c1c1c; border-radius:8px; padding:8px 10px; font-size:0.8rem; box-shadow:0 0 10px rgba(0,0,0,0.6); z-index:1000; border:1px solid #333; }
-    
-    .sysactions { position:fixed; top:10px; left:10px; background:#1c1c1c; border-radius:8px; padding:8px 10px; font-size:0.8rem; box-shadow:0 0 10px rgba(0,0,0,0.6); z-index:1000; border:1px solid #333; }
-    .sysactions form { margin:0; }
-.sysinfo h3 { margin:0 0 4px; font-size:0.9rem; }
+    .sysinfo h3 { margin:0 0 4px; font-size:0.9rem; }
     .sysinfo-row { white-space:nowrap; }
     code { background:#0b0b0b; padding:2px 6px; border-radius:6px; border:1px solid #333; }
     .dot { display:inline-block; width:10px; height:10px; border-radius:999px; margin-right:6px; vertical-align:middle; }
@@ -2256,15 +2170,6 @@ def index():
   </style>
 </head>
 <body>
-
-  {% if admin_unlocked %}
-  <div class="sysactions">
-    <form method="post" action="{{ url_for('admin_reboot') }}" onsubmit="return confirm('Wollen Sie wirklich den Raspberry Pi komplett neu starten?');">
-      <button type="submit" class="btn btn-small btn-danger">Komplettes System neu starten</button>
-    </form>
-  </div>
-  {% endif %}
-
 
   {% if cpu_pct is not none or mem_used is not none or temp_c is not none or autoupdate_enabled is not none %}
   <div class="sysinfo">
@@ -2736,34 +2641,6 @@ def index():
 
           <hr style="border:none; border-top:1px solid #333; margin:14px 0;">
 
-<h3 style="margin:0 0 8px;">System (apt) Update</h3>
-<p class="hint" style="margin-top:0;">
-  Führt <code>apt update</code> + <code>apt upgrade</code> aus und rebootet danach <strong>immer</strong>.
-</p>
-
-<div class="btn-row">
-  <form method="post" action="{{ url_for('admin_os_update') }}"
-        onsubmit="return confirm('System-Update starten?\nDer Pi rebootet danach automatisch.');" style="margin:0;">
-    <button type="submit" class="btn btn-primary">System updaten & Reboot</button>
-  </form>
-</div>
-
-{% if os_update_state.started %}
-  <p class="hint" style="margin-top:8px;">
-    Letztes System-Update gestartet: <code>{{ os_update_state.started }}</code>
-    {% if os_update_state.unit %}(Unit: <code>{{ os_update_state.unit }}</code>){% endif %}
-  </p>
-{% endif %}
-
-{% if os_update_log_tail %}
-  <details style="margin-top:10px;">
-    <summary>System-Update-Log anzeigen</summary>
-    <pre style="background:#0b0b0b; padding:12px; border-radius:10px; border:1px solid #333; overflow:auto; white-space:pre-wrap; margin:10px 0 0;">{{ os_update_log_tail }}</pre>
-  </details>
-{% endif %}
-
-<hr style="border:none; border-top:1px solid #333; margin:14px 0;">
-
 <h3 style="margin:0 0 8px;">Autodarts Software</h3>
           <p class="hint" style="margin-top:0;">
             Installierte Version: <strong>{{ autodarts_version or 'unbekannt' }}</strong>
@@ -3232,8 +3109,6 @@ cp /var/log/pi_monitor_test_README.txt ~/
         webpanel_update_available=webpanel_update_available,
         webpanel_state=webpanel_state,
         webpanel_log_tail=webpanel_log_tail,
-        os_update_state=os_update_state,
-        os_update_log_tail=os_update_log_tail,
     )
 
 
@@ -3765,55 +3640,6 @@ def admin_webpanel_update():
 
     return redirect(url_for("index", admin="1") + "#admin")
 
-
-
-
-@app.route("/admin/reboot", methods=["POST"])
-def admin_reboot():
-    # Nur im Admin-Modus erlauben
-    if not bool(session.get("admin_unlocked", False)):
-        return ("Forbidden", 403)
-
-    unit_name = f"autodarts-reboot-{int(time.time())}"
-
-    # Im Hintergrund rebooten (damit die HTTP-Response noch rausgeht)
-    try:
-        subprocess.Popen(
-            ["sudo", "-n", "systemd-run", "--unit", unit_name, "--no-block", "--collect", "/sbin/reboot"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    except Exception:
-        # Fallback (falls systemd-run nicht geht)
-        try:
-            subprocess.Popen(
-                ["sudo", "-n", "/sbin/reboot"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-        except Exception:
-            pass
-
-    return (
-        "<!doctype html><html lang='de'><head><meta charset='utf-8'>"
-        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-        "<title>Reboot</title></head><body style='font-family:system-ui;background:#111;color:#eee;padding:20px;'>"
-        "<h2>Neustart wird ausgeführt…</h2>"
-        "<p>Der Raspberry Pi startet jetzt neu. Diese Seite ist gleich nicht mehr erreichbar.</p>"
-        "</body></html>"
-    )
-
-
-
-
-
-@app.route("/admin/os/update", methods=["POST"])
-def admin_os_update():
-    if not bool(session.get("admin_unlocked", False)):
-        return ("Forbidden", 403)
-
-    ok, msg = start_os_update_background()
-    return redirect(url_for("index", admin="1", adminok=("1" if ok else "0"), adminmsg=msg) + "#admin")
 
 @app.route("/admin/gpio-image", methods=["GET"])
 def admin_gpio_image():
