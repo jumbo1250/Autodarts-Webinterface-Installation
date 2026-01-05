@@ -3065,7 +3065,7 @@ cp /var/log/pi_monitor_test_README.txt ~/
 
 <div id="pingOverlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:2000; align-items:center; justify-content:center;">
   <div style="background:#1c1c1c; border:1px solid #333; border-radius:14px; padding:18px 18px; width:min(520px,92vw); box-shadow:0 0 30px rgba(0,0,0,.7);">
-    <div id="pingOverlayTitle" style="font-weight:800; margin-bottom:10px;">Verbindungstest läuft…</div>
+    <div style="font-weight:800; margin-bottom:10px;">Verbindungstest läuft…</div>
     <div id="pingOverlayText" style="margin-bottom:10px; opacity:.9;">Starte…</div>
     <div style="height:10px; background:#0b0b0b; border:1px solid #333; border-radius:999px; overflow:hidden;">
       <div id="pingOverlayBar" style="height:100%; width:0%; background:#3b82f6;"></div>
@@ -3081,7 +3081,6 @@ cp /var/log/pi_monitor_test_README.txt ~/
   const txt = document.getElementById('pingOverlayText');
   const bar = document.getElementById('pingOverlayBar');
   const out = document.getElementById('pingResult');
-  const titleEl = document.getElementById('pingOverlayTitle');
 
   function showOverlay(){ if(overlay){ overlay.style.display='flex'; } }
   function hideOverlay(){ if(overlay){ overlay.style.display='none'; } }
@@ -3090,53 +3089,11 @@ cp /var/log/pi_monitor_test_README.txt ~/
     if(bar) bar.style.width = pct + '%';
   }
 
-  // Einstufung der Verbindung anhand der Ping-Werte (dein strenger Range)
-  function classifyPingQuality(s, total, recv){
-    const sent = Number(s.count || total || 30);
-    const rec = Number(recv || 0);
-    if(!sent || sent <= 0){
-      return { level: 'unknown', label: 'Unbekannt', loss: null };
-    }
-    const lost = Math.max(0, sent - rec);
-    const loss = Math.round((lost * 1000) / sent) / 10; // eine Nachkommastelle
-
-    const minMs = (s.min_ms != null) ? Number(s.min_ms) : null;
-    const maxMs = (s.max_ms != null) ? Number(s.max_ms) : null;
-    const avgMs = (s.avg_ms != null) ? Number(s.avg_ms) : null;
-
-    // Falls keine Laufzeiten, nur grobe Einstufung
-    if(minMs === null || maxMs === null || avgMs === null){
-      if(loss === 0){
-        return { level: 'gut', label: 'Gute Verbindung', loss };
-      }else if(loss < 3){
-        return { level: 'grenzwertig', label: 'Könnte funktionieren', loss };
-      }
-      return { level: 'nicht_spielbar', label: 'Nicht mehr spielbar', loss };
-    }
-
-    // 🔹 Strenge Grenzen:
-    // Super Verbindung
-    if(loss === 0 && avgMs <= 30 && maxMs <= 60){
-      return { level: 'super', label: 'Super Verbindung', loss };
-    }
-    // Gute Verbindung
-    if(loss < 1 && avgMs <= 60 && maxMs <= 120){
-      return { level: 'gut', label: 'Gute Verbindung', loss };
-    }
-    // Könnte funktionieren
-    if(loss < 3 && avgMs <= 120 && maxMs <= 300){
-      return { level: 'grenzwertig', label: 'Könnte funktionieren', loss };
-    }
-    // Nicht mehr spielbar
-    return { level: 'nicht_spielbar', label: 'Nicht mehr spielbar', loss };
-  }
-
   async function start(){
     if(!btn || btn.classList.contains('btn-disabled')) return;
     btn.classList.add('btn-disabled');
     if(out) out.textContent = '';
     showOverlay();
-    if(titleEl) titleEl.textContent = 'Verbindungstest läuft…';
     if(txt) txt.textContent = 'Starte…';
 
     try{
@@ -3172,42 +3129,17 @@ cp /var/log/pi_monitor_test_README.txt ~/
 
           if(s.done){
             clearInterval(timer);
-            const sent = Number(s.count || total);
+            hideOverlay();
+            const sent = total;
             const rec = recv;
-            const q = classifyPingQuality(s, sent, rec);
-
-            // 🔸 alter Text bleibt, nur leicht erweitert
             let result = `${rec} von ${sent} Paketen wurden erfolgreich gesendet.`;
-            if(q.loss != null){
-              result += ` · Paketverlust: ${q.loss}%`;
-            }
             if(s.min_ms!=null && s.max_ms!=null && s.avg_ms!=null){
               result += ` Schnellstes: ${s.min_ms} ms · Langsamstes: ${s.max_ms} ms · Durchschnitt: ${s.avg_ms} ms`;
             }
             if(s.error){
               result += ` (Hinweis: ${s.error})`;
             }
-
-            // Text unten im Ergebnisfeld
-            if(out){
-              if(q && q.label){
-                out.textContent = `Verbindungsqualität: ${q.label}\n` + result;
-              }else{
-                out.textContent = result;
-              }
-            }
-
-            // 🔸 kleines Info-Fenster im Overlay
-            if(titleEl) titleEl.textContent = 'Verbindungstest abgeschlossen';
-            if(txt){
-              const label = q && q.label ? q.label : 'Unbekannt';
-              txt.textContent = `TEST erfolgreich durchgeführt.\nErgebnis lautet: ${label}`;
-            }
-            setProgress(total, total);
-
-            // Overlay nach ~3,5 Sekunden automatisch schließen
-            setTimeout(()=>{ hideOverlay(); }, 3500);
-
+            if(out) out.textContent = result;
             btn.classList.remove('btn-disabled');
           }
         }catch(e){
@@ -3230,7 +3162,6 @@ cp /var/log/pi_monitor_test_README.txt ~/
   if(btn){ btn.addEventListener('click', start); }
 })();
 </script>
-
 
 </body>
 </html>
