@@ -21,4 +21,5 @@ exec python darts-wled.py \
   -TOE         "ps|9|2" \
   -DSBULL      "ps|10|2" \
   -S180        "ps|11|3" \
-  -G           "ps|12|4"
+  -G           "ps|12|4" \
+  -M           "ps|13|4" \
