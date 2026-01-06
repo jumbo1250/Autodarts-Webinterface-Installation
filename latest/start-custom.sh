@@ -16,10 +16,10 @@ exec python darts-wled.py \
   -IDE4 "ps|4" \
   -IDE5 "ps|5" \
   -IDE6 "ps|6" \
-  -A1   0-0  "ps|7|2" \
-  -S0          "ps|8|1" \
-  -TOE         "ps|9|2" \
-  -DSBULL      "ps|10|2" \
+  -A1   0-0  "ps|7|3" \
+  -S0          "ps|8|3" \
+  -TOE         "ps|9|3" \
+  -DSBULL      "ps|10|3" \
   -S180        "ps|11|3" \
   -G           "ps|12|4" \
   -M           "ps|13|4"
