@@ -22,4 +22,4 @@ exec python darts-wled.py \
   -DSBULL      "ps|10|2" \
   -S180        "ps|11|3" \
   -G           "ps|12|4" \
-  -M           "ps|13|4" \
+  -M           "ps|13|4"
