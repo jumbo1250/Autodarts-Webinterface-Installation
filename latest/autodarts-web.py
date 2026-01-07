@@ -96,6 +96,12 @@ WEBPANEL_UPDATE_STATE = "/var/lib/autodarts/webpanel-update-state.json"
 WEBPANEL_UPDATE_CHECK = "/var/lib/autodarts/webpanel-update-check.json"
 
 
+# --- Extensions (darts-caller / darts-wled) Update ---
+EXTENSIONS_UPDATE_SCRIPT = "/usr/local/bin/autodarts-extensions-update.sh"
+EXTENSIONS_UPDATE_LOG = "/var/log/autodarts_extensions_update.log"
+EXTENSIONS_UPDATE_STATE = "/var/lib/autodarts/extensions-update-state.json"
+EXTENSIONS_UPDATE_LAST = "/var/lib/autodarts/extensions-update-last.json"
+
 # --- System (apt) Update + Reboot ---
 OS_UPDATE_LOG = "/var/log/autodarts_os_update.log"
 OS_UPDATE_STATE = "/var/lib/autodarts/os-update-state.json"
@@ -1335,6 +1341,395 @@ def load_os_update_state() -> dict:
         return {}
 
 
+
+
+# ---------------- Extensions Update (darts-caller / darts-wled) ----------------
+
+def load_extensions_update_state() -> dict:
+    try:
+        with open(EXTENSIONS_UPDATE_STATE, "r", encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+
+def save_extensions_update_state(state: dict):
+    try:
+        os.makedirs(os.path.dirname(EXTENSIONS_UPDATE_STATE), exist_ok=True)
+        with open(EXTENSIONS_UPDATE_STATE, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2)
+    except Exception:
+        pass
+
+
+def load_extensions_update_last() -> dict:
+    try:
+        with open(EXTENSIONS_UPDATE_LAST, "r", encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+
+EXTENSIONS_UPDATE_SCRIPT_TEMPLATE = r"""#!/usr/bin/env bash
+set -euo pipefail
+
+# --- Einstellungen ---
+CALLER_DIR="/var/lib/autodarts/extensions/darts-caller"
+WLED_DIR="/var/lib/autodarts/extensions/darts-wled"
+
+CALLER_START="${CALLER_DIR}/start-custom.sh"
+WLED_WRAPPER="${WLED_DIR}/start-custom.sh"
+WLED_CONFIG="/var/lib/autodarts/config/darts-wled/start-custom.sh"
+
+BACKUP_ROOT="/var/lib/autodarts/config/backups"
+TS="$(date +'%Y%m%d-%H%M%S')"
+BK="${BACKUP_ROOT}/extensions-update-${TS}"
+
+LOG_FILE="/var/log/autodarts_extensions_update.log"
+RESULT_JSON="/var/lib/autodarts/extensions-update-last.json"
+
+FORCE="${FORCE:-0}"
+TARGET="${1:-all}"   # all | caller | wled
+
+# --- Helpers ---
+log() { echo "[$(date +'%F %T')] $*"; }
+
+mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$RESULT_JSON")"
+exec >>"$LOG_FILE" 2>&1
+
+# Lock gegen Doppelklick
+LOCK="/run/autodarts-extensions-update.lock"
+if command -v flock >/dev/null 2>&1; then
+  exec 9>"$LOCK"
+  flock -n 9 || { log "Update läuft bereits (lock: $LOCK)."; exit 0; }
+fi
+
+CALLER_STATUS="SKIPPED"
+WLED_STATUS="SKIPPED"
+ERRORS=""
+
+write_result() {
+  cat > "$RESULT_JSON" <<JSON
+{
+  "ts": "$(date +'%F %T')",
+  "target": "$TARGET",
+  "caller": "$CALLER_STATUS",
+  "wled": "$WLED_STATUS",
+  "backup": "$BK",
+  "force": "$FORCE",
+  "errors": "$(echo "$ERRORS" | tr '\n' ' ' | sed 's/"/\\"/g')"
+}
+JSON
+  chmod 666 "$RESULT_JSON" 2>/dev/null || true
+}
+trap write_result EXIT
+
+exists_unitfile() {
+  systemctl list-unit-files --no-legend 2>/dev/null | awk '{print $1}' | grep -qx "$1"
+}
+is_active() { systemctl is-active --quiet "$1"; }
+
+stop_if_exists() {
+  local svc="$1"
+  if exists_unitfile "$svc"; then
+    if is_active "$svc"; then
+      log "Stoppe $svc ..."
+      systemctl stop "$svc" || true
+      echo "1"
+    else
+      echo "0"
+    fi
+  else
+    echo "0"
+  fi
+}
+
+restart_if_exists() {
+  local svc="$1"
+  if exists_unitfile "$svc"; then
+    log "Starte/Restarte $svc ..."
+    systemctl restart "$svc" || systemctl start "$svc" || true
+  else
+    log "Service nicht gefunden: $svc (ok, übersprungen)"
+  fi
+}
+
+ensure_wrapper() {
+  if [[ -d "$WLED_DIR" ]]; then
+    log "Stelle sicher: WLED Wrapper zeigt auf Config-Startscript ..."
+    cat > "$WLED_WRAPPER" <<EOF
+#!/usr/bin/env bash
+exec "$WLED_CONFIG"
+EOF
+    chmod +x "$WLED_WRAPPER" || true
+  fi
+  if [[ -f "$WLED_CONFIG" ]]; then
+    chmod +x "$WLED_CONFIG" || true
+  fi
+}
+
+backup_file_if_exists() {
+  local src="$1"
+  local dst="$2"
+  if [[ -f "$src" ]]; then
+    mkdir -p "$(dirname "$dst")"
+    cp -a "$src" "$dst"
+    log "Backup: $src -> $dst"
+  else
+    log "Backup übersprungen (nicht gefunden): $src"
+  fi
+}
+
+restore_file_if_exists() {
+  local src="$1"
+  local dst="$2"
+  if [[ -f "$src" ]]; then
+    mkdir -p "$(dirname "$dst")"
+    cp -a "$src" "$dst"
+    log "Restore: $src -> $dst"
+  else
+    log "Restore übersprungen (Backup fehlt): $src"
+  fi
+}
+
+repo_update_status() {
+  # prints: CHANGED / UNCHANGED / SKIPPED
+  local dir="$1"
+  local label="$2"
+
+  if [[ ! -d "$dir/.git" ]]; then
+    log "$label: Kein Git-Repo: $dir (SKIPPED)"
+    echo "SKIPPED"
+    return 0
+  fi
+
+  git config --global --add safe.directory "$dir" >/dev/null 2>&1 || true
+
+  log "$label: Update Repo: $dir"
+  pushd "$dir" >/dev/null || { echo "SKIPPED"; return 0; }
+
+  local before after upstream
+  before="$(git rev-parse HEAD 2>/dev/null || echo "")"
+  upstream="$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || echo "")"
+
+  git fetch --all --prune || true
+
+  if [[ -n "$upstream" ]]; then
+    git reset --hard "@{u}" || true
+  else
+    git pull --rebase --autostash || true
+  fi
+
+  after="$(git rev-parse HEAD 2>/dev/null || echo "")"
+  popd >/dev/null || true
+
+  if [[ -n "$before" && -n "$after" && "$before" != "$after" ]]; then
+    log "$label: CHANGED ($before -> $after)"
+    echo "CHANGED"
+  else
+    log "$label: UNCHANGED ($after)"
+    echo "UNCHANGED"
+  fi
+}
+
+venv_refresh_install_if_needed() {
+  local dir="$1"
+  local label="$2"
+  local changed="$3"
+  local requirements="$dir/requirements.txt"
+
+  [[ -d "$dir" ]] || return 0
+
+  if [[ "$FORCE" == "1" ]]; then
+    log "$label: FORCE=1 -> pip/venv wird ausgeführt."
+  elif [[ "$changed" != "CHANGED" && -d "$dir/.venv" ]]; then
+    log "$label: Keine Repo-Änderung und .venv vorhanden -> pip übersprungen."
+    return 0
+  fi
+
+  log "$label: Python venv/requirements: $dir"
+  pushd "$dir" >/dev/null || return 1
+
+  export PIP_DISABLE_PIP_VERSION_CHECK=1
+  export PIP_NO_INPUT=1
+
+  if [[ ! -d ".venv" ]]; then
+    if ! python3 -m venv .venv; then
+      ERRORS="${ERRORS}\n${label}: python3 -m venv fehlgeschlagen (python3-venv installiert?)"
+      popd >/dev/null || true
+      return 0
+    fi
+  fi
+
+  # shellcheck disable=SC1091
+  source .venv/bin/activate
+
+  python3 -m pip install -U pip setuptools wheel || true
+
+  if [[ -f "$requirements" ]]; then
+    if python3 -m pip install -r "$requirements" --upgrade; then
+      log "$label: requirements OK"
+    else
+      log "$label: requirements FAIL -> Retry ohne pyinstaller/pyinstaller-hooks-contrib"
+      grep -v -E '^pyinstaller(==|$)|^pyinstaller-hooks-contrib(==|$)' "$requirements" > /tmp/req-no-pyinstaller.txt
+      if ! python3 -m pip install -r /tmp/req-no-pyinstaller.txt --upgrade; then
+        ERRORS="${ERRORS}\n${label}: pip install requirements fehlgeschlagen"
+      fi
+    fi
+  else
+    log "$label: Keine requirements.txt gefunden (übersprungen)"
+  fi
+
+  deactivate || true
+  popd >/dev/null || true
+}
+
+# ---- MAIN ----
+log "===== Extensions Update START (target=${TARGET}) ====="
+
+if [[ "$(id -u)" -ne 0 ]]; then
+  log "Bitte mit sudo ausführen."
+  exit 1
+fi
+
+mkdir -p "$BK"
+log "Backup-Ordner: $BK"
+log "FORCE=$FORCE"
+
+DO_CALLER=0
+DO_WLED=0
+case "$TARGET" in
+  all) DO_CALLER=1; DO_WLED=1;;
+  caller) DO_CALLER=1;;
+  wled) DO_WLED=1;;
+  *) log "Unbekannter TARGET: $TARGET -> all"; DO_CALLER=1; DO_WLED=1;;
+esac
+
+CALLER_WAS_ACTIVE="0"
+WLED_WAS_ACTIVE="0"
+
+if [[ "$DO_CALLER" == "1" ]]; then
+  CALLER_WAS_ACTIVE="$(stop_if_exists darts-caller.service)"
+  backup_file_if_exists "$CALLER_START" "${BK}/darts-caller/start-custom.sh"
+fi
+
+if [[ "$DO_WLED" == "1" ]]; then
+  WLED_WAS_ACTIVE="$(stop_if_exists darts-wled.service)"
+  backup_file_if_exists "$WLED_WRAPPER" "${BK}/darts-wled/start-custom.wrapper.sh"
+  backup_file_if_exists "$WLED_CONFIG"  "${BK}/darts-wled/start-custom.config.sh"
+fi
+
+# Repos updaten
+if [[ "$DO_CALLER" == "1" ]]; then
+  CALLER_STATUS="$(repo_update_status "$CALLER_DIR" "CALLER")"
+fi
+if [[ "$DO_WLED" == "1" ]]; then
+  WLED_STATUS="$(repo_update_status "$WLED_DIR" "WLED")"
+fi
+
+# Restore start-custom
+if [[ "$DO_CALLER" == "1" ]]; then
+  restore_file_if_exists "${BK}/darts-caller/start-custom.sh" "$CALLER_START"
+fi
+if [[ "$DO_WLED" == "1" ]]; then
+  restore_file_if_exists "${BK}/darts-wled/start-custom.wrapper.sh" "$WLED_WRAPPER"
+  restore_file_if_exists "${BK}/darts-wled/start-custom.config.sh" "$WLED_CONFIG"
+  ensure_wrapper
+fi
+
+# venv + requirements nur wenn nötig
+if [[ "$DO_CALLER" == "1" ]]; then
+  venv_refresh_install_if_needed "$CALLER_DIR" "CALLER" "$CALLER_STATUS" || true
+fi
+if [[ "$DO_WLED" == "1" ]]; then
+  venv_refresh_install_if_needed "$WLED_DIR" "WLED" "$WLED_STATUS" || true
+fi
+
+# Services restart nur wenn vorher aktiv UND relevant geändert (oder FORCE)
+if [[ "$DO_CALLER" == "1" && "$CALLER_WAS_ACTIVE" == "1" ]]; then
+  if [[ "$FORCE" == "1" || "$CALLER_STATUS" == "CHANGED" ]]; then
+    restart_if_exists darts-caller.service
+  else
+    log "CALLER: war aktiv, aber UNCHANGED -> kein Restart."
+  fi
+fi
+
+if [[ "$DO_WLED" == "1" && "$WLED_WAS_ACTIVE" == "1" ]]; then
+  if [[ "$FORCE" == "1" || "$WLED_STATUS" == "CHANGED" ]]; then
+    restart_if_exists darts-wled.service
+  else
+    log "WLED: war aktiv, aber UNCHANGED -> kein Restart."
+  fi
+fi
+
+systemctl daemon-reload || true
+
+log "===== SUMMARY ====="
+log "CALLER: $CALLER_STATUS"
+log "WLED:   $WLED_STATUS"
+if [[ -n "$ERRORS" ]]; then
+  log "WARN/ERRORS: $ERRORS"
+fi
+log "Backup: $BK"
+log "===== Extensions Update DONE ====="
+"""
+
+def start_extensions_update_background(target: str = "all") -> tuple[bool, str]:
+    """Startet das Extensions-Update (darts-caller + darts-wled) im Hintergrund via systemd-run.
+
+    Button-Name im UI: "WLED UPDATE" (historisch), aktualisiert aber beide Extensions nach Bedarf.
+    Das Script schreibt:
+      - Log:  EXTENSIONS_UPDATE_LOG
+      - Last: EXTENSIONS_UPDATE_LAST (JSON: caller/wled CHANGED/UNCHANGED)
+    """
+    # State aktualisieren
+    state = load_extensions_update_state()
+    state["started"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    state["target"] = target
+    state.pop("error", None)
+
+    unit_name = f"autodarts-wled-update-{int(time.time())}"
+
+    # Script im Root-Context schreiben + ausführen
+    cmdline = (
+        f"cat > {EXTENSIONS_UPDATE_SCRIPT} <<'EOF'\n"
+        f"{EXTENSIONS_UPDATE_SCRIPT_TEMPLATE}\n"
+        f"EOF\n"
+        f"chmod +x {EXTENSIONS_UPDATE_SCRIPT}\n"
+        f"{EXTENSIONS_UPDATE_SCRIPT} {target}\n"
+    )
+
+    try:
+        cmd = [
+            "sudo", "-n",
+            "systemd-run",
+            "--unit", unit_name,
+            "--no-block",
+            "--collect",
+            "bash", "-lc", cmdline,
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+
+        if res.returncode == 0:
+            state["unit"] = unit_name
+            state["method"] = "systemd-run"
+            save_extensions_update_state(state)
+            return True, "WLED UPDATE gestartet (Caller/WLED werden nur aktualisiert, wenn nötig)."
+
+        state["unit"] = None
+        state["method"] = "systemd-run-failed"
+        state["error"] = (res.stderr or res.stdout or "").strip()[:300]
+        save_extensions_update_state(state)
+        return False, state["error"] or "systemd-run fehlgeschlagen."
+
+    except Exception as e:
+        state["unit"] = None
+        state["method"] = "exception"
+        state["error"] = str(e)[:300]
+        save_extensions_update_state(state)
+        return False, state["error"]
+
+
 def save_os_update_state(state: dict):
     try:
         os.makedirs(os.path.dirname(OS_UPDATE_STATE), exist_ok=True)
@@ -2225,6 +2620,9 @@ def index():
     webpanel_update_available = bool(webpanel_check.get('installed') and webpanel_check.get('latest') and webpanel_check.get('installed') != webpanel_check.get('latest'))
     webpanel_state = load_webpanel_update_state() if admin_unlocked else {}
     webpanel_log_tail = tail_file(WEBPANEL_UPDATE_LOG, n=25, max_chars=3500) if admin_unlocked else ""
+    extensions_state = load_extensions_update_state() if admin_unlocked else {}
+    extensions_last = load_extensions_update_last() if admin_unlocked else {}
+    extensions_log_tail = tail_file(EXTENSIONS_UPDATE_LOG, n=25, max_chars=3500) if admin_unlocked else ""
     update_available = bool(update_check.get('installed') and update_check.get('latest') and update_check.get('installed') != update_check.get('latest'))
 
     update_state = load_update_state() if admin_unlocked else {}
@@ -2873,6 +3271,45 @@ def index():
 
           <hr style="border:none; border-top:1px solid #333; margin:14px 0;">
 
+          <h3 style="margin:0 0 8px;">Extensions (darts-caller / darts-wled)</h3>
+          <p class="hint" style="margin-top:0;">
+            Dieser Button aktualisiert <strong>darts-caller</strong> und <strong>darts-wled</strong> nur dann, wenn wirklich ein Update vorhanden ist
+            (ressourcenschonend: keine unnötigen pip/Reinstalls).
+          </p>
+          
+          <div class="btn-row">
+            <form method="post" action="{{ url_for('admin_wled_update') }}"
+                  onsubmit="return confirm('WLED UPDATE starten?\nHinweis: Wenn kein Update vorhanden ist, passiert nichts (Caller/WLED bleiben UNCHANGED).');"
+                  style="margin:0;">
+              <button type="submit" class="btn btn-primary">WLED UPDATE</button>
+            </form>
+          </div>
+          
+          {% if extensions_state.started %}
+            <p class="hint" style="margin-top:8px;">
+              Letzter Start: <code>{{ extensions_state.started }}</code>
+              {% if extensions_state.unit %} · Unit: <code>{{ extensions_state.unit }}</code>{% endif %}
+            </p>
+          {% endif %}
+          
+          {% if extensions_last.ts %}
+            <p class="hint" style="margin-top:8px;">
+              Letztes Ergebnis ({{ extensions_last.ts }}):
+              Caller: <code>{{ extensions_last.caller or 'n/a' }}</code> ·
+              WLED: <code>{{ extensions_last.wled or 'n/a' }}</code>
+              {% if extensions_last.backup %} · Backup: <code>{{ extensions_last.backup }}</code>{% endif %}
+            </p>
+          {% endif %}
+          
+          {% if extensions_log_tail %}
+            <details style="margin-top:10px;">
+              <summary>Extensions Update-Log anzeigen</summary>
+              <pre style="background:#0b0b0b; padding:12px; border-radius:10px; border:1px solid #333; white-space:pre-wrap; margin:10px 0 0;">{{ extensions_log_tail }}</pre>
+            </details>
+          {% endif %}
+          
+          <hr style="border:none; border-top:1px solid #333; margin:14px 0;">
+          
           <h3 style="margin:0 0 8px;">LED-Bänder – Adressen</h3>
           <p class="hint" style="margin-top:0;">
             Hier stellen Sie die Adresse/Hostname für LED Band 1–3 ein.
@@ -3360,6 +3797,9 @@ cp /var/log/pi_monitor_test_README.txt ~/
         webpanel_update_available=webpanel_update_available,
         webpanel_state=webpanel_state,
         webpanel_log_tail=webpanel_log_tail,
+        extensions_state=extensions_state,
+        extensions_last=extensions_last,
+        extensions_log_tail=extensions_log_tail,
         os_update_state=os_update_state,
         os_update_log_tail=os_update_log_tail,
     )
@@ -3899,6 +4339,15 @@ def admin_webpanel_update():
 
 
 
+
+@app.route("/admin/wled-update", methods=["POST"])
+def admin_wled_update():
+    # Admin muss entsperrt sein
+    if not bool(session.get("admin_unlocked", False)):
+        return ("Forbidden", 403)
+
+    ok, msg = start_extensions_update_background("all")
+    return redirect(url_for("index", admin="1", adminok=("1" if ok else "0"), adminmsg=(msg or "")) + "#admin")
 
 @app.route("/admin/reboot", methods=["POST"])
 def admin_reboot():

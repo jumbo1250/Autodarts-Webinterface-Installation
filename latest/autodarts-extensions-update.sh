@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ---- Einstellungen ----
+# --- Einstellungen ---
 CALLER_DIR="/var/lib/autodarts/extensions/darts-caller"
 WLED_DIR="/var/lib/autodarts/extensions/darts-wled"
 
@@ -13,16 +13,44 @@ BACKUP_ROOT="/var/lib/autodarts/config/backups"
 TS="$(date +'%Y%m%d-%H%M%S')"
 BK="${BACKUP_ROOT}/extensions-update-${TS}"
 
-LOG="/var/log/autodarts_extensions_update.log"
+LOG_FILE="/var/log/autodarts_extensions_update.log"
+RESULT_JSON="/var/lib/autodarts/extensions-update-last.json"
 
-# optional: mit FORCE=1 alles erzwingen (pip + restart auch wenn unchanged)
 FORCE="${FORCE:-0}"
+TARGET="${1:-all}"   # all | caller | wled
 
-# ---- Helpers ----
+# --- Helpers ---
 log() { echo "[$(date +'%F %T')] $*"; }
 
-mkdir -p "$(dirname "$LOG")"
-exec >>"$LOG" 2>&1
+mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$RESULT_JSON")"
+exec >>"$LOG_FILE" 2>&1
+
+# Lock gegen Doppelklick
+LOCK="/run/autodarts-extensions-update.lock"
+if command -v flock >/dev/null 2>&1; then
+  exec 9>"$LOCK"
+  flock -n 9 || { log "Update läuft bereits (lock: $LOCK)."; exit 0; }
+fi
+
+CALLER_STATUS="SKIPPED"
+WLED_STATUS="SKIPPED"
+ERRORS=""
+
+write_result() {
+  cat > "$RESULT_JSON" <<JSON
+{
+  "ts": "$(date +'%F %T')",
+  "target": "$TARGET",
+  "caller": "$CALLER_STATUS",
+  "wled": "$WLED_STATUS",
+  "backup": "$BK",
+  "force": "$FORCE",
+  "errors": "$(echo "$ERRORS" | tr '\n' ' ' | sed 's/"/\\"/g')"
+}
+JSON
+  chmod 666 "$RESULT_JSON" 2>/dev/null || true
+}
+trap write_result EXIT
 
 exists_unitfile() {
   systemctl list-unit-files --no-legend 2>/dev/null | awk '{print $1}' | grep -qx "$1"
@@ -93,7 +121,7 @@ restore_file_if_exists() {
 }
 
 repo_update_status() {
-  # prints one of: CHANGED / UNCHANGED / SKIPPED
+  # prints: CHANGED / UNCHANGED / SKIPPED
   local dir="$1"
   local label="$2"
 
@@ -103,7 +131,6 @@ repo_update_status() {
     return 0
   fi
 
-  # git safe.directory (gegen "dubious ownership" bei root)
   git config --global --add safe.directory "$dir" >/dev/null 2>&1 || true
 
   log "$label: Update Repo: $dir"
@@ -155,7 +182,11 @@ venv_refresh_install_if_needed() {
   export PIP_NO_INPUT=1
 
   if [[ ! -d ".venv" ]]; then
-    python3 -m venv .venv
+    if ! python3 -m venv .venv; then
+      ERRORS="${ERRORS}\n${label}: python3 -m venv fehlgeschlagen (python3-venv installiert?)"
+      popd >/dev/null || true
+      return 0
+    fi
   fi
 
   # shellcheck disable=SC1091
@@ -169,7 +200,9 @@ venv_refresh_install_if_needed() {
     else
       log "$label: requirements FAIL -> Retry ohne pyinstaller/pyinstaller-hooks-contrib"
       grep -v -E '^pyinstaller(==|$)|^pyinstaller-hooks-contrib(==|$)' "$requirements" > /tmp/req-no-pyinstaller.txt
-      python3 -m pip install -r /tmp/req-no-pyinstaller.txt --upgrade
+      if ! python3 -m pip install -r /tmp/req-no-pyinstaller.txt --upgrade; then
+        ERRORS="${ERRORS}\n${label}: pip install requirements fehlgeschlagen"
+      fi
     fi
   else
     log "$label: Keine requirements.txt gefunden (übersprungen)"
@@ -180,60 +213,81 @@ venv_refresh_install_if_needed() {
 }
 
 # ---- MAIN ----
+log "===== Extensions Update START (target=${TARGET}) ====="
+
 if [[ "$(id -u)" -ne 0 ]]; then
-  echo "Bitte mit sudo ausführen."
+  log "Bitte mit sudo ausführen."
   exit 1
 fi
 
 mkdir -p "$BK"
-log "===== Extensions Update START ====="
 log "Backup-Ordner: $BK"
 log "FORCE=$FORCE"
 
-# 1) Services (falls vorhanden) stoppen, Status merken
-CALLER_WAS_ACTIVE="$(stop_if_exists darts-caller.service)"
-WLED_WAS_ACTIVE="$(stop_if_exists darts-wled.service)"
+DO_CALLER=0
+DO_WLED=0
+case "$TARGET" in
+  all) DO_CALLER=1; DO_WLED=1;;
+  caller) DO_CALLER=1;;
+  wled) DO_WLED=1;;
+  *) log "Unbekannter TARGET: $TARGET -> all"; DO_CALLER=1; DO_WLED=1;;
+esac
 
-# 2) Backups wichtiger Dateien
-backup_file_if_exists "$CALLER_START" "${BK}/darts-caller/start-custom.sh"
-backup_file_if_exists "$WLED_WRAPPER" "${BK}/darts-wled/start-custom.wrapper.sh"
-backup_file_if_exists "$WLED_CONFIG"  "${BK}/darts-wled/start-custom.config.sh"
+CALLER_WAS_ACTIVE="0"
+WLED_WAS_ACTIVE="0"
 
-# 3) Repos updaten (und merken ob geändert)
-CALLER_STATUS="$(repo_update_status "$CALLER_DIR" "CALLER")"
-WLED_STATUS="$(repo_update_status "$WLED_DIR" "WLED")"
+if [[ "$DO_CALLER" == "1" ]]; then
+  CALLER_WAS_ACTIVE="$(stop_if_exists darts-caller.service)"
+  backup_file_if_exists "$CALLER_START" "${BK}/darts-caller/start-custom.sh"
+fi
 
-# 4) Start-Custom Dateien wiederherstellen
-restore_file_if_exists "${BK}/darts-caller/start-custom.sh"         "$CALLER_START"
-restore_file_if_exists "${BK}/darts-wled/start-custom.wrapper.sh"  "$WLED_WRAPPER"
-restore_file_if_exists "${BK}/darts-wled/start-custom.config.sh"   "$WLED_CONFIG"
+if [[ "$DO_WLED" == "1" ]]; then
+  WLED_WAS_ACTIVE="$(stop_if_exists darts-wled.service)"
+  backup_file_if_exists "$WLED_WRAPPER" "${BK}/darts-wled/start-custom.wrapper.sh"
+  backup_file_if_exists "$WLED_CONFIG"  "${BK}/darts-wled/start-custom.config.sh"
+fi
 
-# 5) Wrapper sicherstellen
-ensure_wrapper
+# Repos updaten
+if [[ "$DO_CALLER" == "1" ]]; then
+  CALLER_STATUS="$(repo_update_status "$CALLER_DIR" "CALLER")"
+fi
+if [[ "$DO_WLED" == "1" ]]; then
+  WLED_STATUS="$(repo_update_status "$WLED_DIR" "WLED")"
+fi
 
-# 6) venv + requirements nur wenn nötig
-venv_refresh_install_if_needed "$CALLER_DIR" "CALLER" "$CALLER_STATUS"
-venv_refresh_install_if_needed "$WLED_DIR"   "WLED"   "$WLED_STATUS"
+# Restore start-custom
+if [[ "$DO_CALLER" == "1" ]]; then
+  restore_file_if_exists "${BK}/darts-caller/start-custom.sh" "$CALLER_START"
+fi
+if [[ "$DO_WLED" == "1" ]]; then
+  restore_file_if_exists "${BK}/darts-wled/start-custom.wrapper.sh" "$WLED_WRAPPER"
+  restore_file_if_exists "${BK}/darts-wled/start-custom.config.sh" "$WLED_CONFIG"
+  ensure_wrapper
+fi
 
-# 7) Services wieder starten nur wenn vorher aktiv UND relevant geändert (oder FORCE)
-if [[ "$CALLER_WAS_ACTIVE" == "1" ]]; then
+# venv + requirements nur wenn nötig
+if [[ "$DO_CALLER" == "1" ]]; then
+  venv_refresh_install_if_needed "$CALLER_DIR" "CALLER" "$CALLER_STATUS" || true
+fi
+if [[ "$DO_WLED" == "1" ]]; then
+  venv_refresh_install_if_needed "$WLED_DIR" "WLED" "$WLED_STATUS" || true
+fi
+
+# Services restart nur wenn vorher aktiv UND relevant geändert (oder FORCE)
+if [[ "$DO_CALLER" == "1" && "$CALLER_WAS_ACTIVE" == "1" ]]; then
   if [[ "$FORCE" == "1" || "$CALLER_STATUS" == "CHANGED" ]]; then
     restart_if_exists darts-caller.service
   else
     log "CALLER: war aktiv, aber UNCHANGED -> kein Restart."
   fi
-else
-  log "CALLER: war vorher aus -> bleibt aus (ok)."
 fi
 
-if [[ "$WLED_WAS_ACTIVE" == "1" ]]; then
+if [[ "$DO_WLED" == "1" && "$WLED_WAS_ACTIVE" == "1" ]]; then
   if [[ "$FORCE" == "1" || "$WLED_STATUS" == "CHANGED" ]]; then
     restart_if_exists darts-wled.service
   else
     log "WLED: war aktiv, aber UNCHANGED -> kein Restart."
   fi
-else
-  log "WLED: war vorher aus -> bleibt aus (ok)."
 fi
 
 systemctl daemon-reload || true
@@ -241,9 +295,9 @@ systemctl daemon-reload || true
 log "===== SUMMARY ====="
 log "CALLER: $CALLER_STATUS"
 log "WLED:   $WLED_STATUS"
+if [[ -n "$ERRORS" ]]; then
+  log "WARN/ERRORS: $ERRORS"
+fi
 log "Backup: $BK"
 log "===== Extensions Update DONE ====="
-echo "CALLER: $CALLER_STATUS"
-echo "WLED:   $WLED_STATUS"
-echo "Backup: $BK"
-exit 0
+
