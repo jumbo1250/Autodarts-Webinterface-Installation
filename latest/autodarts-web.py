@@ -5,6 +5,7 @@ import re
 import socket
 import subprocess
 import shutil
+import shlex
 import multiprocessing
 from concurrent.futures import ThreadPoolExecutor
 import urllib.request
@@ -1207,6 +1208,37 @@ def save_webpanel_update_state(state: dict):
         pass
 
 
+def _systemd_unit_is_active(unit_name: str) -> bool:
+    """True, wenn ein systemd Unit 'active' oder 'activating' ist."""
+    try:
+        res = subprocess.run(
+            ["systemctl", "is-active", unit_name],
+            capture_output=True,
+            text=True,
+        )
+        return (res.stdout or "").strip() in ("active", "activating")
+    except Exception:
+        return False
+
+
+def webpanel_update_is_running() -> bool:
+    """Best-effort: erkennt, ob gerade ein Webpanel-Update läuft."""
+    st = load_webpanel_update_state()
+    unit = (st.get("unit") or "").strip()
+    if unit:
+        return _systemd_unit_is_active(unit)
+    # Fallback: falls 'nohup' genutzt wurde, versuchen wir den Prozess zu finden
+    try:
+        res = subprocess.run(
+            ["pgrep", "-f", WEBPANEL_UPDATE_SCRIPT],
+            capture_output=True,
+            text=True,
+        )
+        return res.returncode == 0 and bool((res.stdout or "").strip())
+    except Exception:
+        return False
+
+
 def start_webpanel_update_background() -> tuple[bool, str]:
     """Startet das Webpanel-Update **außerhalb** des Service-CGroups, damit es den Service-Restart überlebt.
 
@@ -1214,26 +1246,56 @@ def start_webpanel_update_background() -> tuple[bool, str]:
       Das Update-Script restarted am Ende `autodarts-web.service`. Wenn das Update als Child-Prozess
       innerhalb des Webpanel-Services läuft, würde systemd beim Restart normalerweise auch den Updater killen
       (KillMode=control-group). Deshalb starten wir es via `systemd-run` in einem eigenen transienten Unit.
+
+    Zusätzlich:
+      - verhindert Doppelstarts ("Update läuft bereits")
+      - versucht *optional* das Update-Script vor dem Start aus GitHub zu aktualisieren (wenn vorhanden)
     """
 
     if not os.path.exists(WEBPANEL_UPDATE_SCRIPT):
         return False, f"Update-Script nicht gefunden: {WEBPANEL_UPDATE_SCRIPT}"
+
+    # Lock: läuft schon?
+    if webpanel_update_is_running():
+        return False, "Webpanel-Update läuft bereits."
 
     # State aktualisieren
     state = load_webpanel_update_state()
     state["started"] = time.strftime("%Y-%m-%d %H:%M:%S")
     state.pop("error", None)
 
-    unit_name = f"autodarts-webpanel-update-{int(time.time())}"
+    # Fester Unit-Name => zweiter Start während Laufzeit wird sauber geblockt
+    unit_name = "autodarts-webpanel-update"
+
+    # Remote-Updater (optional) – wenn es diese Datei im Repo gibt, wird sie übernommen
+    remote_updater_url = os.environ.get(
+        "WEBPANEL_UPDATE_SCRIPT_REMOTE",
+        WEBPANEL_RAW_BASE + "/autodarts-webpanel-update.sh",
+    )
 
     try:
+        # Wrapper, damit wir (1) loggen, (2) optional self-update machen, (3) dann das eigentliche Script starten
+        cmdline = (
+            f"exec >>{WEBPANEL_UPDATE_LOG} 2>&1; "
+            f"echo '===== Webpanel Update WRAPPER START {time.strftime('%Y-%m-%d %H:%M:%S')} ====='; "
+            f"tmp=$(mktemp); "
+            f"if curl -fsSL --retry 2 --connect-timeout 5 --max-time 30 '{remote_updater_url}' -o \"$tmp\"; then "
+            f"sed -i 's/\r$//' \"$tmp\" || true; "
+            f"sed -i '1s/^\xEF\xBB\xBF//' \"$tmp\" || true; "
+            f"install -m 755 \"$tmp\" '{WEBPANEL_UPDATE_SCRIPT}'; "
+            f"echo 'Self-update: updater script refreshed.'; "
+            f"else echo 'Self-update: skipped (download failed or file not present).'; fi; "
+            f"echo 'Starting updater: {WEBPANEL_UPDATE_SCRIPT}'; "
+            f"exec '{WEBPANEL_UPDATE_SCRIPT}'"
+        )
+
         cmd = [
             "sudo", "-n",
             "systemd-run",
             "--unit", unit_name,
             "--no-block",
             "--collect",
-            WEBPANEL_UPDATE_SCRIPT,
+            "/bin/bash", "-lc", cmdline,
         ]
         res = subprocess.run(cmd, capture_output=True, text=True)
 
@@ -1244,7 +1306,7 @@ def start_webpanel_update_background() -> tuple[bool, str]:
             return True, ""
 
         # Fallback (kann je nach systemd KillMode trotzdem gekillt werden)
-        fallback = f"nohup sudo -n {WEBPANEL_UPDATE_SCRIPT} >> {WEBPANEL_UPDATE_LOG} 2>&1 &"
+        fallback = f"nohup sudo -n /bin/bash -lc {shlex.quote(cmdline)} >> {WEBPANEL_UPDATE_LOG} 2>&1 &"
         subprocess.Popen(
             ["bash", "-lc", fallback],
             stdout=subprocess.DEVNULL,
@@ -1263,10 +1325,6 @@ def start_webpanel_update_background() -> tuple[bool, str]:
         state["error"] = str(e)[:300]
         save_webpanel_update_state(state)
         return False, state["error"]
-
-
-
-
 # ---------------- System Update (apt + reboot) ----------------
 
 def load_os_update_state() -> dict:
@@ -2231,6 +2289,7 @@ def index():
     .hint { font-size:0.8rem; opacity:0.7; margin-top:4px; }
     .msg-ok { color:#6be26b; margin-top:10px; white-space:pre-line; }
     .msg-bad { color:#ff6b6b; margin-top:10px; white-space:pre-line; }
+    .msg-info { color:#9bd1ff; margin-top:10px; white-space:pre-line; }
     footer { margin-top:24px; font-size:0.75rem; opacity:0.6; text-align:center; }
     .sysinfo { position:fixed; top:10px; right:10px; background:#1c1c1c; border-radius:8px; padding:8px 10px; font-size:0.8rem; box-shadow:0 0 10px rgba(0,0,0,0.6); z-index:1000; border:1px solid #333; }
     
@@ -3789,6 +3848,10 @@ def admin_webpanel_check():
     if not bool(session.get("admin_unlocked", False)):
         return ("Forbidden", 403)
 
+    if webpanel_update_is_running():
+        flash("Webpanel: Update läuft bereits (bitte warten).", "info")
+        return redirect(url_for("index", admin="1") + "#admin")
+
     installed = get_webpanel_version()
     latest = fetch_latest_webpanel_version()
 
@@ -4119,7 +4182,9 @@ def wifi():
         <p class="{{ 'msg-ok' if success else 'msg-bad' }}">{{ message }}</p>
       {% endif %}
 
-      <form method="post">
+      <p id="wifi-working" class="msg-info" style="display:none">Verbindung wird hergestellt … das kann bis zu 30 Sekunden dauern.</p>
+
+      <form method="post" id="wifiForm">
         <label for="ssid">WLAN Name (SSID)</label>
         <input type="text" id="ssid" name="ssid" required>
 
@@ -4140,6 +4205,22 @@ def wifi():
       </form>
     </div>
   </div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      var form = document.getElementById('wifiForm');
+      if (!form) return;
+      form.addEventListener('submit', function () {
+        var msg = document.getElementById('wifi-working');
+        if (msg) msg.style.display = 'block';
+        var btn = form.querySelector('button[type="submit"]');
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = 'Verbinde …';
+        }
+      });
+    });
+  </script>
 </body>
 </html>
 """
