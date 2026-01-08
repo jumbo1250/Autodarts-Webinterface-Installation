@@ -95,6 +95,11 @@ WEBPANEL_UPDATE_LOG = "/var/log/autodarts_webpanel_update.log"
 WEBPANEL_UPDATE_STATE = "/var/lib/autodarts/webpanel-update-state.json"
 WEBPANEL_UPDATE_CHECK = "/var/lib/autodarts/webpanel-update-check.json"
 
+# --- System (apt) Update + Reboot ---
+OS_UPDATE_LOG = "/var/log/autodarts_os_update.log"
+OS_UPDATE_STATE = "/var/lib/autodarts/os-update-state.json"
+
+
 # --- Extensions Update (darts-caller / darts-wled) ---
 EXTENSIONS_UPDATE_SCRIPT = "/usr/local/bin/autodarts-extensions-update.sh"
 EXTENSIONS_UPDATE_LOG = "/var/log/autodarts_extensions_update.log"
@@ -1358,6 +1363,112 @@ def start_webpanel_update_background() -> tuple[bool, str]:
         return False, state["error"]
 
 
+
+# ---------------- System Update (apt + reboot) ----------------
+
+def load_os_update_state() -> dict:
+    try:
+        with open(OS_UPDATE_STATE, "r", encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+
+def save_os_update_state(state: dict):
+    try:
+        os.makedirs(os.path.dirname(OS_UPDATE_STATE), exist_ok=True)
+        with open(OS_UPDATE_STATE, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2)
+    except Exception:
+        pass
+
+
+def start_os_update_background() -> tuple[bool, str]:
+    """Startet 'apt update + apt upgrade' im Hintergrund und rebootet danach IMMER.
+
+    Läuft via `systemd-run` in einem eigenen transienten Unit (damit es einen Webpanel-Restart überlebt).
+    """
+
+    state = load_os_update_state()
+    state["started"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    state.pop("error", None)
+
+    unit_name = f"autodarts-os-update-{int(time.time())}"
+
+    # Non-interactive apt (damit es nicht hängen bleibt bei config prompts)
+    cmdline = (
+        f"exec >>{OS_UPDATE_LOG} 2>&1; "
+        f"echo '===== OS Update START {time.strftime('%Y-%m-%d %H:%M:%S')} ====='; "
+        f"apt-get update || echo 'apt-get update FAILED (continue)'; "
+        f"DEBIAN_FRONTEND=noninteractive "
+        f"apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold upgrade "
+        f"|| echo 'apt-get upgrade FAILED (continue)'; "
+        f"echo '===== OS Update DONE -> reboot ====='; "
+        f"sync; /sbin/reboot"
+    )
+
+    try:
+        cmd = [
+            "sudo", "-n",
+            "systemd-run",
+            "--unit", unit_name,
+            "--no-block",
+            "--collect",
+            "bash", "-lc", cmdline,
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+
+        if res.returncode == 0:
+            state["unit"] = unit_name
+            state["method"] = "systemd-run"
+            save_os_update_state(state)
+            return True, "System-Update gestartet – der Pi rebootet danach automatisch."
+
+        state["unit"] = None
+        state["method"] = "systemd-run-failed"
+        state["error"] = (res.stderr or res.stdout or "").strip()[:300]
+        save_os_update_state(state)
+        return False, f"System-Update konnte nicht gestartet werden: {state['error']}"
+
+    except Exception as e:
+        state["unit"] = None
+        state["method"] = "exception"
+        state["error"] = str(e)[:300]
+        save_os_update_state(state)
+        return False, state["error"]
+
+def service_enable_now(service_name: str):
+    _run_systemctl(["enable", "--now", service_name], timeout=SYSTEMCTL_ACTION_TIMEOUT)
+
+def service_disable_now(service_name: str):
+    _run_systemctl(["disable", "--now", service_name], timeout=SYSTEMCTL_ACTION_TIMEOUT)
+
+def service_restart(service_name: str):
+    _run_systemctl(["restart", service_name], timeout=SYSTEMCTL_ACTION_TIMEOUT)
+
+def service_is_enabled(service_name: str) -> bool:
+    r = _run_systemctl(["is-enabled", service_name], timeout=SYSTEMCTL_CHECK_TIMEOUT)
+    return bool(r and r.stdout.strip() == "enabled")
+
+def autodarts_autoupdate_is_enabled() -> bool | None:
+    if not service_exists(AUTOUPDATE_SERVICE):
+        return None
+    return service_is_enabled(AUTOUPDATE_SERVICE)
+
+def autodarts_set_autoupdate(enabled: bool) -> tuple[bool, str]:
+    if not service_exists(AUTOUPDATE_SERVICE):
+        return False, f"{AUTOUPDATE_SERVICE} nicht gefunden."
+    try:
+        if enabled:
+            subprocess.run(["systemctl", "enable", "--now", AUTOUPDATE_SERVICE], capture_output=True, text=True)
+            return True, "Auto-Update aktiviert."
+        subprocess.run(["systemctl", "disable", "--now", AUTOUPDATE_SERVICE], capture_output=True, text=True)
+        return True, "Auto-Update deaktiviert."
+    except Exception as e:
+        return False, f"Auto-Update konnte nicht geändert werden: {e}"
+
+
+
 # ---------------- Extensions Update (darts-caller / darts-wled) ----------------
 
 def load_extensions_update_state() -> dict:
@@ -2599,6 +2710,9 @@ def index():
     update_state = load_update_state() if admin_unlocked else {}
     update_log_tail = tail_file(AUTODARTS_UPDATE_LOG, n=25, max_chars=3500) if admin_unlocked else ""
 
+    os_update_state = load_os_update_state() if admin_unlocked else {}
+    os_update_log_tail = tail_file(OS_UPDATE_LOG, n=25, max_chars=3500) if admin_unlocked else ""
+
     wled_targets = wled_cfg.get("targets", []) or []
     while len(wled_targets) < 3:
         wled_targets.append({"label": f"Dart LED{len(wled_targets)+1}", "host": "", "enabled": False})
@@ -2644,6 +2758,7 @@ def index():
     .btn-row { display:flex; flex-wrap:wrap; gap:10px; margin-top:10px; align-items:center; }
     .btn { display:inline-block; padding:10px 16px; border-radius:999px; border:1px solid #444; background:#2a2a2a; color:#eee; text-decoration:none; font-size:0.95rem; cursor:pointer; }
     .btn-primary { background:#3b82f6; border-color:#3b82f6; color:white; }
+    .btn-danger { background:#b91c1c; border-color:#b91c1c; color:white; }
     .btn-small { padding:6px 12px; font-size:0.85rem; }
     .btn-disabled { opacity: 0.4; pointer-events: none; filter: grayscale(1); }
     textarea { width:100%; min-height:80px; border-radius:8px; border:1px solid #444; background:#111; color:#eee; padding:8px; resize:vertical; font-family:inherit; }
@@ -3098,7 +3213,40 @@ def index():
             <button type="submit" class="btn btn-small">Admin sperren</button>
           </form>
 
-          <hr style="border:none; border-top:1px solid #333; margin:14px 0;">
+
+           <h3 style="margin:0 0 8px;">System</h3>
+           <p class="hint" style="margin-top:0;">
+             Neustart startet den Mini PC sofort neu. „System updaten & Reboot“ führt ein <code>apt-get update/upgrade</code> aus und startet danach automatisch neu.
+           </p>
+
+           <div class="btn-row">
+             <form method="post" action="{{ url_for('admin_reboot') }}"
+                   onsubmit="return confirm('Wollen Sie wirklich den Mini PC komplett neu starten?');" style="margin:0;">
+               <button type="submit" class="btn btn-danger">System neu starten</button>
+             </form>
+
+             <form method="post" action="{{ url_for('admin_os_update') }}"
+                   onsubmit="return confirm('System-Update starten?\nDer Pi rebootet danach automatisch.');" style="margin:0;">
+               <button type="submit" class="btn btn-primary">System updaten & Reboot</button>
+             </form>
+           </div>
+
+           {% if os_update_state.started %}
+             <p class="hint" style="margin-top:8px;">
+               Letztes System-Update gestartet: <code>{{ os_update_state.started }}</code>
+               {% if os_update_state.unit %}(Unit: <code>{{ os_update_state.unit }}</code>){% endif %}
+             </p>
+           {% endif %}
+
+           {% if os_update_log_tail %}
+             <details style="margin-top:10px;">
+               <summary>System-Update-Log anzeigen</summary>
+               <pre style="background:#0b0b0b; padding:12px; border-radius:10px; border:1px solid #333; overflow:auto; white-space:pre-wrap; margin:10px 0 0;">{{ os_update_log_tail }}</pre>
+             </details>
+           {% endif %}
+
+           <hr style="border:none; border-top:1px solid #333; margin:14px 0;">
+
 
           
           <h3 style="margin:0 0 8px;">Webpanel Software</h3>
@@ -3505,6 +3653,7 @@ cp /var/log/pi_monitor_test_README.txt ~/
   const txt = document.getElementById('pingOverlayText');
   const bar = document.getElementById('pingOverlayBar');
   const out = document.getElementById('pingResult');
+  const titleEl = document.getElementById('pingOverlayTitle');
 
   function showOverlay(){ if(overlay){ overlay.style.display='flex'; } }
   function hideOverlay(){ if(overlay){ overlay.style.display='none'; } }
@@ -3513,11 +3662,53 @@ cp /var/log/pi_monitor_test_README.txt ~/
     if(bar) bar.style.width = pct + '%';
   }
 
+  // Einstufung der Verbindung anhand der Ping-Werte (dein strenger Range)
+  function classifyPingQuality(s, total, recv){
+    const sent = Number(s.count || total || 30);
+    const rec = Number(recv || 0);
+    if(!sent || sent <= 0){
+      return { level: 'unknown', label: 'Unbekannt', loss: null };
+    }
+    const lost = Math.max(0, sent - rec);
+    const loss = Math.round((lost * 1000) / sent) / 10; // eine Nachkommastelle
+
+    const minMs = (s.min_ms != null) ? Number(s.min_ms) : null;
+    const maxMs = (s.max_ms != null) ? Number(s.max_ms) : null;
+    const avgMs = (s.avg_ms != null) ? Number(s.avg_ms) : null;
+
+    // Falls keine Laufzeiten, nur grobe Einstufung
+    if(minMs === null || maxMs === null || avgMs === null){
+      if(loss === 0){
+        return { level: 'gut', label: 'Gute Verbindung', loss };
+      }else if(loss < 3){
+        return { level: 'grenzwertig', label: 'Könnte funktionieren', loss };
+      }
+      return { level: 'nicht_spielbar', label: 'Nicht mehr spielbar', loss };
+    }
+
+    // 🔹 Strenge Grenzen:
+    // Super Verbindung
+    if(loss === 0 && avgMs <= 30 && maxMs <= 60){
+      return { level: 'super', label: 'Super Verbindung', loss };
+    }
+    // Gute Verbindung
+    if(loss < 1 && avgMs <= 60 && maxMs <= 120){
+      return { level: 'gut', label: 'Gute Verbindung', loss };
+    }
+    // Könnte funktionieren
+    if(loss < 3 && avgMs <= 120 && maxMs <= 300){
+      return { level: 'grenzwertig', label: 'Könnte funktionieren', loss };
+    }
+    // Nicht mehr spielbar
+    return { level: 'nicht_spielbar', label: 'Nicht mehr spielbar', loss };
+  }
+
   async function start(){
     if(!btn || btn.classList.contains('btn-disabled')) return;
     btn.classList.add('btn-disabled');
     if(out) out.textContent = '';
     showOverlay();
+    if(titleEl) titleEl.textContent = 'Verbindungstest läuft…';
     if(txt) txt.textContent = 'Starte…';
 
     try{
@@ -3553,17 +3744,42 @@ cp /var/log/pi_monitor_test_README.txt ~/
 
           if(s.done){
             clearInterval(timer);
-            hideOverlay();
-            const sent = total;
+            const sent = Number(s.count || total);
             const rec = recv;
+            const q = classifyPingQuality(s, sent, rec);
+
+            // 🔸 alter Text bleibt, nur leicht erweitert
             let result = `${rec} von ${sent} Paketen wurden erfolgreich gesendet.`;
+            if(q.loss != null){
+              result += ` · Paketverlust: ${q.loss}%`;
+            }
             if(s.min_ms!=null && s.max_ms!=null && s.avg_ms!=null){
               result += ` Schnellstes: ${s.min_ms} ms · Langsamstes: ${s.max_ms} ms · Durchschnitt: ${s.avg_ms} ms`;
             }
             if(s.error){
               result += ` (Hinweis: ${s.error})`;
             }
-            if(out) out.textContent = result;
+
+            // Text unten im Ergebnisfeld
+            if(out){
+              if(q && q.label){
+                out.textContent = `Verbindungsqualität: ${q.label}\n` + result;
+              }else{
+                out.textContent = result;
+              }
+            }
+
+            // 🔸 kleines Info-Fenster im Overlay
+            if(titleEl) titleEl.textContent = 'Verbindungstest abgeschlossen';
+            if(txt){
+              const label = q && q.label ? q.label : 'Unbekannt';
+              txt.textContent = `TEST erfolgreich durchgeführt.\nErgebnis lautet: ${label}`;
+            }
+            setProgress(total, total);
+
+            // Overlay nach ~3,5 Sekunden automatisch schließen
+            setTimeout(()=>{ hideOverlay(); }, 3500);
+
             btn.classList.remove('btn-disabled');
           }
         }catch(e){
@@ -3618,6 +3834,8 @@ cp /var/log/pi_monitor_test_README.txt ~/
         wled_hosts=wled_hosts,
         wled_master_enabled=wled_master_enabled,
         admin_unlocked=admin_unlocked,
+        os_update_state=os_update_state,
+        os_update_log_tail=os_update_log_tail,
         adminerr=adminerr,
         adminmsg=adminmsg,
         adminok=adminok,
@@ -4093,6 +4311,56 @@ def admin_unlock():
 def admin_lock():
     session.pop("admin_unlocked", None)
     return redirect(url_for("index") + "#admin")
+
+
+
+@app.route("/admin/reboot", methods=["POST"])
+def admin_reboot():
+    # Nur im Admin-Modus erlauben
+    if not bool(session.get("admin_unlocked", False)):
+        return ("Forbidden", 403)
+
+    unit_name = f"autodarts-reboot-{int(time.time())}"
+
+    # Im Hintergrund rebooten (damit die HTTP-Response noch rausgeht)
+    try:
+        subprocess.Popen(
+            ["sudo", "-n", "systemd-run", "--unit", unit_name, "--no-block", "--collect", "/sbin/reboot"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        # Fallback (falls systemd-run nicht geht)
+        try:
+            subprocess.Popen(
+                ["sudo", "-n", "/sbin/reboot"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            pass
+
+    return (
+        "<!doctype html><html lang='de'><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<title>Reboot</title></head><body style='font-family:system-ui;background:#111;color:#eee;padding:20px;'>"
+        "<h2>Neustart wird ausgeführt…</h2>"
+        "<p>Der Raspberry Pi startet jetzt neu. Diese Seite ist gleich nicht mehr erreichbar.</p>"
+        "</body></html>"
+    )
+
+
+
+
+
+
+@app.route("/admin/os/update", methods=["POST"])
+def admin_os_update():
+    if not bool(session.get("admin_unlocked", False)):
+        return ("Forbidden", 403)
+
+    ok, msg = start_os_update_background()
+    return redirect(url_for("index", admin="1", adminok=("1" if ok else "0"), adminmsg=msg) + "#admin")
 
 
 @app.route("/admin/autodarts/check", methods=["POST"])
