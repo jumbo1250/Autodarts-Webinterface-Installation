@@ -300,4 +300,3 @@ if [[ -n "$ERRORS" ]]; then
 fi
 log "Backup: $BK"
 log "===== Extensions Update DONE ====="
-

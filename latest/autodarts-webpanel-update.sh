@@ -41,6 +41,7 @@ trap cleanup EXIT
 FILES=(
   "autodarts-web.py|${BIN_DIR}/autodarts-web.py"
   "autodarts-button-led.py|${BIN_DIR}/autodarts-button-led.py"
+  "autodarts-extensions-update.sh|${BIN_DIR}/autodarts-extensions-update.sh"
   "Autodarts_install_manual.pdf|${DATA_DIR}/Autodarts_install_manual.pdf"
   "GPIO_Setup.jpeg|${DATA_DIR}/GPIO_Setup.jpeg"
   "Autodarts_Installationshandbuch_v2.docx|${DATA_DIR}/Autodarts_Installationshandbuch_v2.docx"
@@ -78,7 +79,7 @@ for entry in "${FILES[@]}"; do
 
   if ! curl -fsSL --retry 2 --connect-timeout 5 --max-time 30 "${url}" -o "${out}"; then
     # Self-update darf fehlen
-    if [[ "${src}" == "autodarts-webpanel-update.sh" ]]; then
+    if [[ "${src}" == "autodarts-webpanel-update.sh" || "${src}" == "autodarts-extensions-update.sh" ]]; then
       log "INFO: Self-Update übersprungen (Datei nicht gefunden oder Download-Fehler): ${src}"
       continue
     fi

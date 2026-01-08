@@ -5,7 +5,6 @@ import re
 import socket
 import subprocess
 import shutil
-import shlex
 import multiprocessing
 from concurrent.futures import ThreadPoolExecutor
 import urllib.request
@@ -13,6 +12,7 @@ import urllib.error
 from pathlib import Path
 import time  # für weichen Dongle-Reset
 import uuid
+from datetime import datetime
 import threading
 
 from flask import (
@@ -95,16 +95,13 @@ WEBPANEL_UPDATE_LOG = "/var/log/autodarts_webpanel_update.log"
 WEBPANEL_UPDATE_STATE = "/var/lib/autodarts/webpanel-update-state.json"
 WEBPANEL_UPDATE_CHECK = "/var/lib/autodarts/webpanel-update-check.json"
 
-
-# --- Extensions (darts-caller / darts-wled) Update ---
+# --- Extensions Update (darts-caller / darts-wled) ---
 EXTENSIONS_UPDATE_SCRIPT = "/usr/local/bin/autodarts-extensions-update.sh"
 EXTENSIONS_UPDATE_LOG = "/var/log/autodarts_extensions_update.log"
 EXTENSIONS_UPDATE_STATE = "/var/lib/autodarts/extensions-update-state.json"
 EXTENSIONS_UPDATE_LAST = "/var/lib/autodarts/extensions-update-last.json"
 
-# --- System (apt) Update + Reboot ---
-OS_UPDATE_LOG = "/var/log/autodarts_os_update.log"
-OS_UPDATE_STATE = "/var/lib/autodarts/os-update-state.json"
+
 # lokale Version (wird durch autodarts-webpanel-update.sh nach /var/lib/autodarts/webpanel-version.txt geschrieben)
 WEBPANEL_VERSION_FILE = os.environ.get("WEBPANEL_VERSION_FILE", "/var/lib/autodarts/webpanel-version.txt")
 
@@ -1214,37 +1211,6 @@ def save_webpanel_update_state(state: dict):
         pass
 
 
-def _systemd_unit_is_active(unit_name: str) -> bool:
-    """True, wenn ein systemd Unit 'active' oder 'activating' ist."""
-    try:
-        res = subprocess.run(
-            ["systemctl", "is-active", unit_name],
-            capture_output=True,
-            text=True,
-        )
-        return (res.stdout or "").strip() in ("active", "activating")
-    except Exception:
-        return False
-
-
-def webpanel_update_is_running() -> bool:
-    """Best-effort: erkennt, ob gerade ein Webpanel-Update läuft."""
-    st = load_webpanel_update_state()
-    unit = (st.get("unit") or "").strip()
-    if unit:
-        return _systemd_unit_is_active(unit)
-    # Fallback: falls 'nohup' genutzt wurde, versuchen wir den Prozess zu finden
-    try:
-        res = subprocess.run(
-            ["pgrep", "-f", WEBPANEL_UPDATE_SCRIPT],
-            capture_output=True,
-            text=True,
-        )
-        return res.returncode == 0 and bool((res.stdout or "").strip())
-    except Exception:
-        return False
-
-
 def start_webpanel_update_background() -> tuple[bool, str]:
     """Startet das Webpanel-Update **außerhalb** des Service-CGroups, damit es den Service-Restart überlebt.
 
@@ -1254,56 +1220,101 @@ def start_webpanel_update_background() -> tuple[bool, str]:
       (KillMode=control-group). Deshalb starten wir es via `systemd-run` in einem eigenen transienten Unit.
 
     Zusätzlich:
-      - verhindert Doppelstarts ("Update läuft bereits")
+      - verhindert Doppelstarts ("Update läuft bereits") über ein Lockfile
       - versucht *optional* das Update-Script vor dem Start aus GitHub zu aktualisieren (wenn vorhanden)
+      - bereinigt das Lockfile nach Abschluss (auch bei Fehlern)
     """
-
     if not os.path.exists(WEBPANEL_UPDATE_SCRIPT):
         return False, f"Update-Script nicht gefunden: {WEBPANEL_UPDATE_SCRIPT}"
 
-    # Lock: läuft schon?
-    if webpanel_update_is_running():
-        return False, "Webpanel-Update läuft bereits."
+    lock_path = "/var/lib/autodarts/webpanel-update.lock"
+
+    def _unit_is_active(unit: str) -> bool:
+        try:
+            r = subprocess.run(["systemctl", "is-active", unit], capture_output=True, text=True)
+            return r.returncode == 0
+        except Exception:
+            return False
+
+    # Lock prüfen (und ggf. stale Lock entfernen)
+    try:
+        if os.path.exists(lock_path):
+            try:
+                with open(lock_path, "r", encoding="utf-8") as f:
+                    info = json.load(f) or {}
+            except Exception:
+                info = {}
+
+            unit = str(info.get("unit") or "").strip()
+            ts = int(info.get("ts") or 0)
+
+            if unit and _unit_is_active(unit):
+                return False, "Webpanel-Update läuft bereits."
+            # stale Lock nach 30 Minuten entfernen, wenn kein Unit mehr läuft
+            if ts and (time.time() - ts) > 1800:
+                try:
+                    os.remove(lock_path)
+                except Exception:
+                    return False, "Webpanel-Update läuft bereits (Lock konnte nicht entfernt werden)."
+            else:
+                # kein aktiver Unit gefunden, aber Lock frisch -> trotzdem blocken
+                return False, "Webpanel-Update läuft bereits."
+    except Exception:
+        # im Zweifel nicht blockieren, sondern versuchen zu starten
+        pass
 
     # State aktualisieren
     state = load_webpanel_update_state()
     state["started"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    state.pop("error", None)
+    state["finished"] = None
+    state["success"] = None
+    state["error"] = None
+    save_webpanel_update_state(state)
 
-    # Fester Unit-Name => zweiter Start während Laufzeit wird sauber geblockt
-    unit_name = "autodarts-webpanel-update"
+    unit_name = f"autodarts-webpanel-update-{int(time.time())}"
 
-    # Remote-Updater (optional) – wenn es diese Datei im Repo gibt, wird sie übernommen
-    remote_updater_url = os.environ.get(
-        "WEBPANEL_UPDATE_SCRIPT_REMOTE",
-        WEBPANEL_RAW_BASE + "/autodarts-webpanel-update.sh",
-    )
+    # Lock setzen
+    try:
+        os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+        with open(lock_path, "w", encoding="utf-8") as f:
+            json.dump({"ts": int(time.time()), "unit": unit_name}, f)
+    except Exception:
+        # wenn wir kein Lock setzen können, lieber trotzdem starten
+        pass
+
+    remote_updater_url = WEBPANEL_RAW_BASE + "/autodarts-webpanel-update.sh"
+
+    # In der transienten Unit laufen lassen, damit der Webpanel-Service sich neu starten darf.
+    # Wrapper entfernt am Ende das Lockfile.
+    wrapper_cmd = (
+        "set -euo pipefail; "
+        "lock='{lock}'; "
+        "tmp=$(mktemp); "
+        # Optionales Self-Update des Update-Scripts:
+        "if curl -fsSL --retry 2 --connect-timeout 5 --max-time 30 '{remote}' -o \"$tmp\"; then "
+        "sed -i 's/\r$//' \"$tmp\" || true; "
+        "sed -i '1s/^\xEF\xBB\xBF//' \"$tmp\" || true; "
+        "sudo -n install -m 755 \"$tmp\" '{local}'; "
+        "fi; "
+        "rm -f \"$tmp\" || true; "
+        # Jetzt das eigentliche Update (Fehler dürfen das Lock nicht blockieren):
+        "rc=0; "
+        "sudo -n '{local}' >> '{log}' 2>&1 || rc=$?; "
+        "rm -f \"$lock\" || true; "
+        "exit $rc"
+    ).format(lock=lock_path, remote=remote_updater_url, local=WEBPANEL_UPDATE_SCRIPT, log=WEBPANEL_UPDATE_LOG)
 
     try:
-        # Wrapper, damit wir (1) loggen, (2) optional self-update machen, (3) dann das eigentliche Script starten
-        cmdline = (
-            f"exec >>{WEBPANEL_UPDATE_LOG} 2>&1; "
-            f"echo '===== Webpanel Update WRAPPER START {time.strftime('%Y-%m-%d %H:%M:%S')} ====='; "
-            f"tmp=$(mktemp); "
-            f"if curl -fsSL --retry 2 --connect-timeout 5 --max-time 30 '{remote_updater_url}' -o \"$tmp\"; then "
-            f"sed -i 's/\r$//' \"$tmp\" || true; "
-            f"sed -i '1s/^\xEF\xBB\xBF//' \"$tmp\" || true; "
-            f"install -m 755 \"$tmp\" '{WEBPANEL_UPDATE_SCRIPT}'; "
-            f"echo 'Self-update: updater script refreshed.'; "
-            f"else echo 'Self-update: skipped (download failed or file not present).'; fi; "
-            f"echo 'Starting updater: {WEBPANEL_UPDATE_SCRIPT}'; "
-            f"exec '{WEBPANEL_UPDATE_SCRIPT}'"
+        res = subprocess.run(
+            [
+                "systemd-run",
+                "--unit", unit_name,
+                "--collect",
+                "/bin/bash", "-lc", wrapper_cmd,
+            ],
+            capture_output=True,
+            text=True,
         )
-
-        cmd = [
-            "sudo", "-n",
-            "systemd-run",
-            "--unit", unit_name,
-            "--no-block",
-            "--collect",
-            "/bin/bash", "-lc", cmdline,
-        ]
-        res = subprocess.run(cmd, capture_output=True, text=True)
 
         if res.returncode == 0:
             state["unit"] = unit_name
@@ -1311,36 +1322,40 @@ def start_webpanel_update_background() -> tuple[bool, str]:
             save_webpanel_update_state(state)
             return True, ""
 
-        # Fallback (kann je nach systemd KillMode trotzdem gekillt werden)
-        fallback = f"nohup sudo -n /bin/bash -lc {shlex.quote(cmdline)} >> {WEBPANEL_UPDATE_LOG} 2>&1 &"
-        subprocess.Popen(
-            ["bash", "-lc", fallback],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            preexec_fn=os.setsid,
-        )
+        # systemd-run fehlgeschlagen -> Lock entfernen
+        try:
+            if os.path.exists(lock_path):
+                os.remove(lock_path)
+        except Exception:
+            pass
+
+        # Fallback: nohup (best effort)
+        fallback = f"nohup sudo -n {WEBPANEL_UPDATE_SCRIPT} >> {WEBPANEL_UPDATE_LOG} 2>&1 &"
+        res2 = subprocess.run(["bash", "-lc", fallback], capture_output=True, text=True)
+        if res2.returncode == 0:
+            state["unit"] = None
+            state["method"] = "nohup-fallback"
+            state["error"] = (res.stderr or res.stdout or "").strip()[:300]
+            save_webpanel_update_state(state)
+            return True, state.get("error", "")
+
         state["unit"] = None
-        state["method"] = "nohup-fallback"
+        state["method"] = "failed"
         state["error"] = (res.stderr or res.stdout or "").strip()[:300]
         save_webpanel_update_state(state)
-        return True, state.get("error", "")
+        return False, state["error"]
 
     except Exception as e:
+        try:
+            if os.path.exists(lock_path):
+                os.remove(lock_path)
+        except Exception:
+            pass
         state["unit"] = None
         state["method"] = "exception"
         state["error"] = str(e)[:300]
         save_webpanel_update_state(state)
         return False, state["error"]
-# ---------------- System Update (apt + reboot) ----------------
-
-def load_os_update_state() -> dict:
-    try:
-        with open(OS_UPDATE_STATE, "r", encoding="utf-8") as f:
-            return json.load(f) or {}
-    except Exception:
-        return {}
-
-
 
 
 # ---------------- Extensions Update (darts-caller / darts-wled) ----------------
@@ -1678,10 +1693,19 @@ def start_extensions_update_background(target: str = "all") -> tuple[bool, str]:
     """Startet das Extensions-Update (darts-caller + darts-wled) im Hintergrund via systemd-run.
 
     Button-Name im UI: "WLED UPDATE" (historisch), aktualisiert aber beide Extensions nach Bedarf.
+
+    WICHTIG: Es wird **keine** neue Script-Version aus dem Webpanel hineingeschrieben.
+    Es wird die lokal installierte Datei EXTENSIONS_UPDATE_SCRIPT ausgeführt (die du z.B.
+    über dein Webpanel-Update-Script aus GitHub aktualisieren lässt).
+
     Das Script schreibt:
       - Log:  EXTENSIONS_UPDATE_LOG
       - Last: EXTENSIONS_UPDATE_LAST (JSON: caller/wled CHANGED/UNCHANGED)
     """
+    # nur erlaubte Targets akzeptieren
+    if target not in ("all", "caller", "wled"):
+        target = "all"
+
     # State aktualisieren
     state = load_extensions_update_state()
     state["started"] = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -1690,14 +1714,25 @@ def start_extensions_update_background(target: str = "all") -> tuple[bool, str]:
 
     unit_name = f"autodarts-wled-update-{int(time.time())}"
 
-    # Script im Root-Context schreiben + ausführen
-    cmdline = (
-        f"cat > {EXTENSIONS_UPDATE_SCRIPT} <<'EOF'\n"
-        f"{EXTENSIONS_UPDATE_SCRIPT_TEMPLATE}\n"
-        f"EOF\n"
-        f"chmod +x {EXTENSIONS_UPDATE_SCRIPT}\n"
-        f"{EXTENSIONS_UPDATE_SCRIPT} {target}\n"
-    )
+    # Script muss lokal vorhanden sein
+    if not os.path.isfile(EXTENSIONS_UPDATE_SCRIPT):
+        state["unit"] = None
+        state["method"] = "missing-script"
+        state["error"] = (
+            f"{EXTENSIONS_UPDATE_SCRIPT} fehlt. "
+            "Bitte Webpanel-Update ausführen oder das Script manuell installieren."
+        )
+        save_extensions_update_state(state)
+        return False, state["error"]
+
+    # Im Root-Context: CRLF entfernen (falls per Download reingekommen), ausführbar machen, dann starten
+    cmdline = "\n".join([
+        "set -e",
+        f"sed -i 's/\\r$//' {EXTENSIONS_UPDATE_SCRIPT} || true",
+        f"chmod +x {EXTENSIONS_UPDATE_SCRIPT} || true",
+        f"{EXTENSIONS_UPDATE_SCRIPT} {target}",
+        "",
+    ])
 
     try:
         cmd = [
@@ -1728,71 +1763,6 @@ def start_extensions_update_background(target: str = "all") -> tuple[bool, str]:
         state["error"] = str(e)[:300]
         save_extensions_update_state(state)
         return False, state["error"]
-
-
-def save_os_update_state(state: dict):
-    try:
-        os.makedirs(os.path.dirname(OS_UPDATE_STATE), exist_ok=True)
-        with open(OS_UPDATE_STATE, "w", encoding="utf-8") as f:
-            json.dump(state, f, indent=2)
-    except Exception:
-        pass
-
-
-def start_os_update_background() -> tuple[bool, str]:
-    """Startet 'apt update + apt upgrade' im Hintergrund und rebootet danach IMMER.
-
-    Läuft via `systemd-run` in einem eigenen transienten Unit (damit es einen Webpanel-Restart überlebt).
-    """
-
-    state = load_os_update_state()
-    state["started"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    state.pop("error", None)
-
-    unit_name = f"autodarts-os-update-{int(time.time())}"
-
-    # Non-interactive apt (damit es nicht hängen bleibt bei config prompts)
-    cmdline = (
-        f"exec >>{OS_UPDATE_LOG} 2>&1; "
-        f"echo '===== OS Update START {time.strftime('%Y-%m-%d %H:%M:%S')} ====='; "
-        f"apt-get update || echo 'apt-get update FAILED (continue)'; "
-        f"DEBIAN_FRONTEND=noninteractive "
-        f"apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold upgrade "
-        f"|| echo 'apt-get upgrade FAILED (continue)'; "
-        f"echo '===== OS Update DONE -> reboot ====='; "
-        f"sync; /sbin/reboot"
-    )
-
-    try:
-        cmd = [
-            "sudo", "-n",
-            "systemd-run",
-            "--unit", unit_name,
-            "--no-block",
-            "--collect",
-            "bash", "-lc", cmdline,
-        ]
-        res = subprocess.run(cmd, capture_output=True, text=True)
-
-        if res.returncode == 0:
-            state["unit"] = unit_name
-            state["method"] = "systemd-run"
-            save_os_update_state(state)
-            return True, "System-Update gestartet – der Pi rebootet danach automatisch."
-
-        state["unit"] = None
-        state["method"] = "systemd-run-failed"
-        state["error"] = (res.stderr or res.stdout or "").strip()[:300]
-        save_os_update_state(state)
-        return False, f"System-Update konnte nicht gestartet werden: {state['error']}"
-
-    except Exception as e:
-        state["unit"] = None
-        state["method"] = "exception"
-        state["error"] = str(e)[:300]
-        save_os_update_state(state)
-        return False, state["error"]
-
 def service_enable_now(service_name: str):
     _run_systemctl(["enable", "--now", service_name], timeout=SYSTEMCTL_ACTION_TIMEOUT)
 
@@ -2620,6 +2590,7 @@ def index():
     webpanel_update_available = bool(webpanel_check.get('installed') and webpanel_check.get('latest') and webpanel_check.get('installed') != webpanel_check.get('latest'))
     webpanel_state = load_webpanel_update_state() if admin_unlocked else {}
     webpanel_log_tail = tail_file(WEBPANEL_UPDATE_LOG, n=25, max_chars=3500) if admin_unlocked else ""
+
     extensions_state = load_extensions_update_state() if admin_unlocked else {}
     extensions_last = load_extensions_update_last() if admin_unlocked else {}
     extensions_log_tail = tail_file(EXTENSIONS_UPDATE_LOG, n=25, max_chars=3500) if admin_unlocked else ""
@@ -2627,9 +2598,6 @@ def index():
 
     update_state = load_update_state() if admin_unlocked else {}
     update_log_tail = tail_file(AUTODARTS_UPDATE_LOG, n=25, max_chars=3500) if admin_unlocked else ""
-
-    os_update_state = load_os_update_state() if admin_unlocked else {}
-    os_update_log_tail = tail_file(OS_UPDATE_LOG, n=25, max_chars=3500) if admin_unlocked else ""
 
     wled_targets = wled_cfg.get("targets", []) or []
     while len(wled_targets) < 3:
@@ -2687,13 +2655,9 @@ def index():
     .hint { font-size:0.8rem; opacity:0.7; margin-top:4px; }
     .msg-ok { color:#6be26b; margin-top:10px; white-space:pre-line; }
     .msg-bad { color:#ff6b6b; margin-top:10px; white-space:pre-line; }
-    .msg-info { color:#9bd1ff; margin-top:10px; white-space:pre-line; }
     footer { margin-top:24px; font-size:0.75rem; opacity:0.6; text-align:center; }
     .sysinfo { position:fixed; top:10px; right:10px; background:#1c1c1c; border-radius:8px; padding:8px 10px; font-size:0.8rem; box-shadow:0 0 10px rgba(0,0,0,0.6); z-index:1000; border:1px solid #333; }
-    
-    .sysactions { position:fixed; top:10px; left:10px; background:#1c1c1c; border-radius:8px; padding:8px 10px; font-size:0.8rem; box-shadow:0 0 10px rgba(0,0,0,0.6); z-index:1000; border:1px solid #333; }
-    .sysactions form { margin:0; }
-.sysinfo h3 { margin:0 0 4px; font-size:0.9rem; }
+    .sysinfo h3 { margin:0 0 4px; font-size:0.9rem; }
     .sysinfo-row { white-space:nowrap; }
     code { background:#0b0b0b; padding:2px 6px; border-radius:6px; border:1px solid #333; }
     .dot { display:inline-block; width:10px; height:10px; border-radius:999px; margin-right:6px; vertical-align:middle; }
@@ -2713,15 +2677,6 @@ def index():
   </style>
 </head>
 <body>
-
-  {% if admin_unlocked %}
-  <div class="sysactions">
-    <form method="post" action="{{ url_for('admin_reboot') }}" onsubmit="return confirm('Wollen Sie wirklich den Raspberry Pi komplett neu starten?');">
-      <button type="submit" class="btn btn-small btn-danger">Komplettes System neu starten</button>
-    </form>
-  </div>
-  {% endif %}
-
 
   {% if cpu_pct is not none or mem_used is not none or temp_c is not none or autoupdate_enabled is not none %}
   <div class="sysinfo">
@@ -3193,34 +3148,6 @@ def index():
 
           <hr style="border:none; border-top:1px solid #333; margin:14px 0;">
 
-<h3 style="margin:0 0 8px;">System (apt) Update</h3>
-<p class="hint" style="margin-top:0;">
-  Führt <code>apt update</code> + <code>apt upgrade</code> aus und rebootet danach <strong>immer</strong>.
-</p>
-
-<div class="btn-row">
-  <form method="post" action="{{ url_for('admin_os_update') }}"
-        onsubmit="return confirm('System-Update starten?\nDer Pi rebootet danach automatisch.');" style="margin:0;">
-    <button type="submit" class="btn btn-primary">System updaten & Reboot</button>
-  </form>
-</div>
-
-{% if os_update_state.started %}
-  <p class="hint" style="margin-top:8px;">
-    Letztes System-Update gestartet: <code>{{ os_update_state.started }}</code>
-    {% if os_update_state.unit %}(Unit: <code>{{ os_update_state.unit }}</code>){% endif %}
-  </p>
-{% endif %}
-
-{% if os_update_log_tail %}
-  <details style="margin-top:10px;">
-    <summary>System-Update-Log anzeigen</summary>
-    <pre style="background:#0b0b0b; padding:12px; border-radius:10px; border:1px solid #333; overflow:auto; white-space:pre-wrap; margin:10px 0 0;">{{ os_update_log_tail }}</pre>
-  </details>
-{% endif %}
-
-<hr style="border:none; border-top:1px solid #333; margin:14px 0;">
-
 <h3 style="margin:0 0 8px;">Autodarts Software</h3>
           <p class="hint" style="margin-top:0;">
             Installierte Version: <strong>{{ autodarts_version or 'unbekannt' }}</strong>
@@ -3271,45 +3198,46 @@ def index():
 
           <hr style="border:none; border-top:1px solid #333; margin:14px 0;">
 
-          <h3 style="margin:0 0 8px;">Extensions (darts-caller / darts-wled)</h3>
-          <p class="hint" style="margin-top:0;">
-            Dieser Button aktualisiert <strong>darts-caller</strong> und <strong>darts-wled</strong> nur dann, wenn wirklich ein Update vorhanden ist
-            (ressourcenschonend: keine unnötigen pip/Reinstalls).
-          </p>
-          
-          <div class="btn-row">
-            <form method="post" action="{{ url_for('admin_wled_update') }}"
-                  onsubmit="return confirm('WLED UPDATE starten?\nHinweis: Wenn kein Update vorhanden ist, passiert nichts (Caller/WLED bleiben UNCHANGED).');"
-                  style="margin:0;">
-              <button type="submit" class="btn btn-primary">WLED UPDATE</button>
-            </form>
-          </div>
-          
-          {% if extensions_state.started %}
-            <p class="hint" style="margin-top:8px;">
-              Letzter Start: <code>{{ extensions_state.started }}</code>
-              {% if extensions_state.unit %} · Unit: <code>{{ extensions_state.unit }}</code>{% endif %}
-            </p>
-          {% endif %}
-          
-          {% if extensions_last.ts %}
-            <p class="hint" style="margin-top:8px;">
-              Letztes Ergebnis ({{ extensions_last.ts }}):
-              Caller: <code>{{ extensions_last.caller or 'n/a' }}</code> ·
-              WLED: <code>{{ extensions_last.wled or 'n/a' }}</code>
-              {% if extensions_last.backup %} · Backup: <code>{{ extensions_last.backup }}</code>{% endif %}
-            </p>
-          {% endif %}
-          
-          {% if extensions_log_tail %}
-            <details style="margin-top:10px;">
-              <summary>Extensions Update-Log anzeigen</summary>
-              <pre style="background:#0b0b0b; padding:12px; border-radius:10px; border:1px solid #333; white-space:pre-wrap; margin:10px 0 0;">{{ extensions_log_tail }}</pre>
-            </details>
-          {% endif %}
-          
-          <hr style="border:none; border-top:1px solid #333; margin:14px 0;">
-          
+<h3 style="margin:0 0 8px;">Extensions (darts-caller / darts-wled)</h3>
+<p class="hint" style="margin-top:0;">
+  Dieser Button führt das lokal installierte Script <code>/usr/local/bin/autodarts-extensions-update.sh</code> aus und aktualisiert <strong>darts-caller</strong> und <strong>darts-wled</strong> nur dann, wenn wirklich ein Update vorhanden ist
+  (ressourcenschonend: keine unnötigen pip/Reinstalls).
+</p>
+
+<div class="btn-row">
+  <form method="post" action="{{ url_for('admin_wled_update') }}"
+        onsubmit="return confirm('WLED UPDATE starten?\nHinweis: Wenn kein Update vorhanden ist, passiert nichts (Caller/WLED bleiben UNCHANGED).');"
+        style="margin:0;">
+    <button type="submit" class="btn btn-primary">WLED UPDATE</button>
+  </form>
+</div>
+
+{% if extensions_state.started %}
+  <p class="hint" style="margin-top:8px;">
+    Letzter Start: <code>{{ extensions_state.started }}</code>
+    {% if extensions_state.unit %} · Unit: <code>{{ extensions_state.unit }}</code>{% endif %}
+  </p>
+{% endif %}
+
+{% if extensions_last.ts %}
+  <p class="hint" style="margin-top:8px;">
+    Letztes Ergebnis ({{ extensions_last.ts }}):
+    Caller: <code>{{ extensions_last.caller or 'n/a' }}</code> ·
+    WLED: <code>{{ extensions_last.wled or 'n/a' }}</code>
+    {% if extensions_last.backup %} · Backup: <code>{{ extensions_last.backup }}</code>{% endif %}
+  </p>
+{% endif %}
+
+{% if extensions_log_tail %}
+  <details style="margin-top:10px;">
+    <summary>Extensions Update-Log anzeigen</summary>
+    <pre style="background:#0b0b0b; padding:12px; border-radius:10px; border:1px solid #333; overflow:auto; white-space:pre-wrap; margin:10px 0 0;">{{ extensions_log_tail }}</pre>
+  </details>
+{% endif %}
+
+<hr style="border:none; border-top:1px solid #333; margin:14px 0;">
+
+
           <h3 style="margin:0 0 8px;">LED-Bänder – Adressen</h3>
           <p class="hint" style="margin-top:0;">
             Hier stellen Sie die Adresse/Hostname für LED Band 1–3 ein.
@@ -3561,7 +3489,7 @@ cp /var/log/pi_monitor_test_README.txt ~/
 
 <div id="pingOverlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:2000; align-items:center; justify-content:center;">
   <div style="background:#1c1c1c; border:1px solid #333; border-radius:14px; padding:18px 18px; width:min(520px,92vw); box-shadow:0 0 30px rgba(0,0,0,.7);">
-    <div id="pingOverlayTitle" style="font-weight:800; margin-bottom:10px;">Verbindungstest läuft…</div>
+    <div style="font-weight:800; margin-bottom:10px;">Verbindungstest läuft…</div>
     <div id="pingOverlayText" style="margin-bottom:10px; opacity:.9;">Starte…</div>
     <div style="height:10px; background:#0b0b0b; border:1px solid #333; border-radius:999px; overflow:hidden;">
       <div id="pingOverlayBar" style="height:100%; width:0%; background:#3b82f6;"></div>
@@ -3577,7 +3505,6 @@ cp /var/log/pi_monitor_test_README.txt ~/
   const txt = document.getElementById('pingOverlayText');
   const bar = document.getElementById('pingOverlayBar');
   const out = document.getElementById('pingResult');
-  const titleEl = document.getElementById('pingOverlayTitle');
 
   function showOverlay(){ if(overlay){ overlay.style.display='flex'; } }
   function hideOverlay(){ if(overlay){ overlay.style.display='none'; } }
@@ -3586,53 +3513,11 @@ cp /var/log/pi_monitor_test_README.txt ~/
     if(bar) bar.style.width = pct + '%';
   }
 
-  // Einstufung der Verbindung anhand der Ping-Werte (dein strenger Range)
-  function classifyPingQuality(s, total, recv){
-    const sent = Number(s.count || total || 30);
-    const rec = Number(recv || 0);
-    if(!sent || sent <= 0){
-      return { level: 'unknown', label: 'Unbekannt', loss: null };
-    }
-    const lost = Math.max(0, sent - rec);
-    const loss = Math.round((lost * 1000) / sent) / 10; // eine Nachkommastelle
-
-    const minMs = (s.min_ms != null) ? Number(s.min_ms) : null;
-    const maxMs = (s.max_ms != null) ? Number(s.max_ms) : null;
-    const avgMs = (s.avg_ms != null) ? Number(s.avg_ms) : null;
-
-    // Falls keine Laufzeiten, nur grobe Einstufung
-    if(minMs === null || maxMs === null || avgMs === null){
-      if(loss === 0){
-        return { level: 'gut', label: 'Gute Verbindung', loss };
-      }else if(loss < 3){
-        return { level: 'grenzwertig', label: 'Könnte funktionieren', loss };
-      }
-      return { level: 'nicht_spielbar', label: 'Nicht mehr spielbar', loss };
-    }
-
-    // 🔹 Strenge Grenzen:
-    // Super Verbindung
-    if(loss === 0 && avgMs <= 30 && maxMs <= 60){
-      return { level: 'super', label: 'Super Verbindung', loss };
-    }
-    // Gute Verbindung
-    if(loss < 1 && avgMs <= 60 && maxMs <= 120){
-      return { level: 'gut', label: 'Gute Verbindung', loss };
-    }
-    // Könnte funktionieren
-    if(loss < 3 && avgMs <= 120 && maxMs <= 300){
-      return { level: 'grenzwertig', label: 'Könnte funktionieren', loss };
-    }
-    // Nicht mehr spielbar
-    return { level: 'nicht_spielbar', label: 'Nicht mehr spielbar', loss };
-  }
-
   async function start(){
     if(!btn || btn.classList.contains('btn-disabled')) return;
     btn.classList.add('btn-disabled');
     if(out) out.textContent = '';
     showOverlay();
-    if(titleEl) titleEl.textContent = 'Verbindungstest läuft…';
     if(txt) txt.textContent = 'Starte…';
 
     try{
@@ -3668,42 +3553,17 @@ cp /var/log/pi_monitor_test_README.txt ~/
 
           if(s.done){
             clearInterval(timer);
-            const sent = Number(s.count || total);
+            hideOverlay();
+            const sent = total;
             const rec = recv;
-            const q = classifyPingQuality(s, sent, rec);
-
-            // 🔸 alter Text bleibt, nur leicht erweitert
             let result = `${rec} von ${sent} Paketen wurden erfolgreich gesendet.`;
-            if(q.loss != null){
-              result += ` · Paketverlust: ${q.loss}%`;
-            }
             if(s.min_ms!=null && s.max_ms!=null && s.avg_ms!=null){
               result += ` Schnellstes: ${s.min_ms} ms · Langsamstes: ${s.max_ms} ms · Durchschnitt: ${s.avg_ms} ms`;
             }
             if(s.error){
               result += ` (Hinweis: ${s.error})`;
             }
-
-            // Text unten im Ergebnisfeld
-            if(out){
-              if(q && q.label){
-                out.textContent = `Verbindungsqualität: ${q.label}\n` + result;
-              }else{
-                out.textContent = result;
-              }
-            }
-
-            // 🔸 kleines Info-Fenster im Overlay
-            if(titleEl) titleEl.textContent = 'Verbindungstest abgeschlossen';
-            if(txt){
-              const label = q && q.label ? q.label : 'Unbekannt';
-              txt.textContent = `TEST erfolgreich durchgeführt.\nErgebnis lautet: ${label}`;
-            }
-            setProgress(total, total);
-
-            // Overlay nach ~3,5 Sekunden automatisch schließen
-            setTimeout(()=>{ hideOverlay(); }, 3500);
-
+            if(out) out.textContent = result;
             btn.classList.remove('btn-disabled');
           }
         }catch(e){
@@ -3726,7 +3586,6 @@ cp /var/log/pi_monitor_test_README.txt ~/
   if(btn){ btn.addEventListener('click', start); }
 })();
 </script>
-
 
 </body>
 </html>
@@ -3800,8 +3659,6 @@ cp /var/log/pi_monitor_test_README.txt ~/
         extensions_state=extensions_state,
         extensions_last=extensions_last,
         extensions_log_tail=extensions_log_tail,
-        os_update_state=os_update_state,
-        os_update_log_tail=os_update_log_tail,
     )
 
 
@@ -4288,10 +4145,6 @@ def admin_webpanel_check():
     if not bool(session.get("admin_unlocked", False)):
         return ("Forbidden", 403)
 
-    if webpanel_update_is_running():
-        flash("Webpanel: Update läuft bereits (bitte warten).", "info")
-        return redirect(url_for("index", admin="1") + "#admin")
-
     installed = get_webpanel_version()
     latest = fetch_latest_webpanel_version()
 
@@ -4339,7 +4192,6 @@ def admin_webpanel_update():
 
 
 
-
 @app.route("/admin/wled-update", methods=["POST"])
 def admin_wled_update():
     # Admin muss entsperrt sein
@@ -4349,52 +4201,8 @@ def admin_wled_update():
     ok, msg = start_extensions_update_background("all")
     return redirect(url_for("index", admin="1", adminok=("1" if ok else "0"), adminmsg=(msg or "")) + "#admin")
 
-@app.route("/admin/reboot", methods=["POST"])
-def admin_reboot():
-    # Nur im Admin-Modus erlauben
-    if not bool(session.get("admin_unlocked", False)):
-        return ("Forbidden", 403)
-
-    unit_name = f"autodarts-reboot-{int(time.time())}"
-
-    # Im Hintergrund rebooten (damit die HTTP-Response noch rausgeht)
-    try:
-        subprocess.Popen(
-            ["sudo", "-n", "systemd-run", "--unit", unit_name, "--no-block", "--collect", "/sbin/reboot"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    except Exception:
-        # Fallback (falls systemd-run nicht geht)
-        try:
-            subprocess.Popen(
-                ["sudo", "-n", "/sbin/reboot"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-        except Exception:
-            pass
-
-    return (
-        "<!doctype html><html lang='de'><head><meta charset='utf-8'>"
-        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-        "<title>Reboot</title></head><body style='font-family:system-ui;background:#111;color:#eee;padding:20px;'>"
-        "<h2>Neustart wird ausgeführt…</h2>"
-        "<p>Der Raspberry Pi startet jetzt neu. Diese Seite ist gleich nicht mehr erreichbar.</p>"
-        "</body></html>"
-    )
 
 
-
-
-
-@app.route("/admin/os/update", methods=["POST"])
-def admin_os_update():
-    if not bool(session.get("admin_unlocked", False)):
-        return ("Forbidden", 403)
-
-    ok, msg = start_os_update_background()
-    return redirect(url_for("index", admin="1", adminok=("1" if ok else "0"), adminmsg=msg) + "#admin")
 
 @app.route("/admin/gpio-image", methods=["GET"])
 def admin_gpio_image():
@@ -4618,7 +4426,9 @@ def wifi():
     details summary::-webkit-details-marker { display:none; }
     .admin-hint { font-size:0.8rem; opacity:0.75; margin-top:6px; }
 
-  </style>
+  
+    .msg-info { color:#9ad1ff; margin-bottom:8px; white-space:pre-line; }
+</style>
 </head>
 <body>
   <div class="container">
@@ -4631,9 +4441,9 @@ def wifi():
         <p class="{{ 'msg-ok' if success else 'msg-bad' }}">{{ message }}</p>
       {% endif %}
 
-      <p id="wifi-working" class="msg-info" style="display:none">Verbindung wird hergestellt … das kann bis zu 30 Sekunden dauern.</p>
+        <p id=\"workmsg\" class=\"msg-info\" style=\"display:none;\">Verbindung wird hergestellt … bitte warten (kann 10–30 Sekunden dauern).</p>
 
-      <form method="post" id="wifiForm">
+      <form method=\"post\" id=\"wifiForm\">
         <label for="ssid">WLAN Name (SSID)</label>
         <input type="text" id="ssid" name="ssid" required>
 
@@ -4656,19 +4466,16 @@ def wifi():
   </div>
 
   <script>
-    document.addEventListener('DOMContentLoaded', function () {
-      var form = document.getElementById('wifiForm');
-      if (!form) return;
-      form.addEventListener('submit', function () {
-        var msg = document.getElementById('wifi-working');
-        if (msg) msg.style.display = 'block';
-        var btn = form.querySelector('button[type="submit"]');
-        if (btn) {
-          btn.disabled = true;
-          btn.textContent = 'Verbinde …';
-        }
-      });
+  (function(){
+    const form = document.getElementById('wifiForm');
+    if (!form) return;
+    form.addEventListener('submit', function(){
+      const msg = document.getElementById('workmsg');
+      if (msg) msg.style.display = 'block';
+      const btn = form.querySelector('button[type="submit"]');
+      if (btn) { btn.disabled = true; btn.textContent = 'Bitte warten…'; }
     });
+  })();
   </script>
 </body>
 </html>
