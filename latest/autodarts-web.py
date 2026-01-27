@@ -51,7 +51,6 @@ AUTODARTS_SERVICE = "autodarts.service"
 
 # WLAN-Client (USB-Dongle)
 WIFI_INTERFACE = "wlan0"
-ETH_INTERFACE = os.environ.get("ETH_INTERFACE", "eth0")
 
 # Access-Point (Onboard-WLAN)
 AP_CONNECTION_NAME = "Autodarts-AP"
@@ -96,6 +95,30 @@ WEBPANEL_UPDATE_LOG = "/var/log/autodarts_webpanel_update.log"
 WEBPANEL_UPDATE_STATE = "/var/lib/autodarts/webpanel-update-state.json"
 WEBPANEL_UPDATE_CHECK = "/var/lib/autodarts/webpanel-update-check.json"
 
+# --- System (apt) Update + Reboot ---
+OS_UPDATE_LOG = "/var/log/autodarts_os_update.log"
+OS_UPDATE_STATE = "/var/lib/autodarts/os-update-state.json"
+
+
+# --- Firewall (UFW) ---
+# Status wird NICHT bei jedem Seitenaufruf geprüft, sondern nur auf Button-Klick ("Status aktualisieren")
+UFW_LOG = "/var/log/autodarts_ufw.log"
+UFW_STATE = "/var/lib/autodarts/ufw-state.json"
+
+# Ports die freigegeben werden sollen (idempotent: "ufw allow" kann mehrfach laufen)
+UFW_PORT_RULES = [
+    "22/tcp",     # SSH
+    "3180/tcp",   # Autodarts
+    "8079/tcp",   # Dartcaller?
+    "3181/tcp",   # Extension
+    "80/tcp",     # Webpanel / HTTP
+    "21324/udp",  # WLED / Darts
+    "5568/udp",
+    "6454/udp",
+    "4048/udp",
+]
+
+
 # --- Extensions Update (darts-caller / darts-wled) ---
 EXTENSIONS_UPDATE_SCRIPT = "/usr/local/bin/autodarts-extensions-update.sh"
 EXTENSIONS_UPDATE_LOG = "/var/log/autodarts_extensions_update.log"
@@ -105,6 +128,11 @@ EXTENSIONS_UPDATE_LAST = "/var/lib/autodarts/extensions-update-last.json"
 
 # lokale Version (wird durch autodarts-webpanel-update.sh nach /var/lib/autodarts/webpanel-version.txt geschrieben)
 WEBPANEL_VERSION_FILE = os.environ.get("WEBPANEL_VERSION_FILE", "/var/lib/autodarts/webpanel-version.txt")
+
+# Wenn du die Version lieber direkt im Script pflegen willst: hier eintragen.
+# Leer lassen ("") um wieder die Version aus WEBPANEL_VERSION_FILE / version.txt zu lesen.
+WEBPANEL_HARDCODED_VERSION = "1.35"
+
 
 # Remote (GitHub Raw) – kann per ENV überschrieben werden
 WEBPANEL_RAW_BASE = os.environ.get(
@@ -275,252 +303,6 @@ def get_wifi_status():
     return ssid, ip
 
 
-
-
-
-def _run_nmcli(cmd: list[str], timeout_s: int = 3) -> subprocess.CompletedProcess:
-    """Run nmcli. If it fails and we're not root, retry with 'sudo -n' (no prompt)."""
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s)
-        if r.returncode == 0:
-            return r
-        if os.geteuid() != 0:
-            r2 = subprocess.run(["sudo", "-n"] + cmd, capture_output=True, text=True, timeout=timeout_s)
-            return r2
-        return r
-    except Exception:
-        # Best effort: return a dummy failed result
-        return subprocess.CompletedProcess(cmd, 1, "", "nmcli call failed")
-
-
-def get_active_wifi_connection_name() -> str | None:
-    """Returns the active NetworkManager connection name on WIFI_INTERFACE, if any."""
-    dev = WIFI_INTERFACE
-
-    # Primary method: GENERAL.CONNECTION
-    try:
-        r = _run_nmcli(["nmcli", "-t", "-f", "GENERAL.CONNECTION", "dev", "show", dev], timeout_s=3)
-        if r.returncode == 0:
-            out = (r.stdout or "").strip()
-            # format: GENERAL.CONNECTION:<name>
-            conn = out.split(":", 1)[-1].strip() if ":" in out else out.strip()
-            if conn and conn not in ("--", "unknown"):
-                return conn
-    except Exception:
-        pass
-
-    # Fallback: parse nmcli device list (DEVICE:STATE:CONNECTION)
-    try:
-        r = _run_nmcli(["nmcli", "-t", "-f", "DEVICE,STATE,CONNECTION", "device"], timeout_s=3)
-        if r.returncode == 0:
-            for line in (r.stdout or "").splitlines():
-                parts = line.split(":", 2)
-                if len(parts) >= 3 and parts[0] == dev:
-                    state = parts[1]
-                    conn = (parts[2] or "").strip()
-                    if state == "connected" and conn and conn != "--":
-                        return conn
-                    break
-    except Exception:
-        pass
-
-    return None
-
-
-def get_connection_autoconnect(conn_name: str) -> bool | None:
-    """Returns True/False if autoconnect is known for the connection, else None."""
-    try:
-        r = _run_nmcli(["nmcli", "-g", "connection.autoconnect", "connection", "show", conn_name], timeout_s=3)
-        if r.returncode != 0:
-            return None
-        val = (r.stdout or "").strip().lower()
-        if val in ("yes", "true", "on", "1"):
-            return True
-        if val in ("no", "false", "off", "0"):
-            return False
-    except Exception:
-        return None
-    return None
-
-
-def set_connection_autoconnect(conn_name: str, enabled: bool) -> tuple[bool, str]:
-    """Enable/disable autoconnect for a given connection."""
-    val = "yes" if enabled else "no"
-    try:
-        r = _run_nmcli(["nmcli", "connection", "modify", conn_name, "connection.autoconnect", val], timeout_s=5)
-        if r.returncode == 0:
-            return True, f"Autoconnect {'AKTIVIERT' if enabled else 'DEAKTIVIERT'} für: {conn_name}"
-        msg = interpret_nmcli_error(r.stdout, r.stderr)
-        if not msg:
-            msg = (r.stderr or r.stdout or "Unbekannter Fehler").strip()
-        return False, f"Fehler beim Setzen von Autoconnect ({conn_name}): {msg}"
-    except Exception as e:
-        return False, f"Fehler beim Setzen von Autoconnect ({conn_name}): {e}"
-
-
-# ---------------- Firewall (UFW) ----------------
-
-UFW_RULES = [
-    ("22/tcp", "SSH"),
-    ("3180/tcp", "Autodarts UI"),
-    ("8079/tcp", "Dartcaller"),
-    ("3181/tcp", "Autodarts Secondary"),
-    ("80/tcp", "HTTP"),
-    ("21324/udp", "Autodarts UDP"),
-    ("5568/udp", "sACN / E1.31"),
-    ("6454/udp", "Art-Net"),
-    ("4048/udp", "Dart LED / UDP"),
-]
-
-def ufw_is_installed() -> bool:
-    return shutil.which("ufw") is not None
-
-def _run_cmd_capture(cmd: list[str], timeout: float = 20.0) -> tuple[int, str]:
-    """Run cmd and return (rc, combined_output). Never prompts for password (uses sudo -n if cmd starts with sudo)."""
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        out = (r.stdout or "") + (r.stderr or "")
-        return r.returncode, out.strip()
-    except subprocess.TimeoutExpired:
-        return 124, "Timeout"
-    except Exception as e:
-        return 1, str(e)
-
-def ufw_get_status() -> tuple[bool | None, str]:
-    """Return (active?, raw_status_text). active is None if ufw missing/unreadable."""
-    if not ufw_is_installed():
-        return None, "UFW nicht installiert."
-    # Try without sudo first
-    rc, out = _run_cmd_capture(["ufw", "status"], timeout=2.5)
-    if rc != 0:
-        rc2, out2 = _run_cmd_capture(["sudo", "-n", "ufw", "status"], timeout=2.5)
-        if rc2 == 0:
-            out = out2
-            rc = 0
-    if rc != 0:
-        return None, out or "UFW Status konnte nicht gelesen werden."
-    # Parse status line
-    m = re.search(r"Status:\s*(\w+)", out, re.IGNORECASE)
-    if m:
-        val = m.group(1).lower()
-        if val in ("active", "aktiv"):
-            return True, out
-        if val in ("inactive", "inaktiv"):
-            return False, out
-    # Fallback: assume inactive if keyword present
-    if "inactive" in out.lower()() or "inaktiv" in out.lower():
-        return False, out
-    if "active" in out.lower() or "aktiv" in out.lower():
-        return True, out
-    return None, out
-
-# UFW status cache (nur bei explizitem Refresh / Aktion aktualisieren)
-UFW_CACHE_FILE = "/run/autodarts_ufw_cache.json"
-
-def ufw_cache_load() -> dict:
-    try:
-        with open(UFW_CACHE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f) or {}
-    except Exception:
-        return {}
-
-def ufw_cache_save(installed: bool, active: bool | None, status_text: str):
-    data = {
-        "installed": bool(installed),
-        "active": active,
-        "status_text": status_text or "",
-        "checked_at": int(time.time()),
-    }
-    try:
-        os.makedirs(os.path.dirname(UFW_CACHE_FILE), exist_ok=True)
-        with open(UFW_CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f)
-    except Exception:
-        pass
-
-def ufw_refresh_cache() -> dict:
-    installed = ufw_is_installed()
-    active, st = (None, "UFW nicht installiert.")
-    if installed:
-        active, st = ufw_get_status()
-    ufw_cache_save(installed, active, st)
-    return {"installed": installed, "active": active, "status_text": st, "checked_at": int(time.time())}
-
-def ufw_apply_rules() -> tuple[bool, str]:
-    if not ufw_is_installed():
-        return False, "UFW ist nicht installiert."
-    lines = []
-    for rule, label in UFW_RULES:
-        rc, out = _run_cmd_capture(["sudo", "-n", "ufw", "allow", rule], timeout=10.0)
-        if rc != 0:
-            # try without sudo (if running as root)
-            rc2, out2 = _run_cmd_capture(["ufw", "allow", rule], timeout=10.0)
-            if rc2 == 0:
-                rc, out = rc2, out2
-        if rc != 0:
-            return False, f"Regel {rule} fehlgeschlagen: {out}"
-        # keep output short
-        if out:
-            lines.append(f"{rule}: {out.splitlines()[-1]}")
-        else:
-            lines.append(f"{rule}: OK")
-    return True, "Ports gesetzt."
-
-def ufw_enable() -> tuple[bool, str]:
-    if not ufw_is_installed():
-        return False, "UFW ist nicht installiert."
-    rc, out = _run_cmd_capture(["sudo", "-n", "ufw", "--force", "enable"], timeout=20.0)
-    if rc != 0:
-        rc2, out2 = _run_cmd_capture(["ufw", "--force", "enable"], timeout=20.0)
-        if rc2 == 0:
-            return True, out2 or "UFW aktiviert."
-        # sudo without NOPASSWD -> will fail; give helpful hint
-        if "a password is required" in (out.lower() if out else ""):
-            return False, "sudo benötigt ein Passwort. Bitte sudoers (NOPASSWD) für ufw/apt setzen oder Service als root ausführen."
-        return False, out or "UFW konnte nicht aktiviert werden."
-    return True, out or "UFW aktiviert."
-
-def ufw_disable() -> tuple[bool, str]:
-    if not ufw_is_installed():
-        return False, "UFW ist nicht installiert."
-    rc, out = _run_cmd_capture(["sudo", "-n", "ufw", "disable"], timeout=10.0)
-    if rc != 0:
-        rc2, out2 = _run_cmd_capture(["ufw", "disable"], timeout=10.0)
-        if rc2 == 0:
-            return True, out2 or "UFW deaktiviert."
-        if "a password is required" in (out.lower() if out else ""):
-            return False, "sudo benötigt ein Passwort. Bitte sudoers (NOPASSWD) für ufw/apt setzen oder Service als root ausführen."
-        return False, out or "UFW konnte nicht deaktiviert werden."
-    return True, out or "UFW deaktiviert."
-
-def ufw_install() -> tuple[bool, str]:
-    """Install ufw via apt (best-effort)."""
-    # apt-get update can be expensive; do it only on button press (this function)
-    rc, out = _run_cmd_capture(["sudo", "-n", "apt-get", "update"], timeout=300.0)
-    if rc != 0:
-        # try without sudo in case service runs as root
-        rc2, out2 = _run_cmd_capture(["apt-get", "update"], timeout=300.0)
-        if rc2 != 0:
-            if "a password is required" in (out.lower() if out else ""):
-                return False, "sudo benötigt ein Passwort. Bitte sudoers (NOPASSWD) für apt/ufw setzen oder Service als root ausführen."
-            return False, out or "apt-get update fehlgeschlagen."
-    rc, out = _run_cmd_capture(
-        ["sudo", "-n", "env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "ufw"],
-        timeout=600.0,
-    )
-    if rc != 0:
-        rc2, out2 = _run_cmd_capture(
-            ["env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "ufw"],
-            timeout=600.0,
-        )
-        if rc2 != 0:
-            if "a password is required" in (out.lower() if out else ""):
-                return False, "sudo benötigt ein Passwort. Bitte sudoers (NOPASSWD) für apt/ufw setzen oder Service als root ausführen."
-            return False, out or "ufw Installation fehlgeschlagen."
-    if not ufw_is_installed():
-        return False, "ufw wurde installiert, aber Binary nicht gefunden."
-    return True, "UFW installiert."
-
 def _get_default_route_interface() -> str | None:
     """Return interface used for the default route (best proxy for "home network" interface)."""
     try:
@@ -542,32 +324,6 @@ def _get_default_route_interface() -> str | None:
         return dev
     except Exception:
         return None
-
-
-
-def _get_default_route_info() -> tuple[str | None, str | None, str | None]:
-    """Return (dev, src_ip, gateway) for the default route (if any)."""
-    try:
-        r = subprocess.run(
-            ["ip", "route", "get", "1.1.1.1"],
-            capture_output=True,
-            text=True,
-            timeout=1.2,
-        )
-        if r.returncode != 0:
-            return (None, None, None)
-        out = r.stdout or ""
-        mdev = re.search(r"\bdev\s+(\S+)", out)
-        dev = mdev.group(1).strip() if mdev else None
-        if dev == AP_INTERFACE:
-            dev = None
-        msrc = re.search(r"\bsrc\s+(\S+)", out)
-        src_ip = msrc.group(1).strip() if msrc else None
-        mgw = re.search(r"\bvia\s+(\S+)", out)
-        gw = mgw.group(1).strip() if mgw else None
-        return (dev, src_ip, gw)
-    except Exception:
-        return (None, None, None)
 
 
 def _get_connected_wifi_interface(prefer: str | None = None) -> str | None:
@@ -941,7 +697,9 @@ def get_index_stats_cached():
     autodarts_version = get_autodarts_version()
     cpu_pct, mem_used, mem_total, temp_c = get_system_stats()
     current_ap_ssid = get_ap_ssid()
-    route_iface, route_src_ip, route_gw = _get_default_route_info()
+    ping_uplink_iface = get_ping_uplink_interface()
+    net_ok = bool(ping_uplink_iface)
+    ping_uplink_label = ping_iface_label(ping_uplink_iface) if ping_uplink_iface else ""
     wifi_ok = bool(ssid and ip)
     dongle_ok = wifi_ok or wifi_dongle_present()
 
@@ -950,8 +708,8 @@ def get_index_stats_cached():
         autodarts_active, autodarts_version,
         cpu_pct, mem_used, mem_total, temp_c,
         wifi_ok, dongle_ok,
+        net_ok, ping_uplink_label,
         current_ap_ssid,
-        route_iface, route_src_ip, route_gw,
     )
     try:
         INDEX_STATS_CACHE['ts'] = now
@@ -1021,12 +779,12 @@ def probe_v4l2_device(dev: str) -> dict:
     formats: set[str] = set()
     resolutions: dict[str, list[tuple[int, int]]] = {}
 
-    re_fmt = re.compile(r"Pixel\s+Format:\s+'([A-Z0-9]+)'")
+    re_fmt = re.compile(r"(?:Pixel\s+Format:\s+\'([A-Z0-9]+)\'|\[\d+\]:\s+\'([A-Z0-9]+)\')")
     re_size = re.compile(r"Size:\s+Discrete\s+(\d+)x(\d+)")
     for line in (r.stdout or "").splitlines():
         m = re_fmt.search(line)
         if m:
-            fmt = m.group(1)
+            fmt = m.group(1) or m.group(2)
             formats.add(fmt)
             resolutions.setdefault(fmt, [])
             continue
@@ -1424,6 +1182,15 @@ def start_autodarts_update_background() -> tuple[bool, str]:
 
 def get_webpanel_version() -> str | None:
     """Liest die installierte Webpanel-Version (lokale version.txt)."""
+    # 1) Hardcoded im Script (einfach zu pflegen)
+    try:
+        if (WEBPANEL_HARDCODED_VERSION or "").strip():
+            v = (WEBPANEL_HARDCODED_VERSION or "").strip().lstrip("v").strip()
+            return v or WEBPANEL_UI_FALLBACK_VERSION
+    except Exception:
+        pass
+
+    # 2) Aus Datei (/var/lib/... oder version.txt)
     candidates = [
         WEBPANEL_VERSION_FILE,
         str(Path(BASE_DIR) / "version.txt"),
@@ -1631,6 +1398,284 @@ def start_webpanel_update_background() -> tuple[bool, str]:
         state["error"] = str(e)[:300]
         save_webpanel_update_state(state)
         return False, state["error"]
+
+
+
+# ---------------- System Update (apt + reboot) ----------------
+
+def load_os_update_state() -> dict:
+    try:
+        with open(OS_UPDATE_STATE, "r", encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+
+def save_os_update_state(state: dict):
+    try:
+        os.makedirs(os.path.dirname(OS_UPDATE_STATE), exist_ok=True)
+        with open(OS_UPDATE_STATE, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2)
+    except Exception:
+        pass
+
+
+def load_ufw_state() -> dict:
+    try:
+        with open(UFW_STATE, "r", encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+
+def save_ufw_state(state: dict):
+    try:
+        os.makedirs(os.path.dirname(UFW_STATE), exist_ok=True)
+        with open(UFW_STATE, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2)
+    except Exception:
+        pass
+
+
+def ufw_is_installed() -> bool:
+    # sehr billig (kein Prozess): reicht um Install-Button sinnvoll anzuzeigen
+    return bool(shutil.which("ufw"))
+
+
+def _run_root(cmd: list[str], timeout: float = 20.0) -> subprocess.CompletedProcess:
+    if os.geteuid() != 0:
+        cmd = ["sudo", "-n"] + cmd
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+
+
+def ufw_refresh_state() -> dict:
+    """
+    Liest UFW Status (active/inactive) aus. Wird nur auf Button-Klick aufgerufen.
+    """
+    st = load_ufw_state() or {}
+    st["checked_ts"] = time.time()
+    st["checked"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    st["installed"] = ufw_is_installed()
+
+    if not st["installed"]:
+        st["enabled"] = False
+        st["status"] = "not_installed"
+        st["raw"] = ""
+        save_ufw_state(st)
+        return st
+
+    try:
+        r = _run_root(["ufw", "status"], timeout=6.0)
+        raw = (r.stdout or "") + (("\n" + r.stderr) if r.stderr else "")
+        st["raw"] = raw.strip()
+        if "Status: active" in raw:
+            st["enabled"] = True
+            st["status"] = "active"
+        elif "Status: inactive" in raw:
+            st["enabled"] = False
+            st["status"] = "inactive"
+        else:
+            st["enabled"] = None
+            st["status"] = "unknown"
+            st["error"] = (r.stderr or "").strip() or None
+    except Exception as e:
+        st["enabled"] = None
+        st["status"] = "error"
+        st["error"] = str(e)
+
+    save_ufw_state(st)
+    return st
+
+
+def ufw_apply_port_rules() -> tuple[bool, str]:
+    """
+    Setzt die erlaubten Ports idempotent (mehrfach ausführen ist ok).
+    """
+    if not ufw_is_installed():
+        return False, "UFW ist nicht installiert."
+
+    logs = []
+    ok = True
+    for rule in UFW_PORT_RULES:
+        try:
+            r = _run_root(["ufw", "allow", rule], timeout=10.0)
+            if r.returncode != 0:
+                ok = False
+            out = (r.stdout or "").strip()
+            err = (r.stderr or "").strip()
+            if out:
+                logs.append(out)
+            if err:
+                logs.append(err)
+        except Exception as e:
+            ok = False
+            logs.append(str(e))
+
+    msg = "Ports angewendet." if ok else "Ports angewendet, aber es gab Fehler."
+    return ok, msg + ("\n" + "\n".join(logs[-10:]) if logs else "")
+
+
+def ufw_set_enabled(enable: bool) -> tuple[bool, str]:
+    if not ufw_is_installed():
+        return False, "UFW ist nicht installiert."
+
+    if enable:
+        ok_ports, msg_ports = ufw_apply_port_rules()
+        try:
+            r = _run_root(["ufw", "--force", "enable"], timeout=10.0)
+            ok = (r.returncode == 0) and ok_ports
+            msg = "UFW aktiviert." if ok else "UFW Aktivierung fehlgeschlagen."
+            extra = (r.stdout or "") + (("\n" + r.stderr) if r.stderr else "")
+            extra = extra.strip()
+            if msg_ports:
+                extra = (msg_ports + "\n" + extra).strip()
+            return ok, (msg + ("\n" + extra if extra else ""))
+        except Exception as e:
+            return False, f"UFW Aktivierung fehlgeschlagen: {e}"
+    else:
+        try:
+            r = _run_root(["ufw", "disable"], timeout=10.0)
+            ok = (r.returncode == 0)
+            extra = (r.stdout or "") + (("\n" + r.stderr) if r.stderr else "")
+            extra = extra.strip()
+            return ok, ("UFW deaktiviert." + ("\n" + extra if extra else ""))
+        except Exception as e:
+            return False, f"UFW deaktivieren fehlgeschlagen: {e}"
+
+
+def start_ufw_install_background() -> tuple[bool, str]:
+    """
+    Installiert UFW + setzt Ports + aktiviert UFW im Hintergrund via systemd-run.
+    Damit blockiert die Weboberfläche nicht.
+    """
+    unit_name = f"autodarts-ufw-install-{int(time.time())}"
+    st = load_ufw_state() or {}
+    st["started"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    st["unit"] = unit_name
+    st["status"] = "installing"
+    save_ufw_state(st)
+
+    rules = " ".join([f"ufw allow {r} || true;" for r in UFW_PORT_RULES])
+    cmdline = (
+        "set -e; "
+        "echo '[ufw] apt-get update'; apt-get update -y; "
+        "echo '[ufw] install'; apt-get install -y ufw; "
+        f"echo '[ufw] rules'; {rules} "
+        "echo '[ufw] enable'; ufw --force enable; "
+        "echo '[ufw] done'; ufw status;"
+    )
+    # Logfile
+    cmdline = f"{{ {cmdline} ; }} >> '{UFW_LOG}' 2>&1"
+
+    try:
+        cmd = [
+            "systemd-run",
+            "--unit", unit_name,
+            "--no-block",
+            "--collect",
+            "bash", "-lc", cmdline,
+        ]
+        if os.geteuid() != 0:
+            cmd = ["sudo", "-n"] + cmd
+
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        if res.returncode == 0:
+            return True, "UFW Installation gestartet (läuft im Hintergrund)."
+        st["status"] = "install_failed"
+        st["error"] = (res.stderr or res.stdout or "").strip() or "systemd-run fehlgeschlagen."
+        save_ufw_state(st)
+        return False, st["error"]
+    except Exception as e:
+        st["status"] = "install_error"
+        st["error"] = str(e)
+        save_ufw_state(st)
+        return False, str(e)
+
+
+def start_os_update_background() -> tuple[bool, str]:
+    """Startet 'apt update + apt upgrade' im Hintergrund und rebootet danach IMMER.
+
+    Läuft via `systemd-run` in einem eigenen transienten Unit (damit es einen Webpanel-Restart überlebt).
+    """
+
+    state = load_os_update_state()
+    state["started"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    state.pop("error", None)
+
+    unit_name = f"autodarts-os-update-{int(time.time())}"
+
+    # Non-interactive apt (damit es nicht hängen bleibt bei config prompts)
+    cmdline = (
+        f"exec >>{OS_UPDATE_LOG} 2>&1; "
+        f"echo '===== OS Update START {time.strftime('%Y-%m-%d %H:%M:%S')} ====='; "
+        f"apt-get update || echo 'apt-get update FAILED (continue)'; "
+        f"DEBIAN_FRONTEND=noninteractive "
+        f"apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold upgrade "
+        f"|| echo 'apt-get upgrade FAILED (continue)'; "
+        f"echo '===== OS Update DONE -> reboot ====='; "
+        f"sync; /sbin/reboot"
+    )
+
+    try:
+        cmd = [
+            "sudo", "-n",
+            "systemd-run",
+            "--unit", unit_name,
+            "--no-block",
+            "--collect",
+            "bash", "-lc", cmdline,
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+
+        if res.returncode == 0:
+            state["unit"] = unit_name
+            state["method"] = "systemd-run"
+            save_os_update_state(state)
+            return True, "System-Update gestartet – der Pi rebootet danach automatisch."
+
+        state["unit"] = None
+        state["method"] = "systemd-run-failed"
+        state["error"] = (res.stderr or res.stdout or "").strip()[:300]
+        save_os_update_state(state)
+        return False, f"System-Update konnte nicht gestartet werden: {state['error']}"
+
+    except Exception as e:
+        state["unit"] = None
+        state["method"] = "exception"
+        state["error"] = str(e)[:300]
+        save_os_update_state(state)
+        return False, state["error"]
+
+def service_enable_now(service_name: str):
+    _run_systemctl(["enable", "--now", service_name], timeout=SYSTEMCTL_ACTION_TIMEOUT)
+
+def service_disable_now(service_name: str):
+    _run_systemctl(["disable", "--now", service_name], timeout=SYSTEMCTL_ACTION_TIMEOUT)
+
+def service_restart(service_name: str):
+    _run_systemctl(["restart", service_name], timeout=SYSTEMCTL_ACTION_TIMEOUT)
+
+def service_is_enabled(service_name: str) -> bool:
+    r = _run_systemctl(["is-enabled", service_name], timeout=SYSTEMCTL_CHECK_TIMEOUT)
+    return bool(r and r.stdout.strip() == "enabled")
+
+def autodarts_autoupdate_is_enabled() -> bool | None:
+    if not service_exists(AUTOUPDATE_SERVICE):
+        return None
+    return service_is_enabled(AUTOUPDATE_SERVICE)
+
+def autodarts_set_autoupdate(enabled: bool) -> tuple[bool, str]:
+    if not service_exists(AUTOUPDATE_SERVICE):
+        return False, f"{AUTOUPDATE_SERVICE} nicht gefunden."
+    try:
+        if enabled:
+            subprocess.run(["systemctl", "enable", "--now", AUTOUPDATE_SERVICE], capture_output=True, text=True)
+            return True, "Auto-Update aktiviert."
+        subprocess.run(["systemctl", "disable", "--now", AUTOUPDATE_SERVICE], capture_output=True, text=True)
+        return True, "Auto-Update deaktiviert."
+    except Exception as e:
+        return False, f"Auto-Update konnte nicht geändert werden: {e}"
+
 
 
 # ---------------- Extensions Update (darts-caller / darts-wled) ----------------
@@ -2132,23 +2177,53 @@ def fetch_latest_autodarts_version(channel: str | None = None, timeout_s: float 
 
 PING_JOBS: dict[str, dict] = {}
 
-def get_default_gateway_and_iface() -> tuple[str | None, str | None]:
-    """Return (gateway, iface) for Paket-/Ping-Test.
-
-    Wichtig: NICHT auf das AP-Interface beziehen.
-    Erlaubt sind nur Internet-Interfaces (WLAN-Client oder Ethernet).
-    """
-    dev, _src, gw = _get_default_route_info()
-    if not dev or not gw:
-        return (None, None)
-    allowed = {WIFI_INTERFACE, ETH_INTERFACE}
-    if dev not in allowed:
-        return (None, None)
-    return (gw, dev)
-
 def get_default_gateway() -> str | None:
-    gw, _dev = get_default_gateway_and_iface()
-    return gw
+    # Default-Route -> Gateway IP
+    try:
+        r = subprocess.run(["ip", "route", "show", "default"], capture_output=True, text=True)
+        if r.returncode != 0:
+            return None
+        # Beispiel: 'default via 192.168.178.1 dev wlan0 ...'
+        m = re.search(r"default\s+via\s+(\d+\.\d+\.\d+\.\d+)", r.stdout)
+        return m.group(1) if m else None
+    except Exception:
+        return None
+
+
+def get_ping_uplink_interface() -> str | None:
+    """
+    Für den Verbindungstest nur echte Uplinks erlauben:
+    - eth0 (Kabel)
+    - WIFI_INTERFACE (z.B. wlan0)
+    Access Point Interface (wlan_ap) ist bereits ausgeschlossen.
+    """
+    iface = _get_default_route_interface()
+    if not iface:
+        return None
+    if iface == "eth0":
+        return iface
+    if iface == WIFI_INTERFACE:
+        return iface
+    return None
+
+
+def get_default_gateway_for_interface(iface: str) -> str | None:
+    try:
+        r = subprocess.run(["ip", "route", "show", "default", "dev", iface], capture_output=True, text=True, timeout=1.2)
+        if r.returncode != 0:
+            return None
+        m = re.search(r"default\s+via\s+(\d+\.\d+\.\d+\.\d+)", r.stdout or "")
+        return m.group(1) if m else None
+    except Exception:
+        return None
+
+
+def ping_iface_label(iface: str) -> str:
+    if iface == "eth0":
+        return "Verbindungstest über Kabel (eth0)"
+    if iface == WIFI_INTERFACE:
+        return f"Verbindungstest über WLAN ({iface})"
+    return f"Verbindungstest über {iface}"
 
 def _ping_worker(job_id: str, target: str, count: int):
     job = PING_JOBS.get(job_id)
@@ -2158,7 +2233,7 @@ def _ping_worker(job_id: str, target: str, count: int):
     received = 0
     try:
         p = subprocess.Popen(
-            ["ping", "-n", "-c", str(count), target],
+            ["ping", "-n", "-c", str(count), *(["-I", str(job.get("iface"))] if job and job.get("iface") else []), target],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -2190,13 +2265,19 @@ def _ping_worker(job_id: str, target: str, count: int):
     job["done"] = True
 
 def start_ping_test(count: int = 30) -> tuple[bool, str, str | None]:
-    gw, iface = get_default_gateway_and_iface()
-    if not gw or not iface:
-        return False, "Kein Gateway gefunden (nicht verbunden?).", None
+    iface = get_ping_uplink_interface()
+    if not iface:
+        return False, "Kein Gateway gefunden (nur Access Point oder nicht verbunden?).", None
+
+    gw = get_default_gateway_for_interface(iface)
+    if not gw:
+        return False, f"Kein Gateway auf {iface} gefunden (nicht verbunden?).", None
+
     job_id = uuid.uuid4().hex[:10]
     PING_JOBS[job_id] = {
         "target": gw,
         "iface": iface,
+        "iface_label": ping_iface_label(iface),
         "count": int(count),
         "started": time.time(),
         "progress": 0,
@@ -2211,6 +2292,7 @@ def start_ping_test(count: int = 30) -> tuple[bool, str, str | None]:
     th = threading.Thread(target=_ping_worker, args=(job_id, gw, int(count)), daemon=True)
     th.start()
     return True, "Ping gestartet.", job_id
+
 
 
 
@@ -2808,11 +2890,13 @@ def index():
         autodarts_active, autodarts_version,
         cpu_pct, mem_used, mem_total, temp_c,
         wifi_ok, dongle_ok,
+        net_ok, ping_uplink_label,
         current_ap_ssid,
-        internet_iface, internet_src_ip, internet_gw,
     ) = get_index_stats_cached()
     wifi_signal = None  # Signalstärke wird nur auf Knopfdruck geladen
     ad_restarted = request.args.get("ad_restarted") == "1"
+    wifi_conn_name, wifi_autoconnect_enabled = get_active_wifi_autoconnect_state()
+
 
 
     cam_config = load_cam_config()
@@ -2865,26 +2949,6 @@ def index():
     adminmsg = (request.args.get('adminmsg') or '').strip()
     adminok = (request.args.get('adminok') == '1')
 
-    # Firewall (nur bei explizitem Refresh/Aktion prüfen, sonst Cache anzeigen)
-    ufw_installed = ufw_is_installed()
-    ufw_active = None
-    ufw_status_text = ""
-    ufw_checked_at = None
-    if admin_unlocked:
-        info = ufw_cache_load()
-        if isinstance(info, dict) and info:
-            ufw_installed = bool(info.get("installed", ufw_installed))
-            ufw_active = info.get("active", None)
-            ufw_status_text = info.get("status_text", "") or ""
-            ufw_checked_at = info.get("checked_at", None)
-
-    # Format "letzte Prüfung" (nur Anzeige)
-    ufw_checked_at_str = ""
-    try:
-        if ufw_checked_at:
-            ufw_checked_at_str = datetime.datetime.fromtimestamp(int(ufw_checked_at)).strftime("%Y-%m-%d %H:%M:%S")
-    except Exception:
-        ufw_checked_at_str = ""
     msg = request.args.get('msg', '')
     autoupdate_enabled = autodarts_autoupdate_is_enabled()
     update_check = load_update_check()
@@ -2901,6 +2965,12 @@ def index():
 
     update_state = load_update_state() if admin_unlocked else {}
     update_log_tail = tail_file(AUTODARTS_UPDATE_LOG, n=25, max_chars=3500) if admin_unlocked else ""
+
+    os_update_state = load_os_update_state() if admin_unlocked else {}
+    os_update_log_tail = tail_file(OS_UPDATE_LOG, n=25, max_chars=3500) if admin_unlocked else ""
+
+    ufw_installed = ufw_is_installed()
+    ufw_state = load_ufw_state() if admin_unlocked else {}
 
     wled_targets = wled_cfg.get("targets", []) or []
     while len(wled_targets) < 3:
@@ -2947,6 +3017,7 @@ def index():
     .btn-row { display:flex; flex-wrap:wrap; gap:10px; margin-top:10px; align-items:center; }
     .btn { display:inline-block; padding:10px 16px; border-radius:999px; border:1px solid #444; background:#2a2a2a; color:#eee; text-decoration:none; font-size:0.95rem; cursor:pointer; }
     .btn-primary { background:#3b82f6; border-color:#3b82f6; color:white; }
+    .btn-danger { background:#b91c1c; border-color:#b91c1c; color:white; }
     .btn-small { padding:6px 12px; font-size:0.85rem; }
     .btn-disabled { opacity: 0.4; pointer-events: none; filter: grayscale(1); }
     textarea { width:100%; min-height:80px; border-radius:8px; border:1px solid #444; background:#111; color:#eee; padding:8px; resize:vertical; font-family:inherit; }
@@ -3077,12 +3148,42 @@ def index():
       </p>
       <div class="btn-row">
         <a href="{{ url_for('wifi') }}" class="btn btn-primary">WLAN-Verbindung einrichten / ändern</a>
-        <button type="button" id="pingBtn" class="btn {% if not wifi_ok %}btn-disabled{% endif %}">Verbindungstest (30 Pakete)</button>
+        <a href="{{ url_for('wifi_ping_ui') }}" id="pingBtn" class="btn">Verbindungstest (30 Pakete)</a>
       </div>
-      <div id="pingResult" class="hint" style="margin-top:10px;"></div>
-      <div id="pingIface" class="hint" style="margin-top:6px;"></div>
+  <div class="hint" style="margin-top:6px;">{% if net_ok %}{{ ping_uplink_label }}{% else %}Verbindungstest: Kein Uplink (nur Access Point oder nicht verbunden).{% endif %}</div>
+  <div id="pingResult" class="hint" style="margin-top:10px;"></div>
 
-    </div>
+  <details style="margin-top:10px;">
+    <summary>WLAN – Erweitert</summary>
+    {% if admin_unlocked %}
+      <p class="hint" style="margin-top:8px;">
+        Achtung: Wenn Sie gerade per WLAN verbunden sind, kann „Gespeicherte WLANs löschen“ die Verbindung sofort trennen.
+      </p>
+      <p class="hint" style="margin-top:8px;">
+        Aktives WLAN-Profil: <strong>{{ wifi_conn_name or '—' }}</strong><br>
+        Autoconnect: <strong>{% if wifi_autoconnect_enabled is none %}unbekannt{% elif wifi_autoconnect_enabled %}AN{% else %}AUS{% endif %}</strong>
+      </p>
+      <div class="btn-row" style="margin-top:10px;">
+        <form method="post" action="{{ url_for('wifi_autoconnect', mode='off') }}" style="margin:0;">
+          <button type="submit" class="btn {% if wifi_autoconnect_enabled is not none and not wifi_autoconnect_enabled %}btn-primary btn-disabled{% endif %}">Autoconnect AUS</button>
+        </form>
+        <form method="post" action="{{ url_for('wifi_autoconnect', mode='on') }}" style="margin:0;">
+          <button type="submit" class="btn {% if wifi_autoconnect_enabled %}btn-primary btn-disabled{% endif %}">Autoconnect AN</button>
+        </form>
+        <form method="post" action="{{ url_for('wifi_forget_saved') }}"
+              onsubmit="return confirm('Wirklich ALLE gespeicherten WLAN-Verbindungen löschen (außer Autodarts-AP)?\n\nWenn du gerade über WLAN verbunden bist, kann die Verbindung sofort weg sein!');"
+              style="margin:0;">
+          <button type="submit" class="btn btn-danger">Gespeicherte WLANs löschen</button>
+        </form>
+      </div>
+    {% else %}
+      <p class="admin-hint" style="margin-top:8px;">
+        Tipp: Im Admin-Bereich entsperren, um Autoconnect umzuschalten oder gespeicherte WLANs zu löschen.
+      </p>
+    {% endif %}
+  </details>
+
+</div>
 
     <div class="card">
       <h2>2. Dartscheibe mit Autodarts-Account verknüpfen</h2>
@@ -3262,11 +3363,11 @@ def index():
 </form>
 
 <script>
-  // Wenn #admin oder ?adminerr / ?admin gesetzt ist: Admin-Details automatisch aufklappen
+  // Wenn #admin_details oder ?adminerr / ?admin gesetzt ist: Admin-Details automatisch aufklappen
   (function () {
     try {
       var p = new URLSearchParams(window.location.search);
-      if (window.location.hash === "#admin" || p.get("admin") === "1" || p.get("adminerr") === "1") {
+      if (window.location.hash === "#admin_details" || p.get("admin") === "1" || p.get("adminerr") === "1") {
         var d = document.getElementById("admin_details");
         if (d) d.open = true;
       }
@@ -3284,17 +3385,7 @@ def index():
     try{
       const r = await fetch("{{ url_for('api_wifi_signal') }}", { cache: "no-store" });
       const j = await r.json();
-      // Show which interface is used for the test (eth0/wlan0)
-      const ifaceEl = document.getElementById('pingIface');
-      if(ifaceEl){
-        if(j.iface){
-        if(j.iface === 'eth0') ifaceEl.textContent = 'Verbindungstest über Kabel (eth0)';
-        else if(j.iface === 'wlan0') ifaceEl.textContent = 'Verbindungstest über WLAN (wlan0)';
-        else ifaceEl.textContent = 'Verbindungstest über ' + j.iface;
-      }else{
-        ifaceEl.textContent = '';
-      }
-      }
+      if(j && j.iface_label && titleEl) titleEl.textContent = j.iface_label;
       if(out){
         out.textContent = (j && j.signal !== null && j.signal !== undefined) ? (String(j.signal) + "%") : "n/a";
       }
@@ -3413,7 +3504,101 @@ def index():
             <button type="submit" class="btn btn-small">Admin sperren</button>
           </form>
 
-          <hr style="border:none; border-top:1px solid #333; margin:14px 0;">
+
+           <h3 style="margin:0 0 8px;">System</h3>
+           <p class="hint" style="margin-top:0;">
+             Neustart startet den Mini PC sofort neu. „System updaten & Reboot“ führt ein <code>apt-get update/upgrade</code> aus und startet danach automatisch neu.
+           </p>
+
+           <div class="btn-row">
+             <form method="post" action="{{ url_for('admin_reboot') }}"
+                   onsubmit="return confirm('Wollen Sie wirklich den Mini PC komplett neu starten?');" style="margin:0;">
+               <button type="submit" class="btn btn-danger">System neu starten</button>
+             </form>
+
+             <form method="post" action="{{ url_for('admin_os_update') }}"
+                   onsubmit="return confirm('System-Update starten?\nDer Pi rebootet danach automatisch.');" style="margin:0;">
+               <button type="submit" class="btn btn-primary">System updaten & Reboot</button>
+             </form>
+           </div>
+
+           {% if os_update_state.started %}
+             <p class="hint" style="margin-top:8px;">
+               Letztes System-Update gestartet: <code>{{ os_update_state.started }}</code>
+               {% if os_update_state.unit %}(Unit: <code>{{ os_update_state.unit }}</code>){% endif %}
+             </p>
+           {% endif %}
+
+           {% if os_update_log_tail %}
+             <details style="margin-top:10px;">
+               <summary>System-Update-Log anzeigen</summary>
+               <pre style="background:#0b0b0b; padding:12px; border-radius:10px; border:1px solid #333; overflow:auto; white-space:pre-wrap; margin:10px 0 0;">{{ os_update_log_tail }}</pre>
+             </details>
+           {% endif %}
+
+           <hr style="border:none; border-top:1px solid #333; margin:14px 0;">
+
+           <h3 style="margin:0 0 8px;">Firewall (UFW)</h3>
+
+           {% if not ufw_installed %}
+             <p class="hint" style="margin-top:0;">
+               UFW ist nicht installiert.
+             </p>
+           {% else %}
+             <p class="hint" style="margin-top:0;">
+               Status: <strong>
+                 {% if ufw_state.status == 'active' %}aktiv
+                 {% elif ufw_state.status == 'inactive' %}inaktiv
+                 {% elif ufw_state.status == 'installing' %}Installation läuft…
+                 {% else %}unbekannt{% endif %}
+               </strong>
+               {% if ufw_state.checked %} · zuletzt geprüft: <code>{{ ufw_state.checked }}</code>{% endif %}
+             </p>
+           {% endif %}
+
+           <div class="btn-row">
+             <form method="post" action="{{ url_for('admin_ufw_refresh') }}" style="margin:0;">
+               <button type="submit" class="btn">Status aktualisieren</button>
+             </form>
+
+             <form method="post" action="{{ url_for('admin_ufw_install') }}"
+                   onsubmit="return confirm('UFW installieren, Ports freigeben und aktivieren?\n\nSSH (22/tcp) bleibt erlaubt.');" style="margin:0;">
+               <button type="submit" class="btn {% if ufw_installed %}btn-disabled{% endif %}" {% if ufw_installed %}disabled{% endif %}>
+                 UFW installieren
+               </button>
+             </form>
+
+             <form method="post" action="{{ url_for('admin_ufw_apply_ports') }}"
+                   onsubmit="return confirm('Ports in UFW freigeben? (kann mehrfach ausgeführt werden)');" style="margin:0;">
+               <button type="submit" class="btn {% if not ufw_installed %}btn-disabled{% endif %}" {% if not ufw_installed %}disabled{% endif %}>
+                 Ports freigeben
+               </button>
+             </form>
+
+             <form method="post" action="{{ url_for('admin_ufw_enable') }}"
+                   onsubmit="return confirm('UFW aktivieren?');" style="margin:0;">
+               <button type="submit" class="btn btn-primary {% if not ufw_installed %}btn-disabled{% endif %}" {% if not ufw_installed %}disabled{% endif %}>
+                 UFW EIN
+               </button>
+             </form>
+
+             <form method="post" action="{{ url_for('admin_ufw_disable') }}"
+                   onsubmit="return confirm('UFW deaktivieren?');" style="margin:0;">
+               <button type="submit" class="btn {% if not ufw_installed %}btn-disabled{% endif %}" {% if not ufw_installed %}disabled{% endif %}>
+                 UFW AUS
+               </button>
+             </form>
+           </div>
+
+           {% if ufw_state.raw %}
+             <details style="margin-top:10px;">
+               <summary>UFW Status anzeigen</summary>
+               <pre style="background:#0b0b0b; padding:12px; border-radius:12px; border:1px solid #333; white-space:pre-wrap; margin:10px 0 0;">{{ ufw_state.raw }}</pre>
+             </details>
+           {% endif %}
+
+           <hr style="border:none; border-top:1px solid #333; margin:14px 0;">
+
 
           
           <h3 style="margin:0 0 8px;">Webpanel Software</h3>
@@ -3552,56 +3737,6 @@ def index():
 
 <hr style="border:none; border-top:1px solid #333; margin:14px 0;">
 
-          <h3 style="margin:0 0 8px;">Firewall (UFW)</h3>
-          <p class="hint" style="margin-top:0;">
-            Status wird nur bei „Status aktualisieren“ (oder nach einer Firewall-Aktion) geprüft.
-          </p>
-
-          <p class="hint" style="margin-top:6px;">
-            Installiert: <strong>{{ 'JA' if ufw_installed else 'NEIN' }}</strong>
-            {% if ufw_active is not none %}
-              · Aktiv: <strong>{{ 'JA' if ufw_active else 'NEIN' }}</strong>
-            {% else %}
-              · Aktiv: <em>unbekannt</em>
-            {% endif %}
-            {% if ufw_checked_at_str %} · Letzte Prüfung: <code>{{ ufw_checked_at_str }}</code>{% endif %}
-          </p>
-
-          {% if ufw_status_text %}
-            <details style="margin-top:10px;">
-              <summary>UFW Status anzeigen</summary>
-              <pre style="background:#0b0b0b; padding:12px; border-radius:8px; white-space:pre-wrap; margin:10px 0 0;">{{ ufw_status_text }}</pre>
-            </details>
-          {% endif %}
-
-          <div class="btn-row" style="margin-top:10px;">
-            <form method="post" action="{{ url_for('admin_ufw_action', action='refresh') }}" style="margin:0;">
-              <button type="submit" class="btn btn-small">Status aktualisieren</button>
-            </form>
-
-            {% if not ufw_installed %}
-              <form method="post" action="{{ url_for('admin_ufw_action', action='install') }}"
-                    onsubmit="return confirm('UFW installieren, Ports setzen und aktivieren?');"
-                    style="margin:0;">
-                <button type="submit" class="btn btn-primary">UFW installieren</button>
-              </form>
-              <button class="btn btn-small" disabled>Ports anwenden</button>
-              <button class="btn btn-small" disabled>Aktivieren</button>
-              <button class="btn btn-small" disabled>Deaktivieren</button>
-            {% else %}
-              <form method="post" action="{{ url_for('admin_ufw_action', action='apply') }}" style="margin:0;">
-                <button type="submit" class="btn btn-small">Ports anwenden</button>
-              </form>
-              <form method="post" action="{{ url_for('admin_ufw_action', action='enable') }}" style="margin:0;">
-                <button type="submit" class="btn btn-small">Aktivieren</button>
-              </form>
-              <form method="post" action="{{ url_for('admin_ufw_action', action='disable') }}"
-                    onsubmit="return confirm('UFW wirklich deaktivieren?');"
-                    style="margin:0;">
-                <button type="submit" class="btn btn-small">Deaktivieren</button>
-              </form>
-            {% endif %}
-          </div>
 
           <h3 style="margin:0 0 8px;">LED-Bänder – Adressen</h3>
           <p class="hint" style="margin-top:0;">
@@ -3854,7 +3989,7 @@ cp /var/log/pi_monitor_test_README.txt ~/
 
 <div id="pingOverlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:2000; align-items:center; justify-content:center;">
   <div style="background:#1c1c1c; border:1px solid #333; border-radius:14px; padding:18px 18px; width:min(520px,92vw); box-shadow:0 0 30px rgba(0,0,0,.7);">
-    <div style="font-weight:800; margin-bottom:10px;">Verbindungstest läuft…</div>
+    <div id="pingOverlayTitle" style="font-weight:800; margin-bottom:10px;">Verbindungstest läuft…</div>
     <div id="pingOverlayText" style="margin-bottom:10px; opacity:.9;">Starte…</div>
     <div style="height:10px; background:#0b0b0b; border:1px solid #333; border-radius:999px; overflow:hidden;">
       <div id="pingOverlayBar" style="height:100%; width:0%; background:#3b82f6;"></div>
@@ -3865,96 +4000,184 @@ cp /var/log/pi_monitor_test_README.txt ~/
 
 <script>
 (function(){
-  const btn = document.getElementById('pingBtn');
-  const overlay = document.getElementById('pingOverlay');
-  const txt = document.getElementById('pingOverlayText');
-  const bar = document.getElementById('pingOverlayBar');
-  const out = document.getElementById('pingResult');
+  function initPingUi(){
+    const btn = document.getElementById('pingBtn');
+    const overlay = document.getElementById('pingOverlay');
+    const txt = document.getElementById('pingOverlayText');
+    const bar = document.getElementById('pingOverlayBar');
+    const out = document.getElementById('pingResult');
+    const titleEl = document.getElementById('pingOverlayTitle');
 
-  function showOverlay(){ if(overlay){ overlay.style.display='flex'; } }
-  function hideOverlay(){ if(overlay){ overlay.style.display='none'; } }
-  function setProgress(done, total){
-    const pct = total ? Math.max(0, Math.min(100, Math.round((done/total)*100))) : 0;
-    if(bar) bar.style.width = pct + '%';
-  }
+    function showOverlay(){ if(overlay){ overlay.style.display='flex'; } }
+    function hideOverlay(){ if(overlay){ overlay.style.display='none'; } }
+    function setProgress(done, total){
+      const pct = total ? Math.max(0, Math.min(100, Math.round((done/total)*100))) : 0;
+      if(bar) bar.style.width = pct + '%';
+    }
 
-  async function start(){
-    if(!btn || btn.classList.contains('btn-disabled')) return;
-    btn.classList.add('btn-disabled');
-    if(out) out.textContent = '';
-    showOverlay();
-    if(txt) txt.textContent = 'Starte…';
-
-    try{
-      const r = await fetch('/wifi/ping/start', {method:'POST'});
-      const j = await r.json();
-      if(!j.ok){
-        hideOverlay();
-        if(out) out.textContent = j.msg || 'Ping konnte nicht gestartet werden.';
-        btn.classList.remove('btn-disabled');
-        return;
+    // Verbindungseinstufung (strenger Range)
+    function classifyPingQuality(s, total, recv){
+      const sent = Number(s.count || total || 30);
+      const rec = Number(recv || 0);
+      if(!sent || sent <= 0){
+        return { level: 'unknown', label: 'Unbekannt', loss: null };
       }
-      const jobId = j.job_id;
-      const total = 30;
-      let tries = 0;
+      const lost = Math.max(0, sent - rec);
+      const loss = Math.round((lost * 1000) / sent) / 10; // 1 Nachkommastelle
 
-      const timer = setInterval(async ()=>{
-        tries += 1;
-        try{
-          const rs = await fetch('/wifi/ping/status/' + jobId);
-          const s = await rs.json();
-          const ifaceEl2 = document.getElementById('pingIface');
-          if(ifaceEl2 && s.iface){
-            ifaceEl2.textContent = 'Test-Interface: ' + s.iface;
-          }
-          if(!s.ok){
-            clearInterval(timer);
-            hideOverlay();
-            if(out) out.textContent = s.msg || 'Fehler beim Status.';
-            btn.classList.remove('btn-disabled');
-            return;
-          }
+      const minMs = (s.min_ms != null) ? Number(s.min_ms) : null;
+      const maxMs = (s.max_ms != null) ? Number(s.max_ms) : null;
+      const avgMs = (s.avg_ms != null) ? Number(s.avg_ms) : null;
 
-          const prog = Number(s.progress||0);
-          const recv = Number(s.received||0);
-          if(txt) txt.textContent = `${prog} von ${total} Paketen… (empfangen: ${recv})`;
-          setProgress(prog, total);
+      // Falls keine Laufzeiten, nur grobe Einstufung
+      if(minMs === null || maxMs === null || avgMs === null){
+        if(loss === 0) return { level: 'gut', label: 'Gute Verbindung', loss };
+        if(loss < 3) return { level: 'grenzwertig', label: 'Könnte funktionieren', loss };
+        return { level: 'nicht_spielbar', label: 'Nicht mehr spielbar', loss };
+      }
 
-          if(s.done){
-            clearInterval(timer);
-            hideOverlay();
-            const sent = total;
-            const rec = recv;
-            let result = `${rec} von ${sent} Paketen wurden erfolgreich gesendet.`;
-            if(s.min_ms!=null && s.max_ms!=null && s.avg_ms!=null){
-              result += ` Schnellstes: ${s.min_ms} ms · Langsamstes: ${s.max_ms} ms · Durchschnitt: ${s.avg_ms} ms`;
-            }
-            if(s.error){
-              result += ` (Hinweis: ${s.error})`;
-            }
-            if(out) out.textContent = result;
-            btn.classList.remove('btn-disabled');
-          }
-        }catch(e){
-          if(tries > 120){
-            clearInterval(timer);
-            hideOverlay();
-            if(out) out.textContent = 'Verbindungstest abgebrochen (Timeout).';
-            btn.classList.remove('btn-disabled');
-          }
+      // Super
+      if(loss === 0 && avgMs <= 30 && maxMs <= 60){
+        return { level: 'super', label: 'Super Verbindung', loss };
+      }
+      // Gut
+      if(loss < 1 && avgMs <= 60 && maxMs <= 120){
+        return { level: 'gut', label: 'Gute Verbindung', loss };
+      }
+      // Grenzwertig
+      if(loss < 3 && avgMs <= 120 && maxMs <= 300){
+        return { level: 'grenzwertig', label: 'Könnte funktionieren', loss };
+      }
+      // Schlecht
+      return { level: 'nicht_spielbar', label: 'Nicht mehr spielbar', loss };
+    }
+
+    function esc(s){ return (s == null) ? '' : String(s); }
+
+    async function startPing(){
+      if(!btn) return;
+      if(btn.classList.contains('btn-disabled')) return;
+
+      btn.classList.add('btn-disabled');
+      if(out) out.textContent = '';
+      showOverlay();
+      if(titleEl) titleEl.textContent = 'Verbindungstest läuft…';
+      if(txt) txt.textContent = 'Starte…';
+      setProgress(0, 30);
+
+      try{
+        const r = await fetch('/wifi/ping/start', {method:'POST', cache:'no-store'});
+        const j = await r.json().catch(()=>({ok:false,msg:'Ungültige Antwort'}));
+
+        if(!j.ok){
+          hideOverlay();
+          if(out) out.textContent = j.msg || 'Ping konnte nicht gestartet werden.';
+          btn.classList.remove('btn-disabled');
+          return;
         }
-      }, 600);
 
-    }catch(e){
-      hideOverlay();
-      if(out) out.textContent = 'Verbindungstest fehlgeschlagen.';
-      btn.classList.remove('btn-disabled');
+        const jobId = j.job_id;
+        const total = 30;
+        let tries = 0;
+
+        const timer = setInterval(async ()=>{
+          tries += 1;
+          try{
+            const rs = await fetch('/wifi/ping/status/' + jobId, {cache:'no-store'});
+            const s = await rs.json().catch(()=>({ok:false,msg:'Ungültige Antwort'}));
+
+            if(!s.ok){
+              clearInterval(timer);
+              hideOverlay();
+              if(out) out.textContent = s.msg || 'Fehler beim Status.';
+              btn.classList.remove('btn-disabled');
+              return;
+            }
+
+            const prog = Number(s.progress||0);
+            const recv = Number(s.received||0);
+            if(txt) txt.textContent = `${prog} von ${total} Paketen… (empfangen: ${recv})`;
+            setProgress(prog, total);
+
+            if(s.done){
+              clearInterval(timer);
+
+              const sent = Number(s.count || total);
+              const rec = recv;
+              const q = classifyPingQuality(s, sent, rec);
+
+              let result = `${rec} von ${sent} Paketen wurden erfolgreich gesendet.`;
+              if(q.loss != null) result += ` · Paketverlust: ${q.loss}%`;
+              if(s.min_ms!=null && s.max_ms!=null && s.avg_ms!=null){
+                result += ` Schnellstes: ${s.min_ms} ms · Langsamstes: ${s.max_ms} ms · Durchschnitt: ${s.avg_ms} ms`;
+              }
+              if(s.error){
+                result += ` (Hinweis: ${s.error})`;
+              }
+
+              const via = (s && s.iface_label) ? (s.iface_label + "\n") : "";
+              if(out){
+                if(q && q.label){
+                  out.textContent = via + `Verbindungsqualität: ${q.label}\n` + result;
+                }else{
+                  out.textContent = via + result;
+                }
+              }
+
+              if(titleEl) titleEl.textContent = 'Verbindungstest abgeschlossen';
+              if(txt){
+                const label = q && q.label ? q.label : 'Unbekannt';
+                txt.textContent = `TEST erfolgreich durchgeführt. Ergebnis: ${label}`;
+              }
+              setProgress(total, total);
+
+              setTimeout(()=>{ hideOverlay(); }, 3500);
+              btn.classList.remove('btn-disabled');
+            }
+          }catch(e){
+            if(tries > 120){
+              clearInterval(timer);
+              hideOverlay();
+              if(out) out.textContent = 'Verbindungstest abgebrochen (Timeout).';
+              btn.classList.remove('btn-disabled');
+            }
+          }
+        }, 600);
+
+      }catch(e){
+        hideOverlay();
+        if(out) out.textContent = 'Verbindungstest fehlgeschlagen.';
+        btn.classList.remove('btn-disabled');
+      }
+    }
+
+    // Overlay schließen (ESC oder Klick auf dunklen Bereich)
+    if(overlay){
+      overlay.addEventListener('click', (ev)=>{
+        if(ev && ev.target === overlay) hideOverlay();
+      });
+    }
+    document.addEventListener('keydown', (ev)=>{
+      if(ev && ev.key === 'Escape') hideOverlay();
+    });
+
+    if(btn){
+      // pingBtn ist ein Link (Fallback), also Navigation verhindern wenn JS aktiv ist
+      btn.addEventListener('click', (ev)=>{
+        try{ ev.preventDefault(); }catch(e){}
+        startPing();
+      });
     }
   }
 
-  if(btn){ btn.addEventListener('click', start); }
+  if(document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', initPingUi);
+  }else{
+    initPingUi();
+  }
 })();
 </script>
+
 
 </body>
 </html>
@@ -3987,12 +4210,10 @@ cp /var/log/pi_monitor_test_README.txt ~/
         wled_hosts=wled_hosts,
         wled_master_enabled=wled_master_enabled,
         admin_unlocked=admin_unlocked,
+        os_update_state=os_update_state,
+        os_update_log_tail=os_update_log_tail,
         ufw_installed=ufw_installed,
-        ufw_active=ufw_active,
-        ufw_rules=UFW_RULES,
-        ufw_status_text=ufw_status_text,
-        ufw_checked_at=ufw_checked_at,
-        ufw_checked_at_str=ufw_checked_at_str,
+        ufw_state=ufw_state,
         adminerr=adminerr,
         adminmsg=adminmsg,
         adminok=adminok,
@@ -4017,13 +4238,14 @@ cp /var/log/pi_monitor_test_README.txt ~/
         autodarts_notice=ad_restarted,
         wifi_ok=wifi_ok,
         dongle_ok=dongle_ok,
+        net_ok=net_ok,
+        ping_uplink_label=ping_uplink_label,
         current_ap_ssid=current_ap_ssid,
-        internet_iface=internet_iface,
-        internet_src_ip=internet_src_ip,
-        internet_gw=internet_gw,
         ssid=ssid,
         ip=ip,
         wifi_signal=wifi_signal,
+        wifi_conn_name=wifi_conn_name,
+        wifi_autoconnect_enabled=wifi_autoconnect_enabled,
         msg=msg,
         autoupdate_enabled=autoupdate_enabled,
         update_check=update_check,
@@ -4300,7 +4522,7 @@ def wled_save_enabled():
 @app.route("/wled/save-hosts", methods=["POST"])
 def wled_save_hosts():
     if not bool(session.get("admin_unlocked", False)):
-        return redirect(url_for("index", adminerr="1") + "#admin")
+        return redirect(url_for("index", adminerr="1") + "#admin_details")
 
     cfg = load_wled_config()
     cfg["master_enabled"] = True  # User-UI hat keinen Master-Schalter
@@ -4462,17 +4684,118 @@ def admin_unlock():
     pw = (request.form.get("admin_password") or "").strip()
     if pw == ADMIN_PASSWORD:
         session["admin_unlocked"] = True
-        return redirect(url_for("index", admin="1") + "#admin")
+        return redirect(url_for("index", admin="1") + "#admin_details")
     session.pop("admin_unlocked", None)
-    return redirect(url_for("index", adminerr="1") + "#admin")
+    return redirect(url_for("index", adminerr="1") + "#admin_details")
 
 
 @app.route("/admin/lock", methods=["POST"])
 def admin_lock():
     session.pop("admin_unlocked", None)
-    return redirect(url_for("index") + "#admin")
+    return redirect(url_for("index") + "#admin_details")
 
 
+
+@app.route("/admin/reboot", methods=["POST"])
+def admin_reboot():
+    # Nur im Admin-Modus erlauben
+    if not bool(session.get("admin_unlocked", False)):
+        return ("Forbidden", 403)
+
+    unit_name = f"autodarts-reboot-{int(time.time())}"
+
+    # Im Hintergrund rebooten (damit die HTTP-Response noch rausgeht)
+    try:
+        subprocess.Popen(
+            ["sudo", "-n", "systemd-run", "--unit", unit_name, "--no-block", "--collect", "/sbin/reboot"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        # Fallback (falls systemd-run nicht geht)
+        try:
+            subprocess.Popen(
+                ["sudo", "-n", "/sbin/reboot"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            pass
+
+    return (
+        "<!doctype html><html lang='de'><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<title>Reboot</title></head><body style='font-family:system-ui;background:#111;color:#eee;padding:20px;'>"
+        "<h2>Neustart wird ausgeführt…</h2>"
+        "<p>Der Raspberry Pi startet jetzt neu. Diese Seite ist gleich nicht mehr erreichbar.</p>"
+        "</body></html>"
+    )
+
+
+
+
+
+
+@app.route("/admin/os/update", methods=["POST"])
+def admin_os_update():
+    if not bool(session.get("admin_unlocked", False)):
+        return ("Forbidden", 403)
+
+    ok, msg = start_os_update_background()
+    return redirect(url_for("index", admin="1", adminok=("1" if ok else "0"), adminmsg=msg) + "#admin_details")
+
+
+
+
+# ---------------- Admin: Firewall (UFW) ----------------
+
+@app.route("/admin/ufw/refresh", methods=["POST"])
+def admin_ufw_refresh():
+    if not bool(session.get("admin_unlocked", False)):
+        return ("Forbidden", 403)
+    ufw_refresh_state()
+    return redirect(url_for("index", admin="1", adminmsg="Firewall-Status aktualisiert.", adminok="1") + "#admin_details")
+
+
+@app.route("/admin/ufw/install", methods=["POST"])
+def admin_ufw_install():
+    if not bool(session.get("admin_unlocked", False)):
+        return ("Forbidden", 403)
+    if ufw_is_installed():
+        return redirect(url_for("index", admin="1", adminmsg="UFW ist bereits installiert.", adminok="1") + "#admin_details")
+    ok, msg = start_ufw_install_background()
+    return redirect(url_for("index", admin="1", adminmsg=msg, adminok=("1" if ok else "0")) + "#admin_details")
+
+
+@app.route("/admin/ufw/apply_ports", methods=["POST"])
+def admin_ufw_apply_ports():
+    if not bool(session.get("admin_unlocked", False)):
+        return ("Forbidden", 403)
+    ok, msg = ufw_apply_port_rules()
+    # Status NICHT automatisch prüfen – wir aktualisieren nur den Cache (Button ist explizit)
+    ufw_refresh_state()
+    short = (msg.splitlines()[0] if msg else ("OK" if ok else "Fehler"))
+    return redirect(url_for("index", admin="1", adminmsg=short, adminok=("1" if ok else "0")) + "#admin_details")
+
+
+@app.route("/admin/ufw/enable", methods=["POST"])
+def admin_ufw_enable():
+    if not bool(session.get("admin_unlocked", False)):
+        return ("Forbidden", 403)
+    ok, msg = ufw_set_enabled(True)
+    ufw_refresh_state()
+    short = (msg.splitlines()[0] if msg else ("OK" if ok else "Fehler"))
+    return redirect(url_for("index", admin="1", adminmsg=short, adminok=("1" if ok else "0")) + "#admin_details")
+
+
+@app.route("/admin/ufw/disable", methods=["POST"])
+def admin_ufw_disable():
+    if not bool(session.get("admin_unlocked", False)):
+        return ("Forbidden", 403)
+    ok, msg = ufw_set_enabled(False)
+    ufw_refresh_state()
+    short = (msg.splitlines()[0] if msg else ("OK" if ok else "Fehler"))
+    return redirect(url_for("index", admin="1", adminmsg=short, adminok=("1" if ok else "0")) + "#admin_details")
 @app.route("/admin/autodarts/check", methods=["POST"])
 def admin_autodarts_check():
     if not bool(session.get("admin_unlocked", False)):
@@ -4497,7 +4820,7 @@ def admin_autodarts_check():
     else:
         msg = "Update-Check nicht möglich (Version oder Internet nicht verfügbar)."
 
-    return redirect(url_for("index", admin="1", adminmsg=msg, adminok="1") + "#admin")
+    return redirect(url_for("index", admin="1", adminmsg=msg, adminok="1") + "#admin_details")
 
 
 @app.route("/admin/autodarts/update", methods=["POST"])
@@ -4511,10 +4834,10 @@ def admin_autodarts_update():
     # Wenn wir sicher wissen, dass es kein Update gibt → nicht starten
     if installed and latest and installed == latest:
         msg = f"Kein Update verfügbar (bereits v{installed})."
-        return redirect(url_for("index", admin="1", adminok="1", adminmsg=msg) + "#admin")
+        return redirect(url_for("index", admin="1", adminok="1", adminmsg=msg) + "#admin_details")
 
     ok, msg = start_autodarts_update_background()
-    return redirect(url_for("index", admin="1", adminok=("1" if ok else "0"), adminmsg=msg) + "#admin")
+    return redirect(url_for("index", admin="1", adminok=("1" if ok else "0"), adminmsg=msg) + "#admin_details")
 
 
 @app.route("/admin/webpanel/check", methods=["POST"])
@@ -4539,7 +4862,7 @@ def admin_webpanel_check():
     else:
         flash("Webpanel: Update-Check fehlgeschlagen.", "warning")
 
-    return redirect(url_for("index", admin="1") + "#admin")
+    return redirect(url_for("index", admin="1") + "#admin_details")
 
 
 @app.route("/admin/webpanel/update", methods=["POST"])
@@ -4554,11 +4877,11 @@ def admin_webpanel_update():
     # Wenn latest nicht ermittelbar: erst prüfen lassen
     if not latest:
         flash("Webpanel: Konnte 'latest' nicht ermitteln – bitte zuerst 'Update prüfen'.", "warning")
-        return redirect(url_for("index", admin="1") + "#admin")
+        return redirect(url_for("index", admin="1") + "#admin_details")
 
     if installed and installed == latest:
         flash("Webpanel: Kein Update verfügbar.", "info")
-        return redirect(url_for("index", admin="1") + "#admin")
+        return redirect(url_for("index", admin="1") + "#admin_details")
 
     ok, err = start_webpanel_update_background()
     if ok:
@@ -4566,67 +4889,7 @@ def admin_webpanel_update():
     else:
         flash(f"Webpanel-Update konnte nicht gestartet werden: {err or 'unbekannt'}.", "danger")
 
-    return redirect(url_for("index", admin="1") + "#admin")
-
-
-
-
-@app.route("/admin/ufw/<action>", methods=["POST"])
-def admin_ufw_action(action: str):
-    # Admin muss entsperrt sein
-    if not bool(session.get("admin_unlocked", False)):
-        return ("Forbidden", 403)
-
-    action = (action or "").lower().strip()
-    if action not in ("install", "enable", "disable", "apply", "refresh"):
-        flash("UFW: Ungültige Aktion.", "warning")
-        return redirect(url_for("index", admin="1") + "#admin")
-
-
-    if action == "refresh":
-        ufw_refresh_cache()
-        flash("UFW: Status aktualisiert.", "success")
-        return redirect(url_for("index", admin="1") + "#admin")
-
-    if action == "install":
-        ok, msg = ufw_install()
-        if not ok:
-            flash(f"UFW: {msg}", "warning")
-            return redirect(url_for("index", admin="1") + "#admin")
-        ok, msg2 = ufw_apply_rules()
-        if not ok:
-            flash(f"UFW: {msg2}", "warning")
-            return redirect(url_for("index", admin="1") + "#admin")
-        ok, msg3 = ufw_enable()
-        ufw_refresh_cache()
-        flash(f"UFW: {msg}; {msg2}; {msg3}", "success" if ok else "warning")
-        return redirect(url_for("index", admin="1") + "#admin")
-
-    if not ufw_is_installed():
-        flash("UFW: Nicht installiert. Bitte zuerst installieren.", "warning")
-        return redirect(url_for("index", admin="1") + "#admin")
-
-    if action == "apply":
-        ok, msg = ufw_apply_rules()
-        ufw_refresh_cache()
-        flash(f"UFW: {msg}", "success" if ok else "warning")
-        return redirect(url_for("index", admin="1") + "#admin")
-
-    if action == "enable":
-        ok, msg1 = ufw_apply_rules()
-        if not ok:
-            flash(f"UFW: {msg1}", "warning")
-            return redirect(url_for("index", admin="1") + "#admin")
-        ok, msg2 = ufw_enable()
-        ufw_refresh_cache()
-        flash(f"UFW: {msg1}; {msg2}", "success" if ok else "warning")
-        return redirect(url_for("index", admin="1") + "#admin")
-
-    # disable
-    ok, msg = ufw_disable()
-    ufw_refresh_cache()
-    flash(f"UFW: {msg}", "success" if ok else "warning")
-    return redirect(url_for("index", admin="1") + "#admin")
+    return redirect(url_for("index", admin="1") + "#admin_details")
 
 
 
@@ -4637,7 +4900,7 @@ def admin_wled_update():
         return ("Forbidden", 403)
 
     ok, msg = start_extensions_update_background("all")
-    return redirect(url_for("index", admin="1", adminok=("1" if ok else "0"), adminmsg=(msg or "")) + "#admin")
+    return redirect(url_for("index", admin="1", adminok=("1" if ok else "0"), adminmsg=(msg or "")) + "#admin_details")
 
 
 
@@ -4708,14 +4971,6 @@ def camera_mode_end():
 def wifi():
     message = ""
     success = False
-
-    # Message coming from actions (e.g., autoconnect toggle)
-    if request.method == "GET":
-        msg = (request.args.get("msg") or "").strip()
-        ok = (request.args.get("ok") or "0").strip()
-        if msg:
-            message = msg
-            success = ok == "1"
 
     if request.method == "POST":
         ssid = request.form.get("ssid", "").strip()
@@ -4843,11 +5098,6 @@ def wifi():
     else:
         current_info = "Der USB-Dongle ist aktuell mit keinem WLAN verbunden."
 
-
-    # Autoconnect status for current (active) WiFi connection on WIFI_INTERFACE
-    active_conn = get_active_wifi_connection_name()
-    autoconnect_enabled = get_connection_autoconnect(active_conn) if active_conn else None
-
     html = """
 <!doctype html>
 <html lang="de">
@@ -4862,9 +5112,9 @@ def wifi():
     label { font-size:0.9rem; display:block; margin-bottom:4px; }
     input[type=text], input[type=password] { width:100%; padding:8px; border-radius:8px; border:1px solid #444; background:#111; color:#eee; margin-bottom:10px; font-family:inherit; }
     .btn-row { display:flex; gap:10px; margin-top:10px; flex-wrap:wrap; }
-    .btn-row form { margin:0; }
     .btn { display:inline-block; padding:10px 16px; border-radius:999px; border:1px solid #444; background:#2a2a2a; color:#eee; text-decoration:none; font-size:0.95rem; cursor:pointer; }
     .btn-primary { background:#3b82f6; border-color:#3b82f6; color:white; }
+    .btn-danger { background:#ef4444; border-color:#ef4444; color:white; }
     .msg-ok { color:#6be26b; margin-bottom:8px; white-space:pre-line; }
     .msg-bad { color:#ff6b6b; margin-bottom:8px; white-space:pre-line; }
     .hint { font-size:0.8rem; opacity:0.7; margin-top:4px; }
@@ -4907,7 +5157,9 @@ def wifi():
           Verbindung = <code>{{ wifi_connection_name }}</code><br>
           Hinweis: Bei bestimmten Gerätefehlern wird die Verbindung
           automatisch ein zweites Mal versucht (inkl. kurzem WLAN-Dongle-Reset).
-        </p>
+        
+
+</p>
 
         <div class="btn-row">
           <button type="submit" class="btn btn-primary">Verbinden</button>
@@ -4915,42 +5167,6 @@ def wifi():
         </div>
       </form>
     </div>
-
-
-    <div class="card">
-      <h2 style="margin:0 0 10px;">WLAN Autoconnect</h2>
-
-      {% if active_conn %}
-        <p>Aktives WLAN-Profil auf <code>{{ wifi_interface }}</code>: <code>{{ active_conn }}</code></p>
-        <p>
-          Status:
-          {% if autoconnect_enabled is none %}
-            <span class="dot dot-gray"></span>Unbekannt
-          {% elif autoconnect_enabled %}
-            <span class="dot dot-green"></span>AN
-          {% else %}
-            <span class="dot dot-red"></span>AUS
-          {% endif %}
-        </p>
-
-        <div class="btn-row">
-          <form method="post" action="{{ url_for('wifi_autoconnect', mode='off') }}">
-            <button type="submit" class="btn">Autoconnect AUS</button>
-          </form>
-          <form method="post" action="{{ url_for('wifi_autoconnect', mode='on') }}">
-            <button type="submit" class="btn btn-primary">Autoconnect AN</button>
-          </form>
-        </div>
-
-        <p class="hint">
-          Tipp: Autoconnect AUS bedeutet: Diese WLAN-Verbindung wird nach einem Neustart nicht automatisch wieder verbunden.
-        </p>
-      {% else %}
-        <p><span class="dot dot-gray"></span>Kein aktives WLAN auf <code>{{ wifi_interface }}</code> gefunden.</p>
-        <p class="hint">Verbinde dich zuerst mit einem WLAN – danach kannst du Autoconnect an/aus schalten.</p>
-      {% endif %}
-    </div>
-
   </div>
 
   <script>
@@ -4975,27 +5191,137 @@ def wifi():
         current_info=current_info,
         wifi_interface=WIFI_INTERFACE,
         wifi_connection_name=WIFI_CONNECTION_NAME,
-        active_conn=active_conn,
-        autoconnect_enabled=autoconnect_enabled,
+        admin_unlocked=bool(session.get('admin_unlocked', False)),
     )
 
 
 
 
 
+
+# ---------------- WLAN Tools (Autoconnect / gespeicherte WLANs löschen) ----------------
+
+def _active_wifi_connection_name(iface: str) -> str | None:
+    """
+    Gibt den aktuell aktiven Connection-Namen auf dem Interface zurück (z.B. für Autoconnect Toggle).
+    """
+    try:
+        r = subprocess.run(
+            ["nmcli", "-t", "-f", "GENERAL.CONNECTION", "dev", "show", iface],
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+        )
+        if r.returncode != 0:
+            return None
+        # Format: "GENERAL.CONNECTION:<NAME>"
+        val = (r.stdout or "").split(":", 1)[-1].strip()
+        if not val or val in ("--", "unknown"):
+            return None
+        return val
+    except Exception:
+        return None
+
+
+
+def get_active_wifi_autoconnect_state() -> tuple[str | None, bool | None]:
+    """Return (active_wifi_connection_name, autoconnect_enabled). Values may be None."""
+    conn = _active_wifi_connection_name(WIFI_INTERFACE)
+    if not conn:
+        return None, None
+    try:
+        r = subprocess.run(
+            ["nmcli", "-g", "connection.autoconnect", "connection", "show", conn],
+            capture_output=True,
+            text=True,
+            timeout=1.2,
+        )
+        if r.returncode != 0:
+            return conn, None
+        val = (r.stdout or "").strip().lower()
+        if not val:
+            return conn, None
+        enabled = val in ("yes", "true", "1", "on")
+        return conn, enabled
+    except Exception:
+        return conn, None
+
+
 @app.route("/wifi/autoconnect/<mode>", methods=["POST"])
 def wifi_autoconnect(mode: str):
-    mode = (mode or "").lower().strip()
-    if mode not in ("on", "off"):
-        return redirect(url_for("wifi", msg="Ungültige Aktion.", ok="0"))
+    # Schutz: nur im Admin-Modus
+    if not bool(session.get("admin_unlocked", False)):
+        flash("Bitte zuerst im Admin-Bereich entsperren.", "warning")
+        return redirect(url_for("index", admin="1") + "#admin_details")
 
-    conn = get_active_wifi_connection_name()
+    enable = (mode or "").lower() in ("on", "enable", "yes", "1", "true")
+    conn = _active_wifi_connection_name(WIFI_INTERFACE)
     if not conn:
-        return redirect(url_for("wifi", msg=f"Kein aktives WLAN-Profil auf {WIFI_INTERFACE} gefunden.", ok="0"))
+        flash("Kein aktives WLAN-Profil auf dem Internet-WLAN-Interface gefunden.", "warning")
+        return redirect(url_for("wifi"))
 
-    ok, msg = set_connection_autoconnect(conn, enabled=(mode == "on"))
-    return redirect(url_for("wifi", msg=msg, ok=("1" if ok else "0")))
+    try:
+        cmd = ["nmcli", "connection", "modify", conn, "connection.autoconnect", ("yes" if enable else "no")]
+        if os.geteuid() != 0:
+            cmd = ["sudo", "-n"] + cmd
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=6.0)
+        if r.returncode == 0:
+            flash(f"Autoconnect {'aktiviert' if enable else 'deaktiviert'} für: {conn}", "success")
+        else:
+            err = (r.stderr or r.stdout or "").strip()
+            flash(f"Autoconnect konnte nicht gesetzt werden: {err or 'unbekannt'}", "danger")
+    except Exception as e:
+        flash(f"Autoconnect Fehler: {e}", "danger")
 
+    return redirect(url_for("wifi"))
+
+
+@app.route("/wifi/forget-saved", methods=["POST"])
+def wifi_forget_saved():
+    # Schutz: nur im Admin-Modus
+    if not bool(session.get("admin_unlocked", False)):
+        flash("Bitte zuerst im Admin-Bereich entsperren.", "warning")
+        return redirect(url_for("index", admin="1") + "#admin_details")
+
+    KEEP = "Autodarts-AP"
+    deleted = []
+    try:
+        # NAME,TYPE -> wifi oder 802-11-wireless
+        r = subprocess.run(
+            ["nmcli", "-g", "NAME,TYPE", "connection", "show"],
+            capture_output=True,
+            text=True,
+            timeout=4.0,
+        )
+        if r.returncode != 0:
+            raise RuntimeError((r.stderr or r.stdout or "nmcli error").strip())
+
+        for line in (r.stdout or "").splitlines():
+            line = line.strip()
+            if not line or ":" not in line:
+                continue
+            name, typ = line.split(":", 1)
+            typ = typ.strip().lower()
+            name = name.strip()
+            if typ not in ("wifi", "802-11-wireless"):
+                continue
+            if name == KEEP:
+                continue
+
+            cmd = ["nmcli", "connection", "delete", name]
+            if os.geteuid() != 0:
+                cmd = ["sudo", "-n"] + cmd
+            subprocess.run(cmd, capture_output=True, text=True, timeout=6.0)
+            deleted.append(name)
+
+        if deleted:
+            flash("Gespeicherte WLAN-Verbindungen gelöscht: " + ", ".join(deleted), "success")
+        else:
+            flash("Keine gespeicherten WLAN-Verbindungen gefunden (außer Autodarts-AP).", "info")
+    except Exception as e:
+        flash(f"Konnte gespeicherte WLANs nicht löschen: {e}", "danger")
+
+    return redirect(url_for("wifi"))
 @app.route("/autoupdate/toggle", methods=["POST"])
 def autoupdate_toggle():
     cur = autodarts_autoupdate_is_enabled()
@@ -5009,9 +5335,10 @@ def autoupdate_toggle():
 @app.route("/wifi/ping/start", methods=["POST"])
 def wifi_ping_start():
     ok, msg, job_id = start_ping_test(count=30)
-    iface = PING_JOBS.get(job_id, {}).get("iface") if job_id else None
-    target = PING_JOBS.get(job_id, {}).get("target") if job_id else None
-    return jsonify({"ok": bool(ok), "msg": msg, "job_id": job_id, "iface": iface, "target": target})
+    iface_label = None
+    if job_id and job_id in PING_JOBS:
+        iface_label = PING_JOBS[job_id].get("iface_label")
+    return jsonify({"ok": bool(ok), "msg": msg, "job_id": job_id, "iface_label": iface_label})
 
 
 @app.route("/wifi/ping/status/<job_id>", methods=["GET"])
@@ -5031,6 +5358,7 @@ def wifi_ping_status(job_id: str):
         "ok": True,
         "target": job.get("target"),
         "iface": job.get("iface"),
+        "iface_label": job.get("iface_label"),
         "count": job.get("count", 30),
         "progress": job.get("progress", 0),
         "received": job.get("received", 0),
@@ -5040,6 +5368,179 @@ def wifi_ping_status(job_id: str):
         "avg_ms": job.get("avg_ms"),
         "error": job.get("error"),
     })
+
+@app.route("/wifi/ping/ui", methods=["GET"])
+def wifi_ping_ui():
+    """Fallback/UI-Seite für den Verbindungstest (falls JS im Hauptscreen nicht greift)."""
+    html = """
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Verbindungstest</title>
+  <style>
+    body { font-family: system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:#111; color:#eee; margin:0; padding:0; }
+    .container { max-width: 720px; margin: 0 auto; padding: 24px 16px 60px; }
+    h1 { font-size: 1.6rem; margin: 0 0 10px; }
+    .card { background:#1c1c1c; border-radius:12px; padding:16px 18px 18px; margin-bottom:18px; box-shadow:0 0 20px rgba(0,0,0,0.4); border:1px solid #333; }
+    .hint { font-size:0.9rem; opacity:0.8; white-space:pre-wrap; }
+    .btn-row { display:flex; flex-wrap:wrap; gap:10px; margin-top:12px; }
+    .btn { display:inline-block; padding:10px 14px; border-radius:10px; border:1px solid #444; background:#222; color:#eee; text-decoration:none; cursor:pointer; }
+    .btn-primary { background:#2563eb; border-color:#2563eb; }
+    .btn-disabled { opacity:0.5; pointer-events:none; }
+    pre { background:#0b0b0b; padding:12px; border-radius:10px; border:1px solid #333; overflow:auto; white-space:pre-wrap; margin:10px 0 0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Verbindungstest (30 Pakete)</h1>
+
+    <div class="card">
+      <div class="hint" style="margin-top:0;">
+        Dieser Test pingt den <strong>Gateway/Router</strong> (nicht autodarts.io) und zeigt Paketverlust &amp; Latenz.
+        Dauer: ca. 30 Sekunden.
+      </div>
+
+      <div id="st" class="hint" style="margin-top:10px;">Starte…</div>
+
+      <div style="height:10px; background:#0b0b0b; border:1px solid #333; border-radius:999px; overflow:hidden; margin-top:10px;">
+        <div id="bar" style="height:100%; width:0%; background:#3b82f6;"></div>
+      </div>
+
+      <pre id="out">—</pre>
+
+      <div class="btn-row">
+        <a href="{{ url_for('index') }}" class="btn">Zurück</a>
+        <button type="button" id="again" class="btn btn-primary">Erneut starten</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+(function(){
+  const st = document.getElementById('st');
+  const bar = document.getElementById('bar');
+  const out = document.getElementById('out');
+  const again = document.getElementById('again');
+
+  function setProgress(done, total){
+    const pct = total ? Math.max(0, Math.min(100, Math.round((done/total)*100))) : 0;
+    if(bar) bar.style.width = pct + '%';
+  }
+
+  function classify(s, total, recv){
+    const sent = Number(s.count || total || 30);
+    const rec = Number(recv || 0);
+    if(!sent || sent <= 0) return {label:'Unbekannt', loss:null};
+
+    const lost = Math.max(0, sent - rec);
+    const loss = Math.round((lost * 1000) / sent) / 10;
+
+    const minMs = (s.min_ms != null) ? Number(s.min_ms) : null;
+    const maxMs = (s.max_ms != null) ? Number(s.max_ms) : null;
+    const avgMs = (s.avg_ms != null) ? Number(s.avg_ms) : null;
+
+    if(minMs === null || maxMs === null || avgMs === null){
+      if(loss === 0) return {label:'Gute Verbindung', loss};
+      if(loss < 3) return {label:'Könnte funktionieren', loss};
+      return {label:'Nicht mehr spielbar', loss};
+    }
+
+    if(loss === 0 && avgMs <= 30 && maxMs <= 60) return {label:'Super Verbindung', loss};
+    if(loss < 1 && avgMs <= 60 && maxMs <= 120) return {label:'Gute Verbindung', loss};
+    if(loss < 3 && avgMs <= 120 && maxMs <= 300) return {label:'Könnte funktionieren', loss};
+    return {label:'Nicht mehr spielbar', loss};
+  }
+
+  async function run(){
+    if(again){
+      again.classList.add('btn-disabled');
+      again.disabled = true;
+    }
+    if(out) out.textContent = '—';
+    if(st) st.textContent = 'Starte…';
+    setProgress(0, 30);
+
+    try{
+      const r = await fetch('/wifi/ping/start', {method:'POST', cache:'no-store'});
+      const j = await r.json().catch(()=>({ok:false,msg:'Ungültige Antwort'}));
+      if(!j.ok){
+        if(st) st.textContent = j.msg || 'Ping konnte nicht gestartet werden.';
+        if(out) out.textContent = (j.msg || 'Fehler');
+        if(again){ again.classList.remove('btn-disabled'); again.disabled = false; }
+        return;
+      }
+
+      const jobId = j.job_id;
+      const total = 30;
+      let tries = 0;
+
+      const timer = setInterval(async ()=>{
+        tries += 1;
+        try{
+          const rs = await fetch('/wifi/ping/status/' + jobId, {cache:'no-store'});
+          const s = await rs.json().catch(()=>({ok:false,msg:'Ungültige Antwort'}));
+          if(!s.ok){
+            clearInterval(timer);
+            if(st) st.textContent = s.msg || 'Fehler beim Status.';
+            if(out) out.textContent = (s.msg || 'Fehler');
+            if(again){ again.classList.remove('btn-disabled'); again.disabled = false; }
+            return;
+          }
+
+          const prog = Number(s.progress||0);
+          const recv = Number(s.received||0);
+          if(st) st.textContent = `${prog} von ${total} Paketen… (empfangen: ${recv})`;
+          setProgress(prog, total);
+
+          if(s.done){
+            clearInterval(timer);
+
+            const q = classify(s, total, recv);
+            let result = `${recv} von ${Number(s.count || total)} Paketen wurden erfolgreich gesendet.`;
+            if(q.loss != null) result += ` · Paketverlust: ${q.loss}%`;
+            if(s.min_ms!=null && s.max_ms!=null && s.avg_ms!=null){
+              result += ` Schnellstes: ${s.min_ms} ms · Langsamstes: ${s.max_ms} ms · Durchschnitt: ${s.avg_ms} ms`;
+            }
+            if(s.error) result += ` (Hinweis: ${s.error})`;
+
+            const via = (s && s.iface_label) ? (s.iface_label + "\\n") : "";
+            if(out) out.textContent = via + `Verbindungsqualität: ${q.label}\\n` + result;
+            if(st) st.textContent = 'Fertig.';
+            setProgress(total, total);
+
+            if(again){ again.classList.remove('btn-disabled'); again.disabled = false; }
+          }
+        }catch(e){
+          if(tries > 120){
+            clearInterval(timer);
+            if(st) st.textContent = 'Timeout.';
+            if(out) out.textContent = 'Verbindungstest abgebrochen (Timeout).';
+            if(again){ again.classList.remove('btn-disabled'); again.disabled = false; }
+          }
+        }
+      }, 600);
+
+    }catch(e){
+      if(st) st.textContent = 'Fehlgeschlagen.';
+      if(out) out.textContent = 'Verbindungstest fehlgeschlagen.';
+      if(again){ again.classList.remove('btn-disabled'); again.disabled = false; }
+    }
+  }
+
+  if(again){
+    again.addEventListener('click', run);
+  }
+  run();
+})();
+</script>
+</body>
+</html>
+"""
+    return render_template_string(html)
+
+
 @app.route("/ap", methods=["GET", "POST"])
 def ap_config():
     message = ""
