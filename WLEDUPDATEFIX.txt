@@ -1,0 +1,19 @@
+# locks/temps weg
+sudo rm -f \
+  /var/lib/autodarts/extensions/darts-caller/.git/index.lock \
+  /var/lib/autodarts/extensions/darts-caller/.git/FETCH_HEAD \
+  /var/lib/autodarts/extensions/darts-wled/.git/index.lock \
+  /var/lib/autodarts/extensions/darts-wled/.git/FETCH_HEAD
+
+# nur .git reparieren (da muss git schreiben dürfen)
+sudo chown -R root:root \
+  /var/lib/autodarts/extensions/darts-caller/.git \
+  /var/lib/autodarts/extensions/darts-wled/.git
+
+sudo chmod -R u+rwX \
+  /var/lib/autodarts/extensions/darts-caller/.git \
+  /var/lib/autodarts/extensions/darts-wled/.git
+
+# Test als root (muss gehen)
+sudo git -C /var/lib/autodarts/extensions/darts-caller -c safe.directory=/var/lib/autodarts/extensions/darts-caller fetch --all --prune
+sudo git -C /var/lib/autodarts/extensions/darts-wled   -c safe.directory=/var/lib/autodarts/extensions/darts-wled   fetch --all --prune
