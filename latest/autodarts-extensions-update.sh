@@ -20,7 +20,7 @@ FORCE="${FORCE:-0}"
 TARGET="${1:-all}"   # all | caller | wled
 
 # --- Helpers ---
-log() { echo "[$(date +'%F %T')] $*"; }
+log() { echo "[$(date +'%F %T')] $*" >&2; }
 
 mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$RESULT_JSON")"
 exec >>"$LOG_FILE" 2>&1
@@ -34,6 +34,8 @@ fi
 
 CALLER_STATUS="SKIPPED"
 WLED_STATUS="SKIPPED"
+CALLER_VER="unknown"
+WLED_VER="unknown"
 ERRORS=""
 
 write_result() {
@@ -42,7 +44,9 @@ write_result() {
   "ts": "$(date +'%F %T')",
   "target": "$TARGET",
   "caller": "$CALLER_STATUS",
+  "caller_version": "$CALLER_VER",
   "wled": "$WLED_STATUS",
+  "wled_version": "$WLED_VER",
   "backup": "$BK",
   "force": "$FORCE",
   "errors": "$(echo "$ERRORS" | tr '\n' ' ' | sed 's/"/\\"/g')"
@@ -120,38 +124,127 @@ restore_file_if_exists() {
   fi
 }
 
+canon_dir() {
+  local dir="$1"
+  readlink -f "$dir" 2>/dev/null || realpath -m "$dir" 2>/dev/null || echo "$dir"
+}
+
+repo_owner_user() {
+  local dir="$1"
+  local u
+  u="$(stat -c '%U' "$dir" 2>/dev/null || echo "root")"
+  [[ -n "$u" ]] || u="root"
+  echo "$u"
+}
+
+run_as_user() {
+  local user="$1"; shift
+  if [[ "$user" == "root" ]]; then
+    "$@"
+    return
+  fi
+  if command -v runuser >/dev/null 2>&1; then
+    runuser -u "$user" -- "$@"
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo -u "$user" -- "$@"
+  else
+    # Fallback: als root ausführen (nicht ideal, aber besser als abbrechen)
+    "$@"
+  fi
+}
+
+git_in_repo() {
+  # usage: git_in_repo <repo_dir> <git-args...>
+  local dir="$1"; shift
+  local rdir owner
+  rdir="$(canon_dir "$dir")"
+  owner="$(repo_owner_user "$rdir")"
+  run_as_user "$owner" git -C "$rdir" -c safe.directory="$rdir" "$@"
+}
+
+repo_describe() {
+  local dir="$1"
+  local rdir
+  rdir="$(canon_dir "$dir")"
+  if [[ -d "$rdir/.git" ]]; then
+    git_in_repo "$rdir" describe --tags --always --dirty 2>/dev/null \
+      || git_in_repo "$rdir" rev-parse --short HEAD 2>/dev/null \
+      || echo "unknown"
+  else
+    echo "no-git"
+  fi
+}
+
 repo_update_status() {
-  # prints: CHANGED / UNCHANGED / SKIPPED
+  # prints: CHANGED / UNCHANGED / SKIPPED / ERROR
   local dir="$1"
   local label="$2"
 
-  if [[ ! -d "$dir/.git" ]]; then
-    log "$label: Kein Git-Repo: $dir (SKIPPED)"
+  local rdir
+  rdir="$(readlink -f "$dir" 2>/dev/null || realpath -m "$dir" 2>/dev/null || echo "$dir")"
+
+  if [[ ! -d "$rdir/.git" ]]; then
+    log "$label: Kein Git-Repo: $rdir (SKIPPED)"
     echo "SKIPPED"
     return 0
   fi
 
-  git config --global --add safe.directory "$dir" >/dev/null 2>&1 || true
+  # jede Git-Operation bekommt safe.directory direkt mit
+  git_safe() { command git -C "$rdir" -c safe.directory="$rdir" "$@"; }
 
-  log "$label: Update Repo: $dir"
-  pushd "$dir" >/dev/null || { echo "SKIPPED"; return 0; }
+  repo_ver() {
+    git_safe describe --tags --always --dirty 2>/dev/null \
+      || git_safe rev-parse --short HEAD 2>/dev/null \
+      || echo "unknown"
+  }
+
+  fix_git_writeability() {
+    # nur reparieren was typisch Probleme macht (Locks/FETCH_HEAD + .git beschreibbar)
+    rm -f "$rdir/.git/index.lock" "$rdir/.git/FETCH_HEAD" 2>/dev/null || true
+    chmod -R u+rwX "$rdir/.git" 2>/dev/null || true
+    # wenn wirklich root: bring owner sauber auf root (hilft bei gemischten owners)
+    if [[ "$(id -u)" -eq 0 ]]; then
+      chown -R root:root "$rdir/.git" 2>/dev/null || true
+    fi
+  }
 
   local before after upstream
-  before="$(git rev-parse HEAD 2>/dev/null || echo "")"
-  upstream="$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || echo "")"
+  before="$(repo_ver)"
+  log "$label: Update Repo: $rdir (before=$before)"
 
-  git fetch --all --prune || true
-
-  if [[ -n "$upstream" ]]; then
-    git reset --hard "@{u}" || true
-  else
-    git pull --rebase --autostash || true
+  # 1. Versuch
+  if ! git_safe fetch --all --prune; then
+    log "$label: git fetch FAIL -> versuche Repair+Retry (.git/FETCH_HEAD/locks/permissions)"
+    fix_git_writeability
+    if ! git_safe fetch --all --prune; then
+      ERRORS="${ERRORS}\n${label}: git fetch fehlgeschlagen (Permission/readonly/ACL?)"
+      log "$label: ERROR (before=$before, after=$(repo_ver))"
+      echo "ERROR"
+      return 0
+    fi
   fi
 
-  after="$(git rev-parse HEAD 2>/dev/null || echo "")"
-  popd >/dev/null || true
+  upstream="$(git_safe rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
 
-  if [[ -n "$before" && -n "$after" && "$before" != "$after" ]]; then
+  if [[ -n "$upstream" ]]; then
+    if ! git_safe reset --hard "@{u}"; then
+      ERRORS="${ERRORS}\n${label}: git reset --hard @{u} fehlgeschlagen"
+      log "$label: ERROR (before=$before, after=$(repo_ver))"
+      echo "ERROR"
+      return 0
+    fi
+  else
+    if ! git_safe pull --rebase --autostash; then
+      ERRORS="${ERRORS}\n${label}: git pull --rebase fehlgeschlagen"
+      log "$label: ERROR (before=$before, after=$(repo_ver))"
+      echo "ERROR"
+      return 0
+    fi
+  fi
+
+  after="$(repo_ver)"
+
+  if [[ "$before" != "$after" ]]; then
     log "$label: CHANGED ($before -> $after)"
     echo "CHANGED"
   else
@@ -255,6 +348,10 @@ if [[ "$DO_WLED" == "1" ]]; then
   WLED_STATUS="$(repo_update_status "$WLED_DIR" "WLED")"
 fi
 
+# Versions/Tags ins Log (nach dem Update!)
+CALLER_VER="$(repo_describe "$CALLER_DIR")"
+WLED_VER="$(repo_describe "$WLED_DIR")"
+
 # Restore start-custom
 if [[ "$DO_CALLER" == "1" ]]; then
   restore_file_if_exists "${BK}/darts-caller/start-custom.sh" "$CALLER_START"
@@ -273,9 +370,9 @@ if [[ "$DO_WLED" == "1" ]]; then
   venv_refresh_install_if_needed "$WLED_DIR" "WLED" "$WLED_STATUS" || true
 fi
 
-# Services restart nur wenn vorher aktiv UND relevant geändert (oder FORCE)
+# Services restart nur wenn vorher aktiv UND relevant geändert (oder FORCE oder ERROR)
 if [[ "$DO_CALLER" == "1" && "$CALLER_WAS_ACTIVE" == "1" ]]; then
-  if [[ "$FORCE" == "1" || "$CALLER_STATUS" == "CHANGED" ]]; then
+  if [[ "$FORCE" == "1" || "$CALLER_STATUS" == "CHANGED" || "$CALLER_STATUS" == "ERROR" ]]; then
     restart_if_exists darts-caller.service
   else
     log "CALLER: war aktiv, aber UNCHANGED -> kein Restart."
@@ -283,7 +380,7 @@ if [[ "$DO_CALLER" == "1" && "$CALLER_WAS_ACTIVE" == "1" ]]; then
 fi
 
 if [[ "$DO_WLED" == "1" && "$WLED_WAS_ACTIVE" == "1" ]]; then
-  if [[ "$FORCE" == "1" || "$WLED_STATUS" == "CHANGED" ]]; then
+  if [[ "$FORCE" == "1" || "$WLED_STATUS" == "CHANGED" || "$WLED_STATUS" == "ERROR" ]]; then
     restart_if_exists darts-wled.service
   else
     log "WLED: war aktiv, aber UNCHANGED -> kein Restart."
@@ -293,8 +390,8 @@ fi
 systemctl daemon-reload || true
 
 log "===== SUMMARY ====="
-log "CALLER: $CALLER_STATUS"
-log "WLED:   $WLED_STATUS"
+log "CALLER: $CALLER_STATUS (version: $CALLER_VER)"
+log "WLED:   $WLED_STATUS (version: $WLED_VER)"
 if [[ -n "$ERRORS" ]]; then
   log "WARN/ERRORS: $ERRORS"
 fi
