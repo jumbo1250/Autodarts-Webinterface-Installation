@@ -131,7 +131,7 @@ WEBPANEL_VERSION_FILE = os.environ.get("WEBPANEL_VERSION_FILE", "/var/lib/autoda
 
 # Wenn du die Version lieber direkt im Script pflegen willst: hier eintragen.
 # Leer lassen ("") um wieder die Version aus WEBPANEL_VERSION_FILE / version.txt zu lesen.
-WEBPANEL_HARDCODED_VERSION = "1.37"
+WEBPANEL_HARDCODED_VERSION = "1.36"
 
 
 # Remote (GitHub Raw) – kann per ENV überschrieben werden
@@ -4967,101 +4967,6 @@ def camera_mode_end():
     return redirect(url_for("index", ad_restarted=1))
 
 
-
-def _nmcli_terse_split(line: str) -> list[str]:
-    """
-    Split nmcli -t output line by unescaped ':'.
-    nmcli escapes ':' as '\:' and '\' as '\\'.
-    """
-    parts = []
-    cur = []
-    esc = False
-    for ch in line:
-        if esc:
-            cur.append(ch)
-            esc = False
-            continue
-        if ch == '\\':
-            esc = True
-            continue
-        if ch == ':':
-            parts.append(''.join(cur))
-            cur = []
-        else:
-            cur.append(ch)
-    parts.append(''.join(cur))
-    return parts
-
-
-def _nmcli_unescape(val: str) -> str:
-    return val.replace(r'\:', ':').replace(r'\\', '\\')
-
-
-@app.get("/api/wifi/scan")
-def api_wifi_scan():
-    """
-    Scan available WiFi networks via nmcli and return a clean list for a dropdown.
-    Does NOT change connection logic – only discovery.
-    """
-    try:
-        # --rescan yes can take longer; we keep it fast and let the user refresh if needed
-        r = subprocess.run(
-            ["nmcli", "-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY", "dev", "wifi", "list"],
-            capture_output=True,
-            text=True,
-            timeout=8,
-        )
-    except subprocess.TimeoutExpired:
-        return jsonify(ok=False, msg="WLAN-Scan dauert zu lange (Timeout). Bitte erneut versuchen."), 504
-    except Exception as e:
-        return jsonify(ok=False, msg=f"WLAN-Scan fehlgeschlagen: {e}"), 500
-
-    if r.returncode != 0:
-        return jsonify(ok=False, msg="nmcli Fehler: " + interpret_nmcli_error(r.stdout, r.stderr)), 500
-
-    # Merge duplicate SSIDs: keep best signal, combine security labels
-    merged: dict[str, dict] = {}
-
-    for raw in r.stdout.splitlines():
-        raw = raw.strip()
-        if not raw:
-            continue
-        parts = _nmcli_terse_split(raw)
-        # Expected: IN-USE,SSID,SIGNAL,SECURITY (some may be missing)
-        while len(parts) < 4:
-            parts.append("")
-        in_use, ssid, signal, sec = parts[0], parts[1], parts[2], parts[3]
-        ssid = _nmcli_unescape((ssid or "").strip())
-        if not ssid:
-            # hidden SSID: can't be selected reliably -> user can use manual entry
-            continue
-        try:
-            sig_i = int((signal or "0").strip() or 0)
-        except Exception:
-            sig_i = 0
-        sec = _nmcli_unescape((sec or "").strip())
-        key = ssid
-
-        item = merged.get(key)
-        if item is None:
-            merged[key] = {
-                "ssid": ssid,
-                "signal": sig_i,
-                "security": sec,
-                "in_use": (in_use.strip() == "*"),
-            }
-        else:
-            # keep best signal; mark in_use if any entry is in use
-            item["signal"] = max(int(item.get("signal") or 0), sig_i)
-            item["in_use"] = bool(item.get("in_use")) or (in_use.strip() == "*")
-            # combine security labels
-            if sec and sec not in (item.get("security") or ""):
-                item["security"] = (item.get("security") + ("/" if item.get("security") else "") + sec)
-
-    networks = sorted(merged.values(), key=lambda x: (x.get("in_use") is True, int(x.get("signal") or 0)), reverse=True)
-    return jsonify(ok=True, networks=networks)
-
-
 @app.route("/wifi", methods=["GET", "POST"])
 def wifi():
     message = ""
@@ -5225,11 +5130,6 @@ def wifi():
 
   
     .msg-info { color:#9ad1ff; margin-bottom:8px; white-space:pre-line; }
-
-    .row { display:flex; gap:10px; align-items:center; }
-    .row.small { font-size: 0.95em; margin-top: 6px; }
-    #ssidPick { flex: 1; min-width: 220px; }
-    .hint-small { font-size: 0.9em; opacity: 0.85; }
 </style>
 </head>
 <body>
@@ -5246,14 +5146,7 @@ def wifi():
         <p id=\"workmsg\" class=\"msg-info\" style=\"display:none;\">Verbindung wird hergestellt … bitte warten (kann 10–30 Sekunden dauern).</p>
 
       <form method=\"post\" id=\"wifiForm\">
-        <label for="ssidPick">WLAN auswählen</label>
-        <div class="row">
-          <select id="ssidPick" aria-label="WLAN auswählen"></select>
-          <button type="button" class="btn" id="wifiRefresh">Refresh</button>
-        </div>
-        <label class="row small"><input type="checkbox" id="ssidManual"> SSID manuell eingeben (Hidden/unsichtbar)</label>
-
-        <label for="ssid" id="ssidLabel">WLAN Name (SSID)</label>
+        <label for="ssid">WLAN Name (SSID)</label>
         <input type="text" id="ssid" name="ssid" required>
 
         <label for="password">WLAN Passwort</label>
@@ -5288,99 +5181,6 @@ def wifi():
     });
   })();
   </script>
-
-<script>
-(function(){
-  const pick = document.getElementById('ssidPick');
-  const ssidInput = document.getElementById('ssid');
-  const manual = document.getElementById('ssidManual');
-  const refreshBtn = document.getElementById('wifiRefresh');
-  const ssidLabel = document.getElementById('ssidLabel');
-
-  function setManualMode(on){
-    if(on){
-      if(pick) pick.style.display = 'none';
-      if(refreshBtn) refreshBtn.style.display = 'none';
-      if(ssidLabel) ssidLabel.style.display = '';
-      if(ssidInput){ ssidInput.style.display = ''; ssidInput.readOnly = false; ssidInput.focus(); }
-    }else{
-      if(pick) pick.style.display = '';
-      if(refreshBtn) refreshBtn.style.display = '';
-      if(ssidLabel) ssidLabel.style.display = 'none';
-      if(ssidInput){ ssidInput.style.display = 'none'; ssidInput.readOnly = true; }
-    }
-  }
-
-  async function loadWifi(){
-    if(!pick) return;
-    pick.innerHTML = '<option>Suche WLANs…</option>';
-    try{
-      const r = await fetch('/api/wifi/scan', {cache:'no-store'});
-      const j = await r.json();
-      if(!j.ok){ throw new Error(j.msg || 'Scan fehlgeschlagen'); }
-
-      pick.innerHTML = '';
-      const nets = j.networks || [];
-      if(nets.length === 0){
-        pick.innerHTML = '<option value="">(Keine SSIDs gefunden – ggf. Refresh oder manuell)</option>';
-        setManualMode(true);
-        if(manual) manual.checked = true;
-        return;
-      }
-
-      // Placeholder
-      const ph = document.createElement('option');
-      ph.value = '';
-      ph.textContent = '(WLAN auswählen…)';
-      pick.appendChild(ph);
-
-      for(const n of nets){
-        const opt = document.createElement('option');
-        opt.value = n.ssid;
-        const sec = n.security ? n.security : 'open';
-        const star = n.in_use ? '★ ' : '';
-        opt.textContent = `${star}${n.ssid} (${n.signal}%, ${sec})`;
-        if(n.in_use) opt.selected = true;
-        pick.appendChild(opt);
-      }
-
-      // If something selected, sync into the real input
-      if(pick.value){
-        ssidInput.value = pick.value;
-      }else{
-        // If a ★ network exists, it will already be selected; ensure sync
-        const sel = pick.querySelector('option[selected]');
-        if(sel && sel.value){ pick.value = sel.value; ssidInput.value = sel.value; }
-      }
-
-      setManualMode(false);
-      if(manual) manual.checked = false;
-    }catch(e){
-      // On any error: fall back to manual entry
-      setManualMode(true);
-      if(manual) manual.checked = true;
-      if(pick) pick.innerHTML = '<option value="">(Scan fehlgeschlagen – manuell eingeben)</option>';
-      console.log(e);
-    }
-  }
-
-  if(manual){
-    manual.addEventListener('change', ()=> setManualMode(manual.checked));
-  }
-  if(pick){
-    pick.addEventListener('change', ()=>{
-      ssidInput.value = pick.value || '';
-      // if placeholder chosen, keep empty so required triggers on submit
-    });
-  }
-  if(refreshBtn){
-    refreshBtn.addEventListener('click', loadWifi);
-  }
-
-  // Start
-  loadWifi();
-})();
-</script>
 </body>
 </html>
 """
