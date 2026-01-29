@@ -20,7 +20,7 @@ FORCE="${FORCE:-0}"
 TARGET="${1:-all}"   # all | caller | wled
 
 # --- Helpers ---
-log() { echo "[$(date +'%F %T')] $*" >&2; }
+log() { echo "[$(date +'%F %T')] $*" ; }
 
 mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$RESULT_JSON")"
 exec >>"$LOG_FILE" 2>&1
@@ -34,8 +34,8 @@ fi
 
 CALLER_STATUS="SKIPPED"
 WLED_STATUS="SKIPPED"
-CALLER_VER="unknown"
-WLED_VER="unknown"
+CALLER_VERSION="unknown"
+WLED_VERSION="unknown"
 ERRORS=""
 
 write_result() {
@@ -44,9 +44,9 @@ write_result() {
   "ts": "$(date +'%F %T')",
   "target": "$TARGET",
   "caller": "$CALLER_STATUS",
-  "caller_version": "$CALLER_VER",
+  "caller_version": "$CALLER_VERSION",
   "wled": "$WLED_STATUS",
-  "wled_version": "$WLED_VER",
+  "wled_version": "$WLED_VERSION",
   "backup": "$BK",
   "force": "$FORCE",
   "errors": "$(echo "$ERRORS" | tr '\n' ' ' | sed 's/"/\\"/g')"
@@ -124,57 +124,6 @@ restore_file_if_exists() {
   fi
 }
 
-canon_dir() {
-  local dir="$1"
-  readlink -f "$dir" 2>/dev/null || realpath -m "$dir" 2>/dev/null || echo "$dir"
-}
-
-repo_owner_user() {
-  local dir="$1"
-  local u
-  u="$(stat -c '%U' "$dir" 2>/dev/null || echo "root")"
-  [[ -n "$u" ]] || u="root"
-  echo "$u"
-}
-
-run_as_user() {
-  local user="$1"; shift
-  if [[ "$user" == "root" ]]; then
-    "$@"
-    return
-  fi
-  if command -v runuser >/dev/null 2>&1; then
-    runuser -u "$user" -- "$@"
-  elif command -v sudo >/dev/null 2>&1; then
-    sudo -u "$user" -- "$@"
-  else
-    # Fallback: als root ausführen (nicht ideal, aber besser als abbrechen)
-    "$@"
-  fi
-}
-
-git_in_repo() {
-  # usage: git_in_repo <repo_dir> <git-args...>
-  local dir="$1"; shift
-  local rdir owner
-  rdir="$(canon_dir "$dir")"
-  owner="$(repo_owner_user "$rdir")"
-  run_as_user "$owner" git -C "$rdir" -c safe.directory="$rdir" "$@"
-}
-
-repo_describe() {
-  local dir="$1"
-  local rdir
-  rdir="$(canon_dir "$dir")"
-  if [[ -d "$rdir/.git" ]]; then
-    git_in_repo "$rdir" describe --tags --always --dirty 2>/dev/null \
-      || git_in_repo "$rdir" rev-parse --short HEAD 2>/dev/null \
-      || echo "unknown"
-  else
-    echo "no-git"
-  fi
-}
-
 repo_update_status() {
   # prints: CHANGED / UNCHANGED / SKIPPED / ERROR
   local dir="$1"
@@ -189,7 +138,6 @@ repo_update_status() {
     return 0
   fi
 
-  # jede Git-Operation bekommt safe.directory direkt mit
   git_safe() { command git -C "$rdir" -c safe.directory="$rdir" "$@"; }
 
   repo_ver() {
@@ -199,10 +147,8 @@ repo_update_status() {
   }
 
   fix_git_writeability() {
-    # nur reparieren was typisch Probleme macht (Locks/FETCH_HEAD + .git beschreibbar)
     rm -f "$rdir/.git/index.lock" "$rdir/.git/FETCH_HEAD" 2>/dev/null || true
     chmod -R u+rwX "$rdir/.git" 2>/dev/null || true
-    # wenn wirklich root: bring owner sauber auf root (hilft bei gemischten owners)
     if [[ "$(id -u)" -eq 0 ]]; then
       chown -R root:root "$rdir/.git" 2>/dev/null || true
     fi
@@ -212,13 +158,13 @@ repo_update_status() {
   before="$(repo_ver)"
   log "$label: Update Repo: $rdir (before=$before)"
 
-  # 1. Versuch
   if ! git_safe fetch --all --prune; then
-    log "$label: git fetch FAIL -> versuche Repair+Retry (.git/FETCH_HEAD/locks/permissions)"
+    log "$label: git fetch FAIL -> Repair+Retry (.git/FETCH_HEAD/locks/permissions)"
     fix_git_writeability
     if ! git_safe fetch --all --prune; then
       ERRORS="${ERRORS}\n${label}: git fetch fehlgeschlagen (Permission/readonly/ACL?)"
-      log "$label: ERROR (before=$before, after=$(repo_ver))"
+      after="$(repo_ver)"
+      log "$label: ERROR (before=$before, after=$after)"
       echo "ERROR"
       return 0
     fi
@@ -229,27 +175,47 @@ repo_update_status() {
   if [[ -n "$upstream" ]]; then
     if ! git_safe reset --hard "@{u}"; then
       ERRORS="${ERRORS}\n${label}: git reset --hard @{u} fehlgeschlagen"
-      log "$label: ERROR (before=$before, after=$(repo_ver))"
+      after="$(repo_ver)"
+      log "$label: ERROR (before=$before, after=$after)"
       echo "ERROR"
       return 0
     fi
   else
     if ! git_safe pull --rebase --autostash; then
       ERRORS="${ERRORS}\n${label}: git pull --rebase fehlgeschlagen"
-      log "$label: ERROR (before=$before, after=$(repo_ver))"
+      after="$(repo_ver)"
+      log "$label: ERROR (before=$before, after=$after)"
       echo "ERROR"
       return 0
     fi
   fi
 
   after="$(repo_ver)"
-
   if [[ "$before" != "$after" ]]; then
     log "$label: CHANGED ($before -> $after)"
     echo "CHANGED"
   else
     log "$label: UNCHANGED ($after)"
     echo "UNCHANGED"
+  fi
+}
+
+maybe_relax_pygame_pin() {
+  # $1 = requirements_in, $2 = requirements_out
+  local req_in="$1"
+  local req_out="$2"
+
+  cp -f "$req_in" "$req_out"
+
+  # Nur wenn pygame hart gepinnt ist, fürs Install "entschärfen"
+  if grep -qE '^pygame==[0-9.]+' "$req_out"; then
+    if python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3,13) else 1)'; then
+      # Python 3.13+: mindestens pygame 2.6.1 (Wheel verfügbar, vermeidet SDL2 Build-Drama)
+      sed -i -E 's/^pygame==[0-9.]+$/pygame>=2.6.1/' "$req_out"
+    else
+      # ältere Pythons: einfach pin entfernen
+      sed -i -E 's/^pygame==[0-9.]+$/pygame/' "$req_out"
+    fi
   fi
 }
 
@@ -271,6 +237,11 @@ venv_refresh_install_if_needed() {
   log "$label: Python venv/requirements: $dir"
   pushd "$dir" >/dev/null || return 1
 
+  # Locale/Encoding robust machen (gegen UnicodeEncodeError etc.)
+  export LANG=C.UTF-8
+  export LC_ALL=C.UTF-8
+  export PYTHONUTF8=1
+  export PYTHONIOENCODING=utf-8
   export PIP_DISABLE_PIP_VERSION_CHECK=1
   export PIP_NO_INPUT=1
 
@@ -288,12 +259,16 @@ venv_refresh_install_if_needed() {
   python3 -m pip install -U pip setuptools wheel || true
 
   if [[ -f "$requirements" ]]; then
-    if python3 -m pip install -r "$requirements" --upgrade; then
+    local tmp_req="/tmp/${label,,}-requirements-${TS}.txt"
+    maybe_relax_pygame_pin "$requirements" "$tmp_req"
+
+    if python3 -m pip install -r "$tmp_req" --upgrade; then
       log "$label: requirements OK"
     else
       log "$label: requirements FAIL -> Retry ohne pyinstaller/pyinstaller-hooks-contrib"
-      grep -v -E '^pyinstaller(==|$)|^pyinstaller-hooks-contrib(==|$)' "$requirements" > /tmp/req-no-pyinstaller.txt
-      if ! python3 -m pip install -r /tmp/req-no-pyinstaller.txt --upgrade; then
+      local tmp2="/tmp/${label,,}-req-no-pyinstaller-${TS}.txt"
+      grep -v -E '^pyinstaller(==|$)|^pyinstaller-hooks-contrib(==|$)' "$tmp_req" > "$tmp2"
+      if ! python3 -m pip install -r "$tmp2" --upgrade; then
         ERRORS="${ERRORS}\n${label}: pip install requirements fehlgeschlagen"
       fi
     fi
@@ -343,14 +318,12 @@ fi
 # Repos updaten
 if [[ "$DO_CALLER" == "1" ]]; then
   CALLER_STATUS="$(repo_update_status "$CALLER_DIR" "CALLER")"
+  CALLER_VERSION="$(git -C "$CALLER_DIR" describe --tags --always --dirty 2>/dev/null || echo "unknown")"
 fi
 if [[ "$DO_WLED" == "1" ]]; then
   WLED_STATUS="$(repo_update_status "$WLED_DIR" "WLED")"
+  WLED_VERSION="$(git -C "$WLED_DIR" describe --tags --always --dirty 2>/dev/null || echo "unknown")"
 fi
-
-# Versions/Tags ins Log (nach dem Update!)
-CALLER_VER="$(repo_describe "$CALLER_DIR")"
-WLED_VER="$(repo_describe "$WLED_DIR")"
 
 # Restore start-custom
 if [[ "$DO_CALLER" == "1" ]]; then
@@ -370,9 +343,9 @@ if [[ "$DO_WLED" == "1" ]]; then
   venv_refresh_install_if_needed "$WLED_DIR" "WLED" "$WLED_STATUS" || true
 fi
 
-# Services restart nur wenn vorher aktiv UND relevant geändert (oder FORCE oder ERROR)
+# Services restart nur wenn vorher aktiv UND relevant geändert (oder FORCE)
 if [[ "$DO_CALLER" == "1" && "$CALLER_WAS_ACTIVE" == "1" ]]; then
-  if [[ "$FORCE" == "1" || "$CALLER_STATUS" == "CHANGED" || "$CALLER_STATUS" == "ERROR" ]]; then
+  if [[ "$FORCE" == "1" || "$CALLER_STATUS" == "CHANGED" ]]; then
     restart_if_exists darts-caller.service
   else
     log "CALLER: war aktiv, aber UNCHANGED -> kein Restart."
@@ -380,7 +353,7 @@ if [[ "$DO_CALLER" == "1" && "$CALLER_WAS_ACTIVE" == "1" ]]; then
 fi
 
 if [[ "$DO_WLED" == "1" && "$WLED_WAS_ACTIVE" == "1" ]]; then
-  if [[ "$FORCE" == "1" || "$WLED_STATUS" == "CHANGED" || "$WLED_STATUS" == "ERROR" ]]; then
+  if [[ "$FORCE" == "1" || "$WLED_STATUS" == "CHANGED" ]]; then
     restart_if_exists darts-wled.service
   else
     log "WLED: war aktiv, aber UNCHANGED -> kein Restart."
@@ -390,8 +363,8 @@ fi
 systemctl daemon-reload || true
 
 log "===== SUMMARY ====="
-log "CALLER: $CALLER_STATUS (version: $CALLER_VER)"
-log "WLED:   $WLED_STATUS (version: $WLED_VER)"
+log "CALLER: $CALLER_STATUS (version: $CALLER_VERSION)"
+log "WLED:   $WLED_STATUS (version: $WLED_VERSION)"
 if [[ -n "$ERRORS" ]]; then
   log "WARN/ERRORS: $ERRORS"
 fi
