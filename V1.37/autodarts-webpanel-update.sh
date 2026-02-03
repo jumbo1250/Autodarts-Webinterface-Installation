@@ -14,7 +14,6 @@ WEB_SERVICE="autodarts-web.service"
 mkdir -p "${DATA_DIR}" "${STATE_DIR}"
 
 LOCAL_VER_FILE="${STATE_DIR}/webpanel-version.txt"
-FORCE="${FORCE:-0}"  # FORCE=1 -> alles neu laden, egal ob schon aktuell
 
 ts() { date +"[%Y-%m-%d %H:%M:%S]"; }
 log(){ echo "$(ts) $*" | tee -a "${LOG_FILE}" >/dev/null; }
@@ -28,7 +27,7 @@ fi
 
 log "===== Webpanel Update START ====="
 
-REMOTE_VER="$(curl -sSL "${BASE_URL}/version.txt" 2>/dev/null | tr -d '\r\n' || true)"
+REMOTE_VER="$(curl -fsSL "${BASE_URL}/version.txt" | tr -d '\r\n' || true)"
 LOCAL_VER="$(cat "${LOCAL_VER_FILE}" 2>/dev/null | tr -d '\r\n' || true)"
 log "Local:  ${LOCAL_VER:-unknown}"
 log "Remote: ${REMOTE_VER:-unknown}"
@@ -38,7 +37,7 @@ cleanup(){ rm -rf "${TMP_DIR}"; }
 trap cleanup EXIT
 
 # Dateien die aktualisiert werden sollen: "RemoteName|LocalPath"
-# WICHTIG: Fehlt eine Datei im Repo -> wird geskippt (kein Abbruch).
+# Hinweis: Self-Update ist OPTIONAL. Falls die Datei im Repo nicht existiert -> wird übersprungen.
 FILES=(
   "autodarts-web.py|${BIN_DIR}/autodarts-web.py"
   "autodarts-button-led.py|${BIN_DIR}/autodarts-button-led.py"
@@ -48,11 +47,11 @@ FILES=(
   "Autodarts_Installationshandbuch_v2.docx|${DATA_DIR}/Autodarts_Installationshandbuch_v2.docx"
   "start-custom.sh|/var/lib/autodarts/config/darts-wled/start-custom.sh"
   "version.txt|${LOCAL_VER_FILE}"
-  # OPTIONAL: Updater selbst (wenn nicht vorhanden -> skip)
+  # OPTIONAL: Updater selbst (muss im GitHub/latest liegen, sonst skip)
   "autodarts-webpanel-update.sh|${BIN_DIR}/autodarts-webpanel-update.sh"
 )
 
-# Merken, was erfolgreich geladen wurde (damit wir nur das ersetzen)
+# Merken, was erfolgreich geladen wurde (für optionale Dateien)
 declare -A DOWNLOADED=()
 
 normalize_text_file() {
@@ -70,68 +69,40 @@ is_text_ext() {
   esac
 }
 
-# 1) Download-Phase (aber: fehlende Dateien -> SKIP, unveränderte -> SKIP)
+# 1) Alles erst downloaden (wenn ein Download failt -> nix wird ersetzt)
 for entry in "${FILES[@]}"; do
   IFS="|" read -r src dst <<< "${entry}"
   url="${BASE_URL}/${src}"
   out="${TMP_DIR}/${src}"
 
-  rm -f "${out}" 2>/dev/null || true
+  log "Download: ${url}"
 
-  # Conditional Download: wenn lokal vorhanden und FORCE!=1 -> nur holen, wenn remote neuer ist
-  if [[ "${FORCE}" != "1" && -f "${dst}" ]]; then
-    log "Check/Download (nur wenn neuer): ${src}"
-    http_code="$(curl -sSL --retry 2 --connect-timeout 5 --max-time 30 \
-      -z "${dst}" -o "${out}" -w "%{http_code}" "${url}" || true)"
-  else
-    log "Download: ${src}"
-    http_code="$(curl -sSL --retry 2 --connect-timeout 5 --max-time 30 \
-      -o "${out}" -w "%{http_code}" "${url}" || true)"
+  if ! curl -fsSL --retry 2 --connect-timeout 5 --max-time 30 "${url}" -o "${out}"; then
+    # Self-update darf fehlen
+    if [[ "${src}" == "autodarts-webpanel-update.sh" || "${src}" == "autodarts-extensions-update.sh" ]]; then
+      log "INFO: Self-Update übersprungen (Datei nicht gefunden oder Download-Fehler): ${src}"
+      continue
+    fi
+    log "ERROR: Download fehlgeschlagen: ${src}"
+    exit 1
   fi
 
-  case "${http_code}" in
-    200)
-      # nicht leer (falls GitHub mal Mist liefert)
-      if [[ ! -s "${out}" ]]; then
-        log "WARN: ${src} wurde leer geladen -> skip"
-        rm -f "${out}" || true
-        continue
-      fi
+  # nicht leer
+  test -s "${out}"
 
-      # Textdateien normalisieren (CRLF/BOM)
-      if is_text_ext "${src}"; then
-        normalize_text_file "${out}"
-      fi
+  # Textdateien normalisieren (CRLF/BOM)
+  if is_text_ext "${src}"; then
+    normalize_text_file "${out}"
+  fi
 
-      DOWNLOADED["${src}"]=1
-      log "OK: ${src} geladen"
-      ;;
-    304)
-      log "UNCHANGED: ${src} (skip)"
-      rm -f "${out}" || true
-      ;;
-    404)
-      log "MISSING: ${src} nicht im Repo -> skip"
-      rm -f "${out}" || true
-      ;;
-    000|"")
-      log "WARN: ${src} Download-Problem (network/timeout?) -> skip"
-      rm -f "${out}" || true
-      ;;
-    *)
-      log "WARN: ${src} HTTP=${http_code} -> skip"
-      rm -f "${out}" || true
-      ;;
-  esac
+  DOWNLOADED["${src}"]=1
 done
 
-# 2) Ersetzen (mit Backup) + ALLES 777 (wie bisher)
-UPDATED_START_CUSTOM=0
-
+# 2) Erst jetzt ersetzen (mit Backup) + ALLES 777 (wie bisher)
 for entry in "${FILES[@]}"; do
   IFS="|" read -r src dst <<< "${entry}"
 
-  # nur ersetzen, wenn geladen
+  # falls optional nicht geladen -> überspringen
   if [[ -z "${DOWNLOADED[${src}]+x}" ]]; then
     continue
   fi
@@ -142,15 +113,14 @@ for entry in "${FILES[@]}"; do
     cp -a "${dst}" "${dst}.bak.$(date +%Y%m%d_%H%M%S)" || true
   fi
 
+  # Copy (mode setzen wir danach auf 777)
   install -m 644 "${TMP_DIR}/${src}" "${dst}"
-  chmod 777 "${dst}" || true
 
-  if [[ "${src}" == "start-custom.sh" ]]; then
-    UPDATED_START_CUSTOM=1
-  fi
+  # ALLES offen (dein Wunsch)
+  chmod 777 "${dst}" || true
 done
 
-# Optional: auch die Ordner offen lassen (wenn du willst, sonst rauslöschen)
+# Optional: auch die Ordner (falls du willst, sonst rauslöschen)
 chmod 777 "${BIN_DIR}" "${DATA_DIR}" "${STATE_DIR}" 2>/dev/null || true
 
 log "Restart ${WEB_SERVICE}"
@@ -159,12 +129,10 @@ systemctl restart "${WEB_SERVICE}" || {
   exit 1
 }
 
-# darts-wled nur neu starten, wenn start-custom.sh wirklich aktualisiert wurde
-if [[ "${UPDATED_START_CUSTOM}" == "1" ]]; then
-  if systemctl list-unit-files | grep -q "^darts-wled.service"; then
-    log "Restart darts-wled.service (start-custom.sh updated)"
-    systemctl restart darts-wled.service || true
-  fi
+# Wenn wir start-custom.sh updated haben, darts-wled neu starten (nur wenn service existiert)
+if systemctl list-unit-files | grep -q "^darts-wled.service"; then
+  log "Restart darts-wled.service (weil start-custom.sh updated)"
+  systemctl restart darts-wled.service || true
 fi
 
 log "===== Webpanel Update OK ====="

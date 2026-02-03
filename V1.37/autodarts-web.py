@@ -5,7 +5,6 @@ import re
 import socket
 import subprocess
 import shutil
-import shlex
 import multiprocessing
 from concurrent.futures import ThreadPoolExecutor
 import urllib.request
@@ -27,8 +26,7 @@ from flask import (
     jsonify,
     session,
     flash,
-    Response,
-    stream_with_context,)
+)
 
 
 app = Flask(__name__)
@@ -43,23 +41,6 @@ DATA_DIR = Path(AUTODARTS_DATA_DIR).resolve()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 HELP_PDF_FILENAME = "Autodarts_install_manual.pdf"
 CAM_CONFIG_PATH = "/var/lib/autodarts/cam-config.json"
-
-# ---- Live-Journal (Admin) ----
-# Streams a limited set of systemd units to the browser (admin-only).
-# We redact obvious secrets (password/token) before sending.
-ALLOWED_JOURNAL_UNITS = {"darts-caller.service", "darts-wled.service"}
-
-def redact_journal_line(line: str) -> str:
-    if not line:
-        return line
-    # Hide CLI secrets we commonly pass to darts-caller (e.g. -P password, -U email)
-    line = re.sub(r"(?i)(\s-[Pp]\s+)(\S+)", r"\1***", line)
-    line = re.sub(r"(?i)(\s-[Uu]\s+)(\S+)", r"\1***", line)
-    # Generic patterns
-    line = re.sub(r"(?i)(\bpassword\b\s*[:=]\s*)(\S+)", r"\1***", line)
-    line = re.sub(r"(?i)(\btoken\b\s*[:=]\s*)(\S+)", r"\1***", line)
-    return line
-
 
 MAX_CAMERAS = 4
 MAX_VIDEO_INDEX = 50
@@ -105,111 +86,6 @@ AUTODARTS_UPDATE_LOG = "/var/log/autodarts_update.log"
 AUTODARTS_UPDATE_STATE = "/var/lib/autodarts/autodarts-update-state.json"
 AUTODARTS_UPDATE_CHECK = "/var/lib/autodarts/autodarts-update-check.json"
 AUTOUPDATE_SERVICE = "autodartsupdater.service"
-
-# --- Autodarts Versionen (EINFACH pflegen) ---
-# Du änderst nur diese EINE Liste (Reihenfolge = Dropdown):
-#   "aktuell"  -> installiert immer die neueste Version (wie "latest")
-#   "zuletzt"  -> Rollback auf die zuletzt installierte Version (merkt sich das Panel automatisch)
-#   "1.0.4"    -> fixe Version (SemVer)
-#
-# Beispiel (so wie du es beschrieben hast):
-#   ["aktuell", "zuletzt", "1.0.4"]
-# Wenn später 1.0.6 stabil ist:
-#   ["aktuell", "zuletzt", "1.0.6", "1.0.4"]
-AUTODARTS_VERSION_MENU = ["aktuell", "zuletzt", "1.0.4", "1.0.5"]
-
-# Datei, in die das Panel automatisch die "zuletzt"-Version schreibt (musst du NICHT anfassen)
-AUTODARTS_LAST_VERSION_FILE = "/var/lib/autodarts/autodarts-last-version.json"
-
-_AUTODARTS_LATEST_CACHE = {"ts": 0.0, "ver": None}
-_SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+(?:-(?:beta|alpha)\.\d+)?$")
-
-def _menu_token(raw: str) -> str:
-    s = (raw or "").strip()
-    low = s.lower()
-    if low in {"aktuell", "aktuellste", "neueste", "neuste", "latest"}:
-        return "__LATEST__"
-    if low in {"zuletzt", "rollback", "vorige", "previous", "last"}:
-        return "__LAST__"
-    return s.lstrip("v").strip()
-
-def autodarts_stable_from_menu() -> str | None:
-    """Erste feste SemVer in AUTODARTS_VERSION_MENU gilt als 'stabil'."""
-    for x in AUTODARTS_VERSION_MENU:
-        tok = _menu_token(str(x))
-        if _SEMVER_RE.match(tok):
-            return tok
-    return None
-
-def autodarts_last_version() -> str | None:
-    try:
-        p = Path(AUTODARTS_LAST_VERSION_FILE)
-        if not p.exists():
-            return None
-        data = json.loads(p.read_text(encoding="utf-8", errors="ignore") or "{}")
-        v = str(data.get("last") or "").strip().lstrip("v")
-        return v if _SEMVER_RE.match(v) else None
-    except Exception:
-        return None
-
-def autodarts_set_last_version(v: str) -> None:
-    try:
-        v = (v or "").strip().lstrip("v")
-        if not _SEMVER_RE.match(v):
-            return
-        Path(AUTODARTS_LAST_VERSION_FILE).parent.mkdir(parents=True, exist_ok=True)
-        Path(AUTODARTS_LAST_VERSION_FILE).write_text(json.dumps({"last": v}, ensure_ascii=False), encoding="utf-8")
-    except Exception:
-        pass
-
-def autodarts_latest_cached(ttl_s: float = 60.0) -> str | None:
-    """Online 'aktuellste' Version (kurz gecached)."""
-    try:
-        now = time.time()
-        ts = float(_AUTODARTS_LATEST_CACHE.get("ts") or 0.0)
-        if now - ts < ttl_s:
-            return _AUTODARTS_LATEST_CACHE.get("ver")
-        ver = fetch_latest_autodarts_version()
-        _AUTODARTS_LATEST_CACHE["ts"] = now
-        _AUTODARTS_LATEST_CACHE["ver"] = ver
-        return ver
-    except Exception:
-        return None
-
-def build_autodarts_versions_dropdown() -> list[dict]:
-    """Dropdown-Optionen aus AUTODARTS_VERSION_MENU (kein Freitext)."""
-    stable = autodarts_stable_from_menu()
-    last = autodarts_last_version()
-    latest = autodarts_latest_cached()
-
-    choices: list[dict] = []
-    for x in AUTODARTS_VERSION_MENU:
-        tok = _menu_token(str(x))
-        if tok == "__LATEST__":
-            label = f"Aktuellste (online: {latest})" if latest else "Aktuellste (online: unbekannt)"
-            choices.append({"value": "__LATEST__", "label": label})
-        elif tok == "__LAST__":
-            label = f"Zuletzt (Rollback: {last})" if last else "Zuletzt (Rollback: noch nicht verfügbar)"
-            choices.append({"value": "__LAST__", "label": label})
-        else:
-            if not _SEMVER_RE.match(tok):
-                continue
-            if stable and tok == stable:
-                choices.append({"value": tok, "label": f"Stabil ({tok})"})
-            else:
-                choices.append({"value": tok, "label": tok})
-
-    # Doppelte raus (falls jemand z.B. 'aktuell' zweimal rein schreibt)
-    seen: set[str] = set()
-    out: list[dict] = []
-    for o in choices:
-        v = str(o.get("value") or "")
-        if not v or v in seen:
-            continue
-        seen.add(v)
-        out.append(o)
-    return out
-
 PINGTEST_STATE_DIR = "/var/lib/autodarts/pingtests"
 
 # --- Webpanel (diese Weboberfläche) Update ---
@@ -255,7 +131,7 @@ WEBPANEL_VERSION_FILE = os.environ.get("WEBPANEL_VERSION_FILE", "/var/lib/autoda
 
 # Wenn du die Version lieber direkt im Script pflegen willst: hier eintragen.
 # Leer lassen ("") um wieder die Version aus WEBPANEL_VERSION_FILE / version.txt zu lesen.
-WEBPANEL_HARDCODED_VERSION = "1.38"
+WEBPANEL_HARDCODED_VERSION = "1.37"
 
 
 # Remote (GitHub Raw) – kann per ENV überschrieben werden
@@ -274,21 +150,7 @@ DEFAULT_SETTINGS = {
     "ap_ssid_choices": [f"Autodartsinstall{i}" for i in range(1, 11)],
     # Wenn leer/fehlt, versuchen wir es automatisch über systemd/Dateipfade zu finden
     "autodarts_update_cmd": "",
-
-    # --- Autodarts Version-Pinning (für Dropdown / "stabile Version") ---
-    # Wenn leer, zeigt die UI nur den "stabile Version"-Button (falls gesetzt) bzw. keinen Dropdown.
-    # Beispiel: ["0.16.0", "0.16.1", "0.16.2"]
-    "autodarts_versions": [],
-
-    # Optional: Version, die der Button "Auf stabile Version wechseln" installieren soll.
-    # Beispiel: "0.16.0"
-    "autodarts_stable_version": "",
-
-    # Standard: Auto-Update soll AUS sein (wir deaktivieren den Service einmalig beim ersten Start nach Webpanel-Update).
-    # Wer das nicht möchte, kann hier True setzen.
-    "autoupdate_default_enabled": False,
 }
-
 
 
 def load_settings() -> dict:
@@ -324,74 +186,21 @@ def load_settings() -> dict:
 
     merged["autodarts_update_cmd"] = str(merged.get("autodarts_update_cmd") or "").strip()
 
-    # --- Autodarts Versionsliste / stabile Version (für UI) ---
-    def _sanitize_version_str(v: str) -> str:
-        v = (v or "").strip()
-        v = v.lstrip("v").strip()
-        low = v.lower()
-
-        # Zulassen: 0.16.0 oder 0.16.0-beta.1 oder Sonderwerte (Dropdown)
-        # "latest" wird in der UI als "Aktuellste" angezeigt (damit es jeder versteht)
-        if low in ("beta",):
-            return "Beta"
-        if low in ("latest", "aktuellste", "neueste", "neuste"):
-            return "Aktuellste"
-        if re.match(r"^\d+\.\d+\.\d+(?:-(?:beta|alpha)\.\d+)?$", v):
-            return v
-        return ""
-
-    versions = merged.get("autodarts_versions")
-    if not isinstance(versions, list):
-        versions = []
-    vclean = []
-    for x in versions:
-        s = _sanitize_version_str(str(x))
-        if s and s not in vclean:
-            vclean.append(s)
-    merged["autodarts_versions"] = vclean
-
-    stable = _sanitize_version_str(str(merged.get("autodarts_stable_version") or ""))
-    merged["autodarts_stable_version"] = stable
-
-    merged["autoupdate_default_enabled"] = bool(merged.get("autoupdate_default_enabled", False))
+    # Falls Datei fehlt: defaults einmalig hinschreiben (damit man sie einfach editieren kann)
+    try:
+        os.makedirs(os.path.dirname(SETTINGS_PATH), exist_ok=True)
+        if not os.path.exists(SETTINGS_PATH):
+            with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
+                json.dump(merged, f, indent=2)
+    except Exception:
+        pass
 
     return merged
 
 
-# --- Settings (werden automatisch neu geladen, wenn sich webpanel-settings.json ändert) ---
 SETTINGS = load_settings()
-ADMIN_PASSWORD = SETTINGS.get("admin_password", "admin")
-AP_SSID_CHOICES = SETTINGS.get("ap_ssid_choices", [])
-
-_SETTINGS_MTIME = None
-
-def _settings_mtime():
-    try:
-        return os.stat(SETTINGS_PATH).st_mtime
-    except Exception:
-        return None
-
-def refresh_settings_if_needed(force: bool = False) -> None:
-    global SETTINGS, ADMIN_PASSWORD, AP_SSID_CHOICES, _SETTINGS_MTIME
-    mt = _settings_mtime()
-    if force or (mt != _SETTINGS_MTIME):
-        SETTINGS = load_settings()
-        ADMIN_PASSWORD = SETTINGS.get("admin_password", ADMIN_PASSWORD)
-        AP_SSID_CHOICES = SETTINGS.get("ap_ssid_choices", AP_SSID_CHOICES)
-        _SETTINGS_MTIME = mt
-
-def get_autodarts_versions_choices() -> list[dict]:
-    """Liste der erlaubten Versionen für das Dropdown.
-
-    Quelle ist AUTODARTS_VERSION_MENU (oben im Script). Kein Freitext.
-    """
-    return build_autodarts_versions_dropdown()
-
-
-
-@app.before_request
-def _autoload_settings():
-    refresh_settings_if_needed()
+ADMIN_PASSWORD = SETTINGS["admin_password"]
+AP_SSID_CHOICES = SETTINGS["ap_ssid_choices"]
 
 AUTODARTS_VERSION_CACHE = {"ts": 0.0, "v": None}
 AUTODARTS_VERSION_CACHE_TTL_SEC = 10.0
@@ -1319,18 +1128,8 @@ def save_update_state(state: dict):
         pass
 
 
-def start_autodarts_update_background(
-    cmd_override: str | None = None,
-    requested_version: str | None = None,
-    purpose: str | None = None,
-    disable_autoupdate_after: bool = False,
-) -> tuple[bool, str]:
-    """Startet ein Autodarts-Update/Install im Hintergrund und loggt nach AUTODARTS_UPDATE_LOG.
-
-    cmd_override: wenn gesetzt, wird genau dieses Kommando in `bash -lc` ausgeführt.
-    requested_version/purpose: nur Info für Status/Log.
-    disable_autoupdate_after: am Ende best-effort Auto-Updater deaktivieren (Default soll AUS bleiben).
-    """
+def start_autodarts_update_background() -> tuple[bool, str]:
+    """Startet ein Autodarts-Update im Hintergrund und loggt nach AUTODARTS_UPDATE_LOG."""
     # Läuft schon?
     state = load_update_state()
     pid = state.get("pid")
@@ -1342,9 +1141,8 @@ def start_autodarts_update_background(
             pass  # PID tot -> weiter
 
     # Command bestimmen
-    cmd = (cmd_override or "").strip()
-    if not cmd:
-        cmd = (SETTINGS.get("autodarts_update_cmd") or "").strip()
+    cmd = SETTINGS.get("autodarts_update_cmd") or ""
+    cmd = cmd.strip()
 
     updater = _get_autodarts_updater_path()
     if not cmd:
@@ -1354,10 +1152,6 @@ def start_autodarts_update_background(
             # Fallback auf offiziellen Installer (holt auch updater.sh neu)
             cmd = "bash <(curl -sL get.autodarts.io)"
 
-    if disable_autoupdate_after:
-        # Danach: Auto-Updater sicherheitshalber deaktivieren (egal ob Service existiert)
-        cmd += f"; (sudo -n systemctl disable --now {AUTOUPDATE_SERVICE} >/dev/null 2>&1 || systemctl disable --now {AUTOUPDATE_SERVICE} >/dev/null 2>&1 || true)"
-
     # Log-File öffnen
     try:
         os.makedirs(os.path.dirname(AUTODARTS_UPDATE_LOG), exist_ok=True)
@@ -1366,42 +1160,25 @@ def start_autodarts_update_background(
 
     try:
         logf = open(AUTODARTS_UPDATE_LOG, "a", encoding="utf-8")
-        logf.write("\n\n===== Autodarts Job gestartet: %s =====\n" % time.strftime("%Y-%m-%d %H:%M:%S"))
-        if purpose:
-            logf.write(f"Purpose: {purpose}\n")
-        if requested_version:
-            logf.write(f"Requested Version: {requested_version}\n")
-        logf.write(f"CMD: {cmd}\n")
+        logf.write("\n\n===== Autodarts Update gestartet: %s =====\n" % time.strftime("%Y-%m-%d %H:%M:%S"))
         logf.flush()
 
         # in bash ausführen (für process substitution)
-        # WICHTIG: Wenn das Webpanel als root läuft, soll der Autodarts-Installer/Updater
-        # unter dem User 'peter' laufen (sonst landet Binary+Config unter /root).
-        popen_cmd = ["bash", "-lc", cmd]
-        if os.geteuid() == 0:
-            if shutil.which("sudo"):
-                popen_cmd = ["sudo", "-u", "peter", "-H", "bash", "-lc", cmd]
-            elif shutil.which("runuser"):
-                popen_cmd = ["runuser", "-l", "peter", "-c", "bash -lc " + shlex.quote(cmd)]
-            elif shutil.which("su"):
-                popen_cmd = ["su", "-", "peter", "-c", "bash -lc " + shlex.quote(cmd)]
         p = subprocess.Popen(
-            popen_cmd,
+            ["bash", "-lc", cmd],
             stdout=logf,
             stderr=logf,
             close_fds=True,
         )
 
-        save_update_state({
-            "pid": p.pid,
-            "started": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "cmd": cmd,
-            "purpose": purpose or "",
-            "requested_version": requested_version or "",
-        })
-        return True, "Job gestartet."
+        save_update_state({"pid": p.pid, "started": time.strftime("%Y-%m-%d %H:%M:%S"), "cmd": cmd})
+        return True, "Update gestartet."
     except Exception as e:
-        return False, f"Job konnte nicht gestartet werden: {e}"
+        return False, f"Update konnte nicht gestartet werden: {e}"
+
+
+
+# ---------------- Webpanel Update (dieser Flask-Service) ----------------
 
 def get_webpanel_version() -> str | None:
     """Liest die installierte Webpanel-Version (lokale version.txt)."""
@@ -1883,32 +1660,19 @@ def service_is_enabled(service_name: str) -> bool:
     return bool(r and r.stdout.strip() == "enabled")
 
 def autodarts_autoupdate_is_enabled() -> bool | None:
-    """True/False wenn Service existiert, sonst None."""
     if not service_exists(AUTOUPDATE_SERVICE):
         return None
     return service_is_enabled(AUTOUPDATE_SERVICE)
 
 def autodarts_set_autoupdate(enabled: bool) -> tuple[bool, str]:
-    """Enable/disable autodarts auto-updater service.
-
-    Wenn der Service nicht existiert:
-      - disable => OK (bereits aus)
-      - enable  => Fehler (Service fehlt)
-    """
     if not service_exists(AUTOUPDATE_SERVICE):
-        if not enabled:
-            return True, "Auto-Update ist bereits deaktiviert (Service fehlt)."
         return False, f"{AUTOUPDATE_SERVICE} nicht gefunden."
     try:
-        cmd = ["systemctl", ("enable" if enabled else "disable"), "--now", AUTOUPDATE_SERVICE]
-        if os.geteuid() != 0:
-            cmd = ["sudo", "-n"] + cmd
-        r = subprocess.run(cmd, capture_output=True, text=True)
-        if r.returncode == 0:
-            return True, ("Auto-Update aktiviert." if enabled else "Auto-Update deaktiviert.")
-        err = (r.stderr or r.stdout or "").strip()
-        short = (err.splitlines()[0] if err else "systemctl fehlgeschlagen.")
-        return False, short
+        if enabled:
+            subprocess.run(["systemctl", "enable", "--now", AUTOUPDATE_SERVICE], capture_output=True, text=True)
+            return True, "Auto-Update aktiviert."
+        subprocess.run(["systemctl", "disable", "--now", AUTOUPDATE_SERVICE], capture_output=True, text=True)
+        return True, "Auto-Update deaktiviert."
     except Exception as e:
         return False, f"Auto-Update konnte nicht geändert werden: {e}"
 
@@ -2333,104 +2097,21 @@ def service_is_enabled(service_name: str) -> bool:
     return bool(r and r.stdout.strip() == "enabled")
 
 def autodarts_autoupdate_is_enabled() -> bool | None:
-    """True/False wenn Service existiert, sonst None."""
     if not service_exists(AUTOUPDATE_SERVICE):
         return None
     return service_is_enabled(AUTOUPDATE_SERVICE)
 
 def autodarts_set_autoupdate(enabled: bool) -> tuple[bool, str]:
-    """Enable/disable autodarts auto-updater service.
-
-    Wenn der Service nicht existiert:
-      - disable => OK (bereits aus)
-      - enable  => Fehler (Service fehlt)
-    """
     if not service_exists(AUTOUPDATE_SERVICE):
-        if not enabled:
-            return True, "Auto-Update ist bereits deaktiviert (Service fehlt)."
         return False, f"{AUTOUPDATE_SERVICE} nicht gefunden."
     try:
-        cmd = ["systemctl", ("enable" if enabled else "disable"), "--now", AUTOUPDATE_SERVICE]
-        if os.geteuid() != 0:
-            cmd = ["sudo", "-n"] + cmd
-        r = subprocess.run(cmd, capture_output=True, text=True)
-        if r.returncode == 0:
-            return True, ("Auto-Update aktiviert." if enabled else "Auto-Update deaktiviert.")
-        err = (r.stderr or r.stdout or "").strip()
-        short = (err.splitlines()[0] if err else "systemctl fehlgeschlagen.")
-        return False, short
+        if enabled:
+            subprocess.run(["systemctl", "enable", "--now", AUTOUPDATE_SERVICE], capture_output=True, text=True)
+            return True, "Auto-Update aktiviert."
+        subprocess.run(["systemctl", "disable", "--now", AUTOUPDATE_SERVICE], capture_output=True, text=True)
+        return True, "Auto-Update deaktiviert."
     except Exception as e:
         return False, f"Auto-Update konnte nicht geändert werden: {e}"
-
-# ---------------- Auto-Update Default (soll standardmäßig AUS sein) ----------------
-
-AUTOUPDATE_DEFAULT_MARKER = str(DATA_DIR / "autoupdate-default-applied.json")
-_AUTOUPDATE_DEFAULT_RAN = False
-_AUTOUPDATE_DEFAULT_LOCK = threading.Lock()
-
-def ensure_autoupdate_default_once() -> str | None:
-    """Deaktiviert den Autodarts Auto-Updater einmalig (Default = AUS).
-
-    Hintergrund:
-    Der offizielle Installer aktiviert Auto-Update standardmäßig. Wenn ein Release gerade
-    Probleme macht, ist das unangenehm. Daher schalten wir den Service *einmalig* beim
-    ersten Start nach Webpanel-Update aus (User kann danach wieder einschalten).
-    """
-    global _AUTOUPDATE_DEFAULT_RAN
-    if _AUTOUPDATE_DEFAULT_RAN:
-        return None
-    with _AUTOUPDATE_DEFAULT_LOCK:
-        if _AUTOUPDATE_DEFAULT_RAN:
-            return None
-        _AUTOUPDATE_DEFAULT_RAN = True
-
-    # schon erledigt?
-    try:
-        if os.path.exists(AUTOUPDATE_DEFAULT_MARKER):
-            return None
-    except Exception:
-        # Wenn wir nicht mal prüfen können, lieber nichts kaputtmachen.
-        return None
-
-    desired_default = bool(SETTINGS.get("autoupdate_default_enabled", False))
-    cur = autodarts_autoupdate_is_enabled()
-
-    changed = False
-    msg = None
-
-    if desired_default:
-        # User möchte Default-AN (wir ändern nichts, markieren nur)
-        pass
-    else:
-        # Default-AUS
-        if cur is True:
-            ok, _m = autodarts_set_autoupdate(False)
-            changed = bool(ok)
-            if changed:
-                msg = "Auto-Update wurde standardmäßig deaktiviert (kann bei Bedarf wieder eingeschaltet werden)."
-
-    # Marker schreiben (damit es wirklich nur einmal passiert)
-    # Wenn wir deaktivieren wollten, das aber fehlschlägt, schreiben wir keinen Marker,
-    # damit es beim nächsten Start erneut versucht wird.
-    if desired_default or cur is not True or changed:
-        try:
-            os.makedirs(os.path.dirname(AUTOUPDATE_DEFAULT_MARKER), exist_ok=True)
-        except Exception:
-            pass
-        try:
-            with open(AUTOUPDATE_DEFAULT_MARKER, "w", encoding="utf-8") as f:
-                json.dump({
-                    "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
-                    "desired_default_enabled": desired_default,
-                    "cur_before": cur,
-                    "changed": changed,
-                }, f, indent=2)
-        except Exception:
-            pass
-
-    return msg
-
-
 
 
 # ---------------- Update-Check (nur bei Klick) ----------------
@@ -3204,9 +2885,6 @@ def help_page():
 
 @app.route("/", methods=["GET"])
 def index():
-    # Auto-Update soll standardmäßig AUS sein (einmalige Umstellung)
-    ensure_msg = ensure_autoupdate_default_once()
-
     (
         ssid, ip,
         autodarts_active, autodarts_version,
@@ -3271,9 +2949,7 @@ def index():
     adminmsg = (request.args.get('adminmsg') or '').strip()
     adminok = (request.args.get('adminok') == '1')
 
-    msg = request.args.get('msg', '') or (ensure_msg or '')
-    open_adver = (request.args.get('open_adver') == '1')
-
+    msg = request.args.get('msg', '')
     autoupdate_enabled = autodarts_autoupdate_is_enabled()
     update_check = load_update_check()
     webpanel_version = get_webpanel_version()
@@ -3388,29 +3064,21 @@ def index():
     {% if temp_c is not none %}
       <div class="sysinfo-row">Temp: {{ "%.1f"|format(temp_c) }} °C</div>
     {% endif %}
-    <div class="sysinfo-row" style="margin-top:6px;">
-      Auto-Update:
-      {% if autoupdate_enabled is none %}
-        <span style="color:#ff6b6b; font-weight:700;">AUS</span>
-        <span class="hint" style="font-size:11px;">(Service fehlt)</span>
-      {% elif autoupdate_enabled %}
-        <span style="color:#6be26b; font-weight:700;">AN</span>
-      {% else %}
-        <span style="color:#ff6b6b; font-weight:700;">AUS</span>
-      {% endif %}
-    </div>
-    <div style="margin-top:6px; display:flex; gap:6px;">
-      <form method="post" action="{{ url_for('autoupdate_set', mode='on') }}" style="flex:1; margin:0;">
-        <button type="submit" class="btn btn-small" style="width:100%;" {% if autoupdate_enabled %}disabled{% endif %}>
-          Auto-Update AN
+    {% if autoupdate_enabled is not none %}
+      <div class="sysinfo-row" style="margin-top:6px;">
+        Auto-Update:
+        {% if autoupdate_enabled %}
+          <span style="color:#6be26b; font-weight:700;">AN</span>
+        {% else %}
+          <span style="color:#ff6b6b; font-weight:700;">AUS</span>
+        {% endif %}
+      </div>
+      <form method="post" action="{{ url_for('autoupdate_toggle') }}" style="margin-top:6px;">
+        <button type="submit" class="btn btn-small" style="width:100%;">
+          {% if autoupdate_enabled %}Auto-Update ausschalten{% else %}Auto-Update einschalten{% endif %}
         </button>
       </form>
-      <form method="post" action="{{ url_for('autoupdate_set', mode='off') }}" style="flex:1; margin:0;">
-        <button type="submit" class="btn btn-small" style="width:100%;" {% if not autoupdate_enabled %}disabled{% endif %}>
-          Auto-Update AUS
-        </button>
-      </form>
-    </div>
+    {% endif %}
 
   </div>
   {% endif %}
@@ -3425,13 +3093,7 @@ def index():
       Autodarts Version: <strong>{{ autodarts_version or 'unbekannt' }}</strong>
     </div>
 
-    
-
-
     <h1>Willkommen bei der Autodarts Installation</h1>
-  {% if msg %}
-    <p class="info-msg">{{ msg }}</p>
-  {% endif %}
     <div class="subtitle">by Peter Rottmann v.{{ webpanel_version or '1.20' }} (Multi-WLED)</div>
 
     {% if not wifi_ok %}
@@ -3532,82 +3194,6 @@ def index():
       <div class="btn-row">
         <a href="{{ darts_url }}" target="_blank" class="btn btn-primary">Dartscheiben-Manager öffnen</a>
       </div>
-      <div id="ad-version"></div>
-      <details style="margin-top:12px;" {% if open_adver %}open{% endif %}>
-        <summary style="cursor:pointer; font-weight:700;">Autodarts – Version &amp; Auto-Update</summary>
-        <div style="margin-top:10px;">
-      <div class="hint" style="margin-top:-6px;">
-        Wenn ein Update Probleme macht, kannst du hier schnell auf eine stabile Version wechseln oder gezielt die aktuellste installieren.
-        Auto-Update bleibt dabei standardmäßig AUS (du kannst es unten jederzeit einschalten).
-      </div>
-
-      <div style="margin-top:10px;">
-        Installiert: <strong>{{ autodarts_version or 'unbekannt' }}</strong>
-        &nbsp;•&nbsp; Stabil: <strong>{{ autodarts_stable_version or '—' }}</strong>
-        &nbsp;•&nbsp; Aktuell (online): <strong>{{ autodarts_latest_online or 'unbekannt' }}</strong>
-        &nbsp;•&nbsp; Zuletzt: <strong>{{ autodarts_last_version or '—' }}</strong>
-      </div>
-
-      {% if msg and open_adver %}
-        <p class="info-msg" style="margin-top:10px;">{{ msg }}</p>
-      {% endif %}
-
-      <div class="btn-row" style="margin-top:10px; align-items:center; gap:10px; flex-wrap:wrap;">
-        <form method="post" action="{{ url_for('autodarts_install_version') }}" style="margin:0;"
-              onsubmit="return confirm('Auf stabile Version wechseln?\n\nHinweis: Das kann ein paar Minuten dauern und Autodarts neu starten.');">
-          <input type="hidden" name="version" value="stable">
-          <button type="submit" class="btn btn-primary" {% if not autodarts_stable_version %}disabled title="Keine stabile Version in AUTODARTS_VERSION_MENU hinterlegt."{% endif %}>Auf stabile Version wechseln</button>
-        </form>
-
-        <form method="post" action="{{ url_for('autodarts_install_version') }}" style="margin:0; display:flex; gap:8px; align-items:center; flex-wrap:wrap;"
-              onsubmit="return confirm('Gewählte Version installieren?\n\nHinweis: Das kann ein paar Minuten dauern und Autodarts neu starten.');">
-          <select name="version" style="min-width:220px;">
-            {% for opt in autodarts_versions_choices %}
-              <option value="{{ opt.value }}">{{ opt.label }}</option>
-            {% endfor %}
-          </select>
-          <button type="submit" class="btn">Version installieren</button>
-        </form>
-      </div>
-
-      <div class="hint" style="margin-top:8px;">
-        Tipp: Für Freunde/Familie ist „Stabil“ die sichere Wahl. „Aktuellste“ nimmt immer die neueste Online-Version{% if autodarts_latest_online %} (aktuell: {{ autodarts_latest_online }}){% endif %}.
-      </div>
-
-<hr style="border:none; border-top:1px solid #333; margin:14px 0;">
-
-      <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between;">
-        <div>
-          <div style="font-weight:700;">Auto-Update</div>
-          <div class="hint" style="margin-top:2px;">
-            Status:
-            {% if autoupdate_enabled is none %}
-              <span style="color:#ff6b6b; font-weight:700;">AUS</span> (Service fehlt)
-            {% elif autoupdate_enabled %}
-              <span style="color:#6be26b; font-weight:700;">AN</span>
-            {% else %}
-              <span style="color:#ff6b6b; font-weight:700;">AUS</span>
-            {% endif %}
-          </div>
-        </div>
-
-        <div class="btn-row" style="margin:0;">
-          <form method="post" action="{{ url_for('autoupdate_set', mode='on') }}" style="margin:0;">
-            <button type="submit" class="btn btn-small" {% if autoupdate_enabled %}disabled{% endif %}
-                    onclick="return confirm('Auto-Update aktivieren?\n\nHinweis: Dadurch können Updates wieder automatisch installiert werden.');">
-              Auto-Update AN
-            </button>
-          </form>
-          <form method="post" action="{{ url_for('autoupdate_set', mode='off') }}" style="margin:0;">
-            <button type="submit" class="btn btn-small" {% if not autoupdate_enabled %}disabled{% endif %}>
-              Auto-Update AUS
-            </button>
-          </form>
-        </div>
-      </div>
-    
-        </div>
-      </details>
     </div>
 
 <div class="card">
@@ -4124,7 +3710,6 @@ def index():
         style="margin:0;">
     <button type="submit" class="btn btn-primary">WLED UPDATE</button>
   </form>
-        <a href="{{ url_for('admin_journal') }}" class="btn btn-secondary" target="_blank" rel="noopener">📜 LIVE LOGS</a>
 </div>
 
 {% if extensions_state.started %}
@@ -4671,11 +4256,6 @@ cp /var/log/pi_monitor_test_README.txt ~/
         webpanel_update_available=webpanel_update_available,
         webpanel_state=webpanel_state,
         webpanel_log_tail=webpanel_log_tail,
-        autodarts_versions_choices=get_autodarts_versions_choices(),
-        autodarts_stable_version=autodarts_stable_from_menu(),
-        autodarts_latest_online=autodarts_latest_cached(),
-        autodarts_last_version=autodarts_last_version(),
-        settings_path=SETTINGS_PATH,
         extensions_state=extensions_state,
         extensions_last=extensions_last,
         extensions_log_tail=extensions_log_tail,
@@ -5944,158 +5524,12 @@ def wifi_forget_saved():
     return redirect(url_for("wifi"))
 @app.route("/autoupdate/toggle", methods=["POST"])
 def autoupdate_toggle():
-    """Legacy Toggle (für alte Links)."""
     cur = autodarts_autoupdate_is_enabled()
     if cur is None:
         return redirect(url_for("index", msg="Auto-Update Service nicht gefunden."))
+
     ok, msg = autodarts_set_autoupdate(not bool(cur))
     return redirect(url_for("index", msg=msg))
-
-
-@app.route("/autoupdate/set/<mode>", methods=["POST"])
-def autoupdate_set(mode: str):
-    """Deterministisch ein/aus schalten."""
-    mode = (mode or "").strip().lower()
-    if mode in ("on", "enable", "1", "true"):
-        desired = True
-    elif mode in ("off", "disable", "0", "false"):
-        desired = False
-    else:
-        return redirect(url_for("index", msg="Ungültiger Modus.", open_adver="1") + "#ad-version")
-
-    cur = autodarts_autoupdate_is_enabled()
-
-    # AUS
-    if not desired:
-        ok, msg = autodarts_set_autoupdate(False)
-        return redirect(url_for("index", msg=msg, open_adver="1") + "#ad-version")
-
-    # AN
-    if cur is True:
-        return redirect(url_for("index", msg="Auto-Update ist bereits AN.", open_adver="1") + "#ad-version")
-    if cur is False:
-        ok, msg = autodarts_set_autoupdate(True)
-        return redirect(url_for("index", msg=msg, open_adver="1") + "#ad-version")
-
-    # Service fehlt -> via Installer (re)erstellen
-    ver = get_autodarts_version() or ""
-    ver = (ver or "").strip().lstrip("v")
-    if ver and not re.match(r"^\d+\.\d+\.\d+(?:-(?:beta|alpha)\.\d+)?$", ver):
-        ver = ""  # lieber nichts erzwingen
-
-    if ver:
-        cmd = f"bash <(curl -sL get.autodarts.io) {ver}"
-        req = ver
-    else:
-        cmd = "bash <(curl -sL get.autodarts.io)"
-        req = "latest"
-
-    ok, _m = start_autodarts_update_background(
-        cmd_override=cmd,
-        requested_version=req,
-        purpose="enable-autoupdate",
-        disable_autoupdate_after=False,
-    )
-    if ok:
-        return redirect(url_for("index", msg="Aktivierung gestartet (Installer erstellt Auto-Update Service)."))
-    return redirect(url_for("index", msg=_m))
-
-
-@app.route("/autodarts/version/install", methods=["POST"])
-def autodarts_install_version():
-    """
-    Installiert gezielt eine freigegebene Autodarts-Version (kein Freitext).
-
-    Quellen:
-      - Dropdown aus AUTODARTS_VERSION_MENU (oben im Script)
-      - "Auf stabile Version wechseln" -> erste feste Version (SemVer) in der Liste
-      - "aktuell" -> neueste Online-Version (Installer ohne Versionsangabe)
-      - "zuletzt" -> Rollback auf die zuletzt installierte Version (merkt sich das Panel automatisch)
-    """
-
-    v_raw = (request.form.get("version") or "").strip()
-    if not v_raw:
-        return redirect(url_for("index", msg="Bitte eine Version auswählen.", open_adver="1") + "#ad-version")
-
-    stable = autodarts_stable_from_menu()
-
-    special: str | None = None
-    req_label = ""
-
-    # "stable" => erste SemVer aus Liste
-    if v_raw.lower() == "stable":
-        if not stable:
-            return redirect(url_for("index", msg="Keine stabile Version hinterlegt. Bitte oben in AUTODARTS_VERSION_MENU eine feste Version (z.B. 1.0.4) eintragen.", open_adver="1") + "#ad-version")
-        selected = stable
-        req_label = f"Stabil ({stable})"
-    else:
-        # Nur freigegebene Dropdown-Werte erlauben
-        allowed = {str(opt.get("value")) for opt in get_autodarts_versions_choices()}
-        if v_raw not in allowed:
-            return redirect(url_for("index", msg="Diese Version ist nicht freigegeben. Bitte über das Dropdown auswählen.", open_adver="1") + "#ad-version")
-
-        selected = v_raw
-        if selected in ("__LATEST__", "__LAST__"):
-            special = selected
-
-        if special == "__LATEST__":
-            latest = autodarts_latest_cached()
-            req_label = f"Aktuellste (online: {latest})" if latest else "Aktuellste"
-        elif special == "__LAST__":
-            last = autodarts_last_version()
-            req_label = f"Zuletzt (Rollback: {last})" if last else "Zuletzt (Rollback)"
-        else:
-            if stable and selected == stable:
-                req_label = f"Stabil ({selected})"
-            else:
-                req_label = str(selected)
-
-    # Aktuell installierte Version ermitteln (für "zuletzt")
-    installed = (get_autodarts_version() or "").strip().lstrip("v")
-
-    # Ziel bestimmen + Command bauen
-    if special == "__LATEST__":
-        # Wichtig: Keine Versionsangabe -> Installer nimmt die neueste Version.
-        cmd = "bash <(curl -sL get.autodarts.io) -u"
-        req = "latest"
-
-        # vorherige Version merken
-        if installed and _SEMVER_RE.match(installed):
-            autodarts_set_last_version(installed)
-
-    elif special == "__LAST__":
-        target = autodarts_last_version()
-        if not target:
-            return redirect(url_for("index", msg="Rollback nicht möglich: Es ist noch keine 'zuletzt'-Version gespeichert.", open_adver="1") + "#ad-version")
-
-        # Toggle-Verhalten: aktuelle Version als 'zuletzt' merken, damit man wieder zurück kann
-        if installed and _SEMVER_RE.match(installed):
-            autodarts_set_last_version(installed)
-
-        cmd = f"bash <(curl -sL get.autodarts.io) -u {target}"
-        req = target
-
-    else:
-        v = (str(selected) or "").strip().lstrip("v")
-        if not _SEMVER_RE.match(v):
-            return redirect(url_for("index", msg="Ungültige Versionsangabe.", open_adver="1") + "#ad-version")
-
-        # vorherige Version merken
-        if installed and _SEMVER_RE.match(installed):
-            autodarts_set_last_version(installed)
-
-        cmd = f"bash <(curl -sL get.autodarts.io) -u {v}"
-        req = v
-
-    ok, _m = start_autodarts_update_background(
-        cmd_override=cmd,
-        requested_version=req,
-        purpose="install-version",
-        disable_autoupdate_after=True,  # Default soll AUS bleiben
-    )
-    if ok:
-        return redirect(url_for("index", msg=f"Autodarts Install/Update gestartet (Ziel: {req_label}).", open_adver="1") + "#ad-version")
-    return redirect(url_for("index", msg=_m, open_adver="1") + "#ad-version")
 
 
 @app.route("/wifi/ping/start", methods=["POST"])
@@ -6568,160 +6002,6 @@ def cam_view(cam_id: int):
 """
     return render_template_string(html, cam_id=cam_id, stream_url=stream_url)
 
-
-
-# ------------------------------
-# Admin: Live Journal Viewer
-# ------------------------------
-@app.route("/admin/journal")
-def admin_journal():
-    # same admin gate as other admin endpoints
-    if not session.get("admin_unlocked", False):
-        return redirect(url_for("index", adminerr="1") + "#admin_details")
-
-    page = '''<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Live Logs</title>
-  <style>
-    body{font-family:system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:#0b0f14; color:#e6edf3; margin:0; padding:16px;}
-    .wrap{max-width:1100px; margin:0 auto;}
-    .top{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:12px;}
-    .btn{display:inline-block; padding:10px 12px; border-radius:10px; background:#1f2937; color:#e6edf3; text-decoration:none; border:1px solid #334155;}
-    .btn.active{background:#2563eb; border-color:#2563eb;}
-    .btn.danger{background:#7f1d1d; border-color:#7f1d1d;}
-    .hint{opacity:.8; font-size:14px; margin:6px 0 14px;}
-    #log{white-space:pre-wrap; font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-         background:#0f172a; border:1px solid #243244; border-radius:14px; padding:12px; min-height:60vh; overflow:auto;}
-    .row{display:flex; gap:10px; align-items:center; flex-wrap:wrap;}
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="top">
-      <div class="row" id="tabs">
-        <a class="btn active" href="#" data-unit="darts-caller.service">darts-caller</a>
-        <a class="btn" href="#" data-unit="darts-wled.service">darts-wled</a>
-      </div>
-      <div class="row" style="margin-left:auto;">
-        <a class="btn" href="#" id="btnPause">⏸ Pause</a>
-        <a class="btn" href="#" id="btnClear">🧹 Clear</a>
-        <a class="btn danger" href="#" id="btnClose">✖ Close</a>
-      </div>
-    </div>
-    <div class="hint">
-      Live-Stream aus <code>journalctl -f -o cat</code>. (Admin-only) – Passwörter werden grob maskiert.
-    </div>
-    <div id="log"></div>
-  </div>
-
-  <script>
-    let unit = "darts-caller.service";
-    let es = null;
-    let paused = false;
-    const logEl = document.getElementById("log");
-
-    function appendLine(s){
-      if(paused) return;
-      if(!s) return;
-      logEl.textContent += s + "\n";
-      logEl.scrollTop = logEl.scrollHeight;
-    }
-
-    function connect(){
-      if(es){ es.close(); es = null; }
-      appendLine("---- connecting: " + unit + " ----");
-      es = new EventSource("/admin/journal/stream?unit=" + encodeURIComponent(unit));
-      es.onmessage = (ev) => appendLine(ev.data);
-      es.onerror = () => {
-        appendLine("---- disconnected (retrying) ----");
-        try{ es.close(); }catch(e){}
-        es = null;
-        if(!paused){
-          setTimeout(connect, 1200);
-        }
-      };
-    }
-
-    document.getElementById("tabs").addEventListener("click", (e) => {
-      const a = e.target.closest("a[data-unit]");
-      if(!a) return;
-      e.preventDefault();
-      unit = a.getAttribute("data-unit");
-      [...document.querySelectorAll("#tabs a")].forEach(x => x.classList.remove("active"));
-      a.classList.add("active");
-      connect();
-    });
-
-    document.getElementById("btnPause").addEventListener("click", (e) => {
-      e.preventDefault();
-      paused = !paused;
-      e.target.textContent = paused ? "▶ Continue" : "⏸ Pause";
-      if(!paused && !es) connect();
-    });
-
-    document.getElementById("btnClear").addEventListener("click", (e) => {
-      e.preventDefault();
-      logEl.textContent = "";
-    });
-
-    document.getElementById("btnClose").addEventListener("click", (e) => {
-      e.preventDefault();
-      try{ if(es) es.close(); }catch(err){}
-      window.close();
-      setTimeout(()=>{ window.location.href = "/"; }, 100);
-    });
-
-    connect();
-  </script>
-</body>
-</html>
-'''
-
-    return render_template_string(page)
-
-
-@app.route("/admin/journal/stream")
-def admin_journal_stream():
-    if not session.get("admin_unlocked", False):
-        return ("forbidden", 403)
-
-    unit = request.args.get("unit", "darts-caller.service").strip()
-    if unit not in ALLOWED_JOURNAL_UNITS:
-        return ("invalid unit", 400)
-
-    env = os.environ.copy()
-    env.setdefault("LANG", "C.UTF-8")
-    env.setdefault("LC_ALL", "C.UTF-8")
-
-    def generate():
-        cmd = ["journalctl", "-u", unit, "-f", "-o", "cat", "-n", "200"]
-        p = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            env=env,
-        )
-        try:
-            for raw in iter(p.stdout.readline, ""):
-                line = redact_journal_line(raw.rstrip("\n"))
-                yield f"data: {line}\n\n"
-        except GeneratorExit:
-            pass
-        finally:
-            try:
-                p.terminate()
-            except Exception:
-                pass
-
-    resp = Response(stream_with_context(generate()), mimetype="text/event-stream")
-    resp.headers["Cache-Control"] = "no-cache"
-    resp.headers["X-Accel-Buffering"] = "no"
-    return resp
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=80)
