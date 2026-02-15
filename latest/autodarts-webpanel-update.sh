@@ -197,7 +197,53 @@ fi
 #run_once "NAME" "DEIN_COMMAND"
 
 #uvc hack
-run_once "uvc-hack" 'bash <(curl -sL get.autodarts.io/uvc)'
+run_once "uvc-hack-$(uname -r)" '
+  set +e
+
+  AD_SERVICE="autodarts.service"
+  WAS_ACTIVE=0
+
+  # Autodarts stoppen (nur wenn Service existiert & aktiv ist)
+  if systemctl status "$AD_SERVICE" >/dev/null 2>&1; then
+    if systemctl is-active --quiet "$AD_SERVICE"; then
+      WAS_ACTIVE=1
+      echo "Stopping $AD_SERVICE ..."
+      systemctl stop "$AD_SERVICE" || true
+      sleep 2
+    fi
+  else
+    echo "Service $AD_SERVICE not found -> skip stop"
+  fi
+
+  # (optional) Falls irgendwas anderes die Cam blockiert:
+  # fuser -k /dev/video* 2>/dev/null || true
+
+  # UVC Hack installieren (build + copy)
+  bash <(curl -sL get.autodarts.io/uvc)
+
+  # Dein .ko.xz Problem fixen (System lädt .ko.xz)
+  KVER="$(uname -r)"
+  MODDIR="/lib/modules/${KVER}/kernel/drivers/media/usb/uvc"
+
+  if [[ -f "${MODDIR}/uvcvideo.ko" && -f "${MODDIR}/uvcvideo.ko.xz" ]]; then
+    echo "Rebuilding uvcvideo.ko.xz from uvcvideo.ko ..."
+    xz -T0 -f -k "${MODDIR}/uvcvideo.ko"
+    depmod -a "${KVER}"
+  fi
+
+  # Treiber reloaden (klappt jetzt eher, weil Autodarts gestoppt ist)
+  modprobe -r uvcvideo 2>/dev/null || true
+  modprobe uvcvideo 2>/dev/null || true
+
+  # Autodarts wieder starten, falls vorher aktiv
+  if [[ "$WAS_ACTIVE" -eq 1 ]]; then
+    echo "Starting $AD_SERVICE ..."
+    systemctl start "$AD_SERVICE" || true
+  fi
+
+  exit 0
+'
+
 
 
 log "===== Webpanel Update OK ====="
