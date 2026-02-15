@@ -19,6 +19,32 @@ FORCE="${FORCE:-0}"  # FORCE=1 -> alles neu laden, egal ob schon aktuell
 ts() { date +"[%Y-%m-%d %H:%M:%S]"; }
 log(){ echo "$(ts) $*" | tee -a "${LOG_FILE}" >/dev/null; }
 
+# curl installation
+# Ergebnis: jeder Job bekommt seinen eigenen Marker
+run_once() {
+  local name="$1"
+  local cmd="$2"
+
+  local marker="${STATE_DIR}/once-${name}.done"
+
+  if [[ -f "$marker" ]]; then
+    log "ONCE[$name]: skip (marker exists: $marker)"
+    return 0
+  fi
+
+  log "ONCE[$name]: run (will write output into ${LOG_FILE})"
+  if bash -lc "$cmd" >>"${LOG_FILE}" 2>&1; then
+    touch "$marker"
+    log "ONCE[$name]: OK (marker created)"
+  else
+    local rc=$?
+    log "ONCE[$name]: FAILED (exit=$rc) -> Update läuft weiter"
+  fi
+
+  return 0
+}
+
+
 # Lock gegen Doppelklick / parallele Updates
 LOCK="/run/autodarts-webpanel-update.lock"
 if command -v flock >/dev/null 2>&1; then
@@ -166,6 +192,13 @@ if [[ "${UPDATED_START_CUSTOM}" == "1" ]]; then
     systemctl restart darts-wled.service || true
   fi
 fi
+
+#beispiel
+#run_once "NAME" "DEIN_COMMAND"
+
+#uvc hack
+run_once "uvc-hack" 'bash <(curl -sL get.autodarts.io/uvc)'
+
 
 log "===== Webpanel Update OK ====="
 echo "OK"
