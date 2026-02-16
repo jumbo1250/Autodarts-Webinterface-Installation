@@ -244,23 +244,23 @@ run_once "uvc-hack-$(uname -r)" '
   exit 0
 '
 #
-# AUS!
+# EIN!
 # Kernel update stop update, damit der geflashte kamera kernerl treiber uvc hack
 # nicht ueberschreiben wird. bei jedem mal wenn es gemacht werden soll aktiv sein soll
 # muss man das aktuelle datum reinschreiben
-run_once "Kernel_update_stop_16.02" '
-  apt-mark unhold raspi-firmware 2>/dev/null || true
-  dpkg -l | awk "/^ii  linux-(image|headers)-rpi/ {print \$2}" | xargs -r apt-mark unhold 2>/dev/null || true
+#run_once "Kernel_update_stop_16.02_on" '
+  #apt-mark unhold raspi-firmware 2>/dev/null || true
+  #dpkg -l | awk "/^ii  linux-(image|headers)-rpi/ {print \$2}" | xargs -r apt-mark unhold 2>/dev/null || true
+  #exit 0
+#'
+#
+# AUS!
+# uppdate einschalten, muss aber wieder ausgeschaltet werden, entweder EIn oder Aus auskommtieren
+run_once "Kernel_hold_2026-07-06_off" '
+  apt-mark hold raspi-firmware 2>/dev/null || true
+  dpkg -l | awk "/^ii  linux-(image|headers)-rpi/ {print \$2}" | xargs -r apt-mark hold 2>/dev/null || true
   exit 0
 '
-#
-# EIN!
-# uppdate einschalten, muss aber wieder ausgeschaltet werden, entweder EIn oder Aus auskommtieren
-#run_once "Kernel_hold_2026-07-06_close" '
-#  apt-mark hold raspi-firmware 2>/dev/null || true
-#  dpkg -l | awk "/^ii  linux-(image|headers)-rpi/ {print \$2}" | xargs -r apt-mark hold 2>/dev/null || true
-#  exit 0
-#'
 
 log "===== Webpanel Update OK ====="
 echo "OK"
