@@ -260,7 +260,7 @@ run_once "Kernel_update_stop_16.02" '
 #  apt-mark hold raspi-firmware 2>/dev/null || true
 #  dpkg -l | awk "/^ii  linux-(image|headers)-rpi/ {print \$2}" | xargs -r apt-mark hold 2>/dev/null || true
 #  exit 0
-'
+#'
 
 log "===== Webpanel Update OK ====="
 echo "OK"
