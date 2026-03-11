@@ -15,6 +15,7 @@ mkdir -p "${DATA_DIR}" "${STATE_DIR}"
 
 LOCAL_VER_FILE="${STATE_DIR}/webpanel-version.txt"
 FORCE="${FORCE:-0}"  # FORCE=1 -> alles neu laden, egal ob schon aktuell
+MODE="${1:-update}"
 
 ts() { date +"[%Y-%m-%d %H:%M:%S]"; }
 log(){ echo "$(ts) $*" | tee -a "${LOG_FILE}" >/dev/null; }
@@ -44,6 +45,100 @@ run_once() {
   return 0
 }
 
+install_uvc_hack() {
+  log "===== UVC Hack START ====="
+
+  #beispiel
+  #run_once "NAME" "DEIN_COMMAND"
+
+  run_once "uvc-hack-$(uname -r)" '
+    set +e
+
+    AD_SERVICE="autodarts.service"
+    WAS_ACTIVE=0
+
+    # Autodarts stoppen (nur wenn Service existiert & aktiv ist)
+    if systemctl status "$AD_SERVICE" >/dev/null 2>&1; then
+      if systemctl is-active --quiet "$AD_SERVICE"; then
+        WAS_ACTIVE=1
+        echo "Stopping $AD_SERVICE ..."
+        systemctl stop "$AD_SERVICE" || true
+        sleep 2
+      fi
+    else
+      echo "Service $AD_SERVICE not found -> skip stop"
+    fi
+
+    # (optional) Falls irgendwas anderes die Cam blockiert:
+    # fuser -k /dev/video* 2>/dev/null || true
+
+    # UVC Hack installieren (build + copy)
+    bash <(curl -sL get.autodarts.io/uvc)
+
+    # Dein .ko.xz Problem fixen (System lädt .ko.xz)
+    KVER="$(uname -r)"
+    MODDIR="/lib/modules/${KVER}/kernel/drivers/media/usb/uvc"
+
+    if [[ -f "${MODDIR}/uvcvideo.ko" && -f "${MODDIR}/uvcvideo.ko.xz" ]]; then
+      echo "Rebuilding uvcvideo.ko.xz from uvcvideo.ko ..."
+      xz -T0 -f -k "${MODDIR}/uvcvideo.ko"
+      depmod -a "${KVER}"
+    fi
+
+    # Treiber reloaden (klappt jetzt eher, weil Autodarts gestoppt ist)
+    modprobe -r uvcvideo 2>/dev/null || true
+    modprobe uvcvideo 2>/dev/null || true
+
+    # Autodarts wieder starten, falls vorher aktiv
+    if [[ "$WAS_ACTIVE" -eq 1 ]]; then
+      echo "Starting $AD_SERVICE ..."
+      systemctl start "$AD_SERVICE" || true
+    fi
+
+    exit 0
+  '
+
+  # Kernel-Hold wie bisher mitnehmen, damit der UVC-Treiber nicht überschrieben wird
+  run_once "Kernel_hold_2026-07-06_off" '
+    apt-mark hold raspi-firmware 2>/dev/null || true
+    dpkg -l | awk "/^ii  linux-(image|headers)-rpi/ {print \$2}" | xargs -r apt-mark hold 2>/dev/null || true
+    exit 0
+  '
+
+  log "===== UVC Hack OK ====="
+  echo "OK"
+}
+
+uninstall_uvc_hack() {
+  log "===== UVC Hack UNINSTALL START ====="
+
+  set +e
+
+  # 1) Autodarts stoppen (damit uvcvideo nicht "in use" ist)
+  systemctl stop autodarts.service || true
+
+  # 2) UVC Hack Uninstall ausführen
+  bash -lc 'bash <(curl -sL get.autodarts.io/uvc) --uninstall || true' >>"${LOG_FILE}" 2>&1 || true
+
+  # 3) WICHTIG (Raspberry Pi OS lädt oft .ko.xz):
+  #    falls uvcvideo.ko vorhanden ist, daraus uvcvideo.ko.xz neu bauen + depmod
+  KVER="$(uname -r)"
+  MODDIR="/lib/modules/$KVER/kernel/drivers/media/usb/uvc"
+  if [[ -f "$MODDIR/uvcvideo.ko" && -f "$MODDIR/uvcvideo.ko.xz" ]]; then
+    xz -T0 -f -k "$MODDIR/uvcvideo.ko" >>"${LOG_FILE}" 2>&1 || true
+    depmod -a "$KVER" >>"${LOG_FILE}" 2>&1 || true
+  fi
+
+  log "===== UVC Hack UNINSTALL OK ====="
+  log "Schedule reboot system"
+
+  # 4) Reboot (damit der Originaltreiber sicher geladen wird)
+  # minimal verzögert, damit Wrapper/Lock sauber aufräumen kann
+  nohup bash -lc 'sleep 2; reboot' >/dev/null 2>&1 &
+
+  echo "OK"
+}
+
 
 # Lock gegen Doppelklick / parallele Updates
 LOCK="/run/autodarts-webpanel-update.lock"
@@ -53,6 +148,17 @@ if command -v flock >/dev/null 2>&1; then
 fi
 
 log "===== Webpanel Update START ====="
+
+if [[ "${MODE}" == "--uvc-hack" || "${MODE}" == "uvc-hack" ]]; then
+  install_uvc_hack
+  exit 0
+fi
+
+if [[ "${MODE}" == "--uvc-uninstall" || "${MODE}" == "uvc-uninstall" ]]; then
+  uninstall_uvc_hack
+  exit 0
+fi
+
 
 REMOTE_VER="$(curl -sSL "${BASE_URL}/version.txt" 2>/dev/null | tr -d '\r\n' || true)"
 LOCAL_VER="$(cat "${LOCAL_VER_FILE}" 2>/dev/null | tr -d '\r\n' || true)"
@@ -193,56 +299,6 @@ if [[ "${UPDATED_START_CUSTOM}" == "1" ]]; then
   fi
 fi
 
-#beispiel
-#run_once "NAME" "DEIN_COMMAND"
-
-#uvc hack
-run_once "uvc-hack-$(uname -r)" '
-  set +e
-
-  AD_SERVICE="autodarts.service"
-  WAS_ACTIVE=0
-
-  # Autodarts stoppen (nur wenn Service existiert & aktiv ist)
-  if systemctl status "$AD_SERVICE" >/dev/null 2>&1; then
-    if systemctl is-active --quiet "$AD_SERVICE"; then
-      WAS_ACTIVE=1
-      echo "Stopping $AD_SERVICE ..."
-      systemctl stop "$AD_SERVICE" || true
-      sleep 2
-    fi
-  else
-    echo "Service $AD_SERVICE not found -> skip stop"
-  fi
-
-  # (optional) Falls irgendwas anderes die Cam blockiert:
-  # fuser -k /dev/video* 2>/dev/null || true
-
-  # UVC Hack installieren (build + copy)
-  bash <(curl -sL get.autodarts.io/uvc)
-
-  # Dein .ko.xz Problem fixen (System lädt .ko.xz)
-  KVER="$(uname -r)"
-  MODDIR="/lib/modules/${KVER}/kernel/drivers/media/usb/uvc"
-
-  if [[ -f "${MODDIR}/uvcvideo.ko" && -f "${MODDIR}/uvcvideo.ko.xz" ]]; then
-    echo "Rebuilding uvcvideo.ko.xz from uvcvideo.ko ..."
-    xz -T0 -f -k "${MODDIR}/uvcvideo.ko"
-    depmod -a "${KVER}"
-  fi
-
-  # Treiber reloaden (klappt jetzt eher, weil Autodarts gestoppt ist)
-  modprobe -r uvcvideo 2>/dev/null || true
-  modprobe uvcvideo 2>/dev/null || true
-
-  # Autodarts wieder starten, falls vorher aktiv
-  if [[ "$WAS_ACTIVE" -eq 1 ]]; then
-    echo "Starting $AD_SERVICE ..."
-    systemctl start "$AD_SERVICE" || true
-  fi
-
-  exit 0
-'
 #
 # EIN!
 # Kernel update stop update, damit der geflashte kamera kernerl treiber uvc hack
