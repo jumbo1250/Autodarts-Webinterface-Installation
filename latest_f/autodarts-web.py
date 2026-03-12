@@ -255,7 +255,7 @@ WEBPANEL_VERSION_FILE = os.environ.get("WEBPANEL_VERSION_FILE", "/var/lib/autoda
 
 # Wenn du die Version lieber direkt im Script pflegen willst: hier eintragen.
 # Leer lassen ("") um wieder die Version aus WEBPANEL_VERSION_FILE / version.txt zu lesen.
-WEBPANEL_HARDCODED_VERSION = "1.38"
+WEBPANEL_HARDCODED_VERSION = "1.45"
 
 
 # Remote (GitHub Raw) – kann per ENV überschrieben werden
@@ -1476,22 +1476,33 @@ def save_webpanel_update_state(state: dict):
         pass
 
 
-def start_webpanel_update_background() -> tuple[bool, str]:
-    """Startet das Webpanel-Update **außerhalb** des Service-CGroups, damit es den Service-Restart überlebt.
+def start_webpanel_update_background(mode: str = "update") -> tuple[bool, str]:
+    """Startet einen Webpanel-Job außerhalb des Service-CGroups.
 
-    Hintergrund:
-      Das Update-Script restarted am Ende `autodarts-web.service`. Wenn das Update als Child-Prozess
-      innerhalb des Webpanel-Services läuft, würde systemd beim Restart normalerweise auch den Updater killen
-      (KillMode=control-group). Deshalb starten wir es via `systemd-run` in einem eigenen transienten Unit.
+    Unterstützte Modi:
+      - "update"        -> normales Webpanel-Update
+      - "uvc-hack"      -> installiert nur den UVC-Hack
+      - "uvc-uninstall" -> deinstalliert nur den UVC-Hack
 
-    Zusätzlich:
-      - verhindert Doppelstarts ("Update läuft bereits") über ein Lockfile
-      - versucht *optional* das Update-Script vor dem Start aus GitHub zu aktualisieren (wenn vorhanden)
-      - bereinigt das Lockfile nach Abschluss (auch bei Fehlern)
+    Beide Jobs laufen in einer eigenen transienten systemd-Unit, damit ein möglicher
+    Service-Restart den gestarteten Prozess nicht abwürgt.
     """
     if not os.path.exists(WEBPANEL_UPDATE_SCRIPT):
         return False, f"Update-Script nicht gefunden: {WEBPANEL_UPDATE_SCRIPT}"
 
+    mode = (mode or "update").strip().lower()
+    if mode not in {"update", "uvc-hack", "uvc-uninstall"}:
+        return False, f"Unbekannter Webpanel-Job: {mode}"
+
+    if mode == "uvc-hack":
+        job_label = "UVC-Hack"
+        script_arg = "--uvc-hack"
+    elif mode == "uvc-uninstall":
+        job_label = "UVC-Hack Deinstallation"
+        script_arg = "--uvc-uninstall"
+    else:
+        job_label = "Webpanel-Update"
+        script_arg = ""
     lock_path = "/var/lib/autodarts/webpanel-update.lock"
 
     def _unit_is_active(unit: str) -> bool:
@@ -1514,16 +1525,16 @@ def start_webpanel_update_background() -> tuple[bool, str]:
             ts = int(info.get("ts") or 0)
 
             if unit and _unit_is_active(unit):
-                return False, "Webpanel-Update läuft bereits."
+                return False, f"{job_label} läuft bereits."
             # stale Lock nach 30 Minuten entfernen, wenn kein Unit mehr läuft
             if ts and (time.time() - ts) > 1800:
                 try:
                     os.remove(lock_path)
                 except Exception:
-                    return False, "Webpanel-Update läuft bereits (Lock konnte nicht entfernt werden)."
+                    return False, f"{job_label} läuft bereits (Lock konnte nicht entfernt werden)."
             else:
                 # kein aktiver Unit gefunden, aber Lock frisch -> trotzdem blocken
-                return False, "Webpanel-Update läuft bereits."
+                return False, f"{job_label} läuft bereits."
     except Exception:
         # im Zweifel nicht blockieren, sondern versuchen zu starten
         pass
@@ -1534,40 +1545,47 @@ def start_webpanel_update_background() -> tuple[bool, str]:
     state["finished"] = None
     state["success"] = None
     state["error"] = None
+    state["job"] = mode
     save_webpanel_update_state(state)
 
-    unit_name = f"autodarts-webpanel-update-{int(time.time())}"
+    unit_name = f"autodarts-webpanel-{mode}-{int(time.time())}"
 
     # Lock setzen
     try:
         os.makedirs(os.path.dirname(lock_path), exist_ok=True)
         with open(lock_path, "w", encoding="utf-8") as f:
-            json.dump({"ts": int(time.time()), "unit": unit_name}, f)
+            json.dump({"ts": int(time.time()), "unit": unit_name, "job": mode}, f)
     except Exception:
         # wenn wir kein Lock setzen können, lieber trotzdem starten
         pass
 
     remote_updater_url = WEBPANEL_RAW_BASE + "/autodarts-webpanel-update.sh"
+    cmd_suffix = f" {script_arg}" if script_arg else ""
+
+    updater_selfupdate = ""
+    if mode == "update":
+        updater_selfupdate = (
+            "tmp=$(mktemp); "
+            "if curl -fsSL --retry 2 --connect-timeout 5 --max-time 30 '{remote}' -o \"$tmp\"; then "
+            "sed -i 's/\r$//' \"$tmp\" || true; "
+            "sed -i '1s/^\xEF\xBB\xBF//' \"$tmp\" || true; "
+            "sudo -n install -m 755 \"$tmp\" '{local}'; "
+            "fi; "
+            "rm -f \"$tmp\" || true; "
+        ).format(remote=remote_updater_url, local=WEBPANEL_UPDATE_SCRIPT)
 
     # In der transienten Unit laufen lassen, damit der Webpanel-Service sich neu starten darf.
     # Wrapper entfernt am Ende das Lockfile.
     wrapper_cmd = (
         "set -euo pipefail; "
         "lock='{lock}'; "
-        "tmp=$(mktemp); "
-        # Optionales Self-Update des Update-Scripts:
-        "if curl -fsSL --retry 2 --connect-timeout 5 --max-time 30 '{remote}' -o \"$tmp\"; then "
-        "sed -i 's/\r$//' \"$tmp\" || true; "
-        "sed -i '1s/^\xEF\xBB\xBF//' \"$tmp\" || true; "
-        "sudo -n install -m 755 \"$tmp\" '{local}'; "
-        "fi; "
-        "rm -f \"$tmp\" || true; "
-        # Jetzt das eigentliche Update (Fehler dürfen das Lock nicht blockieren):
+        "{selfupdate}"
+        # Jetzt den gewünschten Job ausführen (Fehler dürfen das Lock nicht blockieren):
         "rc=0; "
-        "sudo -n '{local}' >> '{log}' 2>&1 || rc=$?; "
+        "sudo -n '{local}'{cmd_suffix} >> '{log}' 2>&1 || rc=$?; "
         "rm -f \"$lock\" || true; "
         "exit $rc"
-    ).format(lock=lock_path, remote=remote_updater_url, local=WEBPANEL_UPDATE_SCRIPT, log=WEBPANEL_UPDATE_LOG)
+    ).format(lock=lock_path, selfupdate=updater_selfupdate, local=WEBPANEL_UPDATE_SCRIPT, log=WEBPANEL_UPDATE_LOG, cmd_suffix=cmd_suffix)
 
     try:
         res = subprocess.run(
@@ -1595,7 +1613,7 @@ def start_webpanel_update_background() -> tuple[bool, str]:
             pass
 
         # Fallback: nohup (best effort)
-        fallback = f"nohup sudo -n {WEBPANEL_UPDATE_SCRIPT} >> {WEBPANEL_UPDATE_LOG} 2>&1 &"
+        fallback = f"nohup sudo -n {shlex.quote(WEBPANEL_UPDATE_SCRIPT)}{cmd_suffix} >> {shlex.quote(WEBPANEL_UPDATE_LOG)} 2>&1 &"
         res2 = subprocess.run(["bash", "-lc", fallback], capture_output=True, text=True)
         if res2.returncode == 0:
             state["unit"] = None
@@ -1607,6 +1625,18 @@ def start_webpanel_update_background() -> tuple[bool, str]:
         state["unit"] = None
         state["method"] = "failed"
         state["error"] = (res.stderr or res.stdout or "").strip()[:300]
+        save_webpanel_update_state(state)
+        return False, state["error"]
+
+    except Exception as e:
+        try:
+            if os.path.exists(lock_path):
+                os.remove(lock_path)
+        except Exception:
+            pass
+        state["unit"] = None
+        state["method"] = "exception"
+        state["error"] = str(e)[:300]
         save_webpanel_update_state(state)
         return False, state["error"]
 
@@ -4031,7 +4061,27 @@ def index():
                       {% if webpanel_update_available %}Update installieren{% else %}Webpanel aktualisieren{% endif %}
                     </button>
                   </form>
+                  <form method="post" action="{{ url_for('admin_uvc_hack_install') }}"
+                        onsubmit="return confirm('UVC Hack wirklich installieren?
+
+NICHT BEI FOLGENDEN KAMERAS INSTALLIEREN:
+GXVISION IMX179');" style="margin:0;">
+                    <button type="submit" class="btn btn-danger">UVC Hack installieren</button>
+                  </form>
+                  <form method="post" action="{{ url_for('admin_uvc_hack_uninstall') }}"
+                        onsubmit="return confirm('UVC Hack wirklich deinstallieren?
+
+Ablauf:
+- Autodarts wird gestoppt
+- UVC Hack wird entfernt
+- Originaltreiber wird vorbereitet
+- Danach startet der Raspberry Pi neu');" style="margin:0;">
+                    <button type="submit" class="btn">UVC Hack deinstallieren</button>
+                  </form>
                 </div>
+                <p class="hint" style="margin-top:8px; color:#ffb347;">
+                  UVC Hack nur manuell installieren. Nicht geeignet für: <strong>GXVISION IMX179</strong>.
+                </p>
 
 
             <p class="hint" style="margin-top:8px;">
@@ -5303,7 +5353,7 @@ def admin_webpanel_update():
         flash("Webpanel: Kein Update verfügbar.", "info")
         return redirect(url_for("index", admin="1") + "#admin_details")
 
-    ok, err = start_webpanel_update_background()
+    ok, err = start_webpanel_update_background("update")
     if ok:
         flash("Webpanel-Update gestartet. Die Weboberfläche kann kurz neu starten.", "success")
     else:
@@ -5311,6 +5361,26 @@ def admin_webpanel_update():
 
     return redirect(url_for("index", admin="1") + "#admin_details")
 
+
+
+@app.route("/admin/webpanel/uvc-hack", methods=["POST"])
+def admin_uvc_hack_install():
+    if not bool(session.get("admin_unlocked", False)):
+        return ("Forbidden", 403)
+
+    ok, err = start_webpanel_update_background("uvc-hack")
+    msg = "UVC-Hack Installation gestartet." if ok else f"UVC-Hack konnte nicht gestartet werden: {err or 'unbekannt'}."
+    return redirect(url_for("index", admin="1", adminok=("1" if ok else "0"), adminmsg=msg) + "#admin_details")
+
+
+@app.route("/admin/webpanel/uvc-hack-uninstall", methods=["POST"])
+def admin_uvc_hack_uninstall():
+    if not bool(session.get("admin_unlocked", False)):
+        return ("Forbidden", 403)
+
+    ok, err = start_webpanel_update_background("uvc-uninstall")
+    msg = "UVC-Hack Deinstallation gestartet. Der Raspberry Pi startet danach neu." if ok else f"UVC-Hack Deinstallation konnte nicht gestartet werden: {err or 'unbekannt'}."
+    return redirect(url_for("index", admin="1", adminok=("1" if ok else "0"), adminmsg=msg) + "#admin_details")
 
 
 @app.route("/admin/wled-update", methods=["POST"])

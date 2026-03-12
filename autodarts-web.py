@@ -61,7 +61,7 @@ def redact_journal_line(line: str) -> str:
     return line
 
 
-MAX_CAMERAS = 4
+MAX_CAMERAS = 8
 MAX_VIDEO_INDEX = 50
 STREAM_BASE_PORT = 8081
 
@@ -255,7 +255,7 @@ WEBPANEL_VERSION_FILE = os.environ.get("WEBPANEL_VERSION_FILE", "/var/lib/autoda
 
 # Wenn du die Version lieber direkt im Script pflegen willst: hier eintragen.
 # Leer lassen ("") um wieder die Version aus WEBPANEL_VERSION_FILE / version.txt zu lesen.
-WEBPANEL_HARDCODED_VERSION = "1.38"
+WEBPANEL_HARDCODED_VERSION = "1.46"
 
 
 # Remote (GitHub Raw) – kann per ENV überschrieben werden
@@ -1082,15 +1082,94 @@ def _is_probably_camera_device(dev: str) -> bool:
 
 
 
-def detect_cameras(desired_count: int):
-    """
-    Erkennt Kameras möglichst zuverlässig.
+def _camera_symlink_map() -> dict[str, dict[str, list[str]]]:
+    out: dict[str, dict[str, list[str]]] = {"by-id": {}, "by-path": {}}
+    for kind, base in (("by-id", "/dev/v4l/by-id"), ("by-path", "/dev/v4l/by-path")):
+        if not os.path.isdir(base):
+            continue
+        try:
+            for name in sorted(os.listdir(base)):
+                full = os.path.join(base, name)
+                try:
+                    real = os.path.realpath(full)
+                except Exception:
+                    continue
+                if not real.startswith("/dev/video"):
+                    continue
+                out[kind].setdefault(real, []).append(full)
+        except Exception:
+            continue
+    return out
 
-    1) Wenn verfügbar, nutzt es 'v4l2-ctl --list-devices', um physische USB-Kameras zu gruppieren
-       und pro Kamera genau EIN /dev/videoX zu wählen (verhindert Doppel-/Meta-Devices).
-    2) Fallback: einfache /dev/video0..N Suche.
-    """
-    # 1) Versuch: v4l2-ctl verwenden
+
+def _camera_aliases_for_device(dev: str, symlink_map: dict[str, dict[str, list[str]]] | None = None) -> tuple[list[str], list[str]]:
+    symlink_map = symlink_map or _camera_symlink_map()
+    by_id = list(symlink_map.get("by-id", {}).get(dev, []))
+    by_path = list(symlink_map.get("by-path", {}).get(dev, []))
+    return by_id, by_path
+
+
+def _sanitize_camera_key(raw: str) -> str:
+    s = (raw or "").strip().lower()
+    s = re.sub(r"[^a-z0-9._-]+", "_", s)
+    s = re.sub(r"_+", "_", s).strip("_")
+    return s or "camera"
+
+
+def _camera_stable_id(group_name: str, dev: str, symlink_map: dict[str, dict[str, list[str]]] | None = None) -> str:
+    symlink_map = symlink_map or _camera_symlink_map()
+    by_id, by_path = _camera_aliases_for_device(dev, symlink_map)
+    if by_id:
+        return f"byid:{os.path.basename(by_id[0])}"
+    if by_path:
+        return f"bypath:{os.path.basename(by_path[0])}"
+
+    info = _v4l2_device_info(dev)
+    bus = (info.get("bus info") or "").strip()
+    card = (info.get("card type") or group_name or dev).strip()
+    if bus:
+        return f"bus:{_sanitize_camera_key(bus)}:{_sanitize_camera_key(card)}"
+    return f"dev:{_sanitize_camera_key(group_name or dev)}"
+
+
+def _camera_label(group_name: str, dev: str, symlink_map: dict[str, dict[str, list[str]]] | None = None) -> str:
+    symlink_map = symlink_map or _camera_symlink_map()
+    info = _v4l2_device_info(dev)
+    base = (group_name or info.get("card type") or dev or "Kamera").strip().rstrip(":")
+    by_id, by_path = _camera_aliases_for_device(dev, symlink_map)
+
+    extra = ""
+    if by_id:
+        extra = os.path.basename(by_id[0]).replace("-video-index0", "")
+    elif by_path:
+        extra = os.path.basename(by_path[0]).replace("-video-index0", "")
+    elif info.get("bus info"):
+        extra = str(info.get("bus info") or "").strip()
+
+    if extra and extra not in base:
+        return f"{base} [{extra}]"
+    return base
+
+
+def _looks_like_camera_group(name: str) -> bool:
+    n = (name or "").lower()
+    bad = ["codec", "isp", "rpivid", "v4l2loopback", "loopback", "virtual", "m2m", "mem2mem", "decoder", "encoder"]
+    if any(b in n for b in bad):
+        return False
+    if "usb" in n or "uvc" in n or "webcam" in n or "camera" in n:
+        return True
+    sensor = ["ov", "imx", "ar", "gc", "s5k", "unicam", "csi"]
+    if any(s in n for s in sensor):
+        return True
+    return False
+
+
+def detect_camera_inventory(limit: int = MAX_CAMERAS) -> list[dict]:
+    """Erkennt physische Kameras und liefert stabile IDs + aktuellen Live-Node."""
+    limit = max(0, min(MAX_CAMERAS, int(limit)))
+    symlink_map = _camera_symlink_map()
+    cameras: list[dict] = []
+
     try:
         result = subprocess.run(
             ["v4l2-ctl", "--list-devices"],
@@ -1099,82 +1178,152 @@ def detect_cameras(desired_count: int):
         )
         if result.returncode == 0:
             lines = result.stdout.splitlines()
-
-            groups = []  # Liste von (name, [video-devices])
+            groups: list[tuple[str, list[str]]] = []
             current_name = None
-            current_videos = []
+            current_videos: list[str] = []
 
             for line in lines:
                 if line.strip() == "":
                     continue
-
                 if not line.startswith("	") and not line.startswith(" "):
-                    # Neue Gerätegruppe beginnt
                     if current_name and current_videos:
                         groups.append((current_name, current_videos))
                     current_name = line.strip().rstrip(":")
                     current_videos = []
                 else:
-                    # Eingrückte Zeile -> Device
-                    path = line.strip()
-                    if path.startswith("/dev/video"):
-                        current_videos.append(path)
+                    dev_path = line.strip()
+                    if dev_path.startswith("/dev/video"):
+                        current_videos.append(dev_path)
 
-            # letzte Gruppe übernehmen
             if current_name and current_videos:
                 groups.append((current_name, current_videos))
 
-            # Gruppen filtern: echte Kameras bevorzugen, System/Meta-Geräte eher raus
-            def _looks_like_camera(name: str) -> bool:
-                n = (name or "").lower()
-
-                # harte Ausschlüsse: typische System/Codec/ISP/Decoder-Geräte
-                bad = ["codec", "isp", "rpivid", "v4l2loopback", "loopback", "virtual", "m2m", "mem2mem", "decoder", "encoder"]
-                if any(b in n for b in bad):
-                    return False
-
-                # USB-Kameras erkennt man meist direkt
-                if "usb" in n or "uvc" in n or "webcam" in n or "camera" in n:
-                    return True
-
-                # CSI/Sensoren (ov9732, imx219, ...)
-                sensor = ["ov", "imx", "ar", "gc", "s5k", "unicam", "csi"]
-                if any(s in n for s in sensor):
-                    return True
-
-                # Default: konservativ, sonst findet man ohne Kamera gerne 'Geistergeräte'
-                return False
-
-            cam_groups = [g for g in groups if _looks_like_camera(g[0])]
-
-            devices = []
-            for name, videos in cam_groups:
+            for name, videos in groups:
+                if not _looks_like_camera_group(name):
+                    continue
                 videos_sorted = sorted(videos)
-                # Einige Kameras liefern mehrere /dev/videoX Nodes (Meta/H264/etc.).
-                # Wir wählen nach Möglichkeit den Node, der MJPG (oder YUYV) anbietet.
-                dev = _pick_best_video_device(videos_sorted) or videos_sorted[0]
-                if _is_probably_camera_device(dev):
-                    devices.append(dev)
-                if len(devices) >= desired_count:
+                preferred_dev = _pick_best_video_device(videos_sorted) or videos_sorted[0]
+                if not _is_probably_camera_device(preferred_dev):
+                    continue
+                by_id, by_path = _camera_aliases_for_device(preferred_dev, symlink_map)
+                info = _v4l2_device_info(preferred_dev)
+                cameras.append({
+                    "id": _camera_stable_id(name, preferred_dev, symlink_map),
+                    "label": _camera_label(name, preferred_dev, symlink_map),
+                    "group_name": name,
+                    "preferred_dev": preferred_dev,
+                    "video_devs": videos_sorted,
+                    "bus_info": info.get("bus info", ""),
+                    "card_type": info.get("card type", ""),
+                    "by_id": by_id[0] if by_id else "",
+                    "by_path": by_path[0] if by_path else "",
+                })
+                if limit and len(cameras) >= limit:
                     break
-
-            if devices:
-                return devices
+            if cameras:
+                return cameras
     except FileNotFoundError:
-        # v4l2-ctl nicht vorhanden -> Fallback
         pass
     except Exception as e:
-        print(f"[autodarts-web] Warnung detect_cameras mit v4l2-ctl: {e}")
+        print(f"[autodarts-web] Warnung detect_camera_inventory mit v4l2-ctl: {e}")
 
-    # 2) Fallback: einfache /dev/video0..N-Suche
-    found = []
     for idx in range(MAX_VIDEO_INDEX):
         dev = f"/dev/video{idx}"
-        if os.path.exists(dev) and _is_probably_camera_device(dev):
-            found.append(dev)
-            if len(found) >= desired_count:
-                break
-    return found
+        if not os.path.exists(dev) or not _is_probably_camera_device(dev):
+            continue
+        by_id, by_path = _camera_aliases_for_device(dev, symlink_map)
+        info = _v4l2_device_info(dev)
+        name = info.get("card type") or dev
+        cameras.append({
+            "id": _camera_stable_id(name, dev, symlink_map),
+            "label": _camera_label(name, dev, symlink_map),
+            "group_name": name,
+            "preferred_dev": dev,
+            "video_devs": [dev],
+            "bus_info": info.get("bus info", ""),
+            "card_type": info.get("card type", ""),
+            "by_id": by_id[0] if by_id else "",
+            "by_path": by_path[0] if by_path else "",
+        })
+        if limit and len(cameras) >= limit:
+            break
+    return cameras
+
+
+def _legacy_inventory_from_devices(devices: list[str]) -> list[dict]:
+    symlink_map = _camera_symlink_map()
+    out: list[dict] = []
+    for dev in devices or []:
+        if not isinstance(dev, str) or not dev.strip():
+            continue
+        dev = dev.strip()
+        info = _v4l2_device_info(dev)
+        name = info.get("card type") or dev
+        by_id, by_path = _camera_aliases_for_device(dev, symlink_map)
+        out.append({
+            "id": _camera_stable_id(name, dev, symlink_map),
+            "label": _camera_label(name, dev, symlink_map),
+            "group_name": name,
+            "preferred_dev": dev,
+            "video_devs": [dev],
+            "bus_info": info.get("bus info", ""),
+            "card_type": info.get("card type", ""),
+            "by_id": by_id[0] if by_id else "",
+            "by_path": by_path[0] if by_path else "",
+        })
+    return out
+
+
+def _normalize_camera_slots(camera_inventory: list[dict], stored_slots) -> list[dict]:
+    cams = [c for c in (camera_inventory or []) if isinstance(c, dict) and str(c.get("id") or "").strip()]
+    by_id = {str(c.get("id")): c for c in cams}
+    camera_ids = [str(c.get("id")) for c in cams]
+    raw_slots = stored_slots if isinstance(stored_slots, list) else []
+
+    slots: list[dict] = []
+    used: set[str] = set()
+    for idx in range(len(cams)):
+        chosen = ""
+        if idx < len(raw_slots):
+            raw = raw_slots[idx]
+            if isinstance(raw, dict):
+                candidate = str(raw.get("camera_id") or "").strip()
+            else:
+                candidate = str(raw or "").strip()
+            if candidate in by_id and candidate not in used:
+                chosen = candidate
+
+        if not chosen:
+            for candidate in camera_ids:
+                if candidate not in used:
+                    chosen = candidate
+                    break
+
+        if chosen:
+            used.add(chosen)
+        cam = by_id.get(chosen, {})
+        slots.append({
+            "slot": idx + 1,
+            "camera_id": chosen,
+            "label": cam.get("label", ""),
+            "device": cam.get("preferred_dev", ""),
+        })
+    return slots
+
+
+def _devices_for_slots(camera_inventory: list[dict], camera_slots: list[dict]) -> list[str]:
+    by_id = {str(c.get("id")): c for c in (camera_inventory or []) if isinstance(c, dict)}
+    out: list[str] = []
+    for slot in camera_slots or []:
+        cam = by_id.get(str((slot or {}).get("camera_id") or ""))
+        if cam and cam.get("preferred_dev"):
+            out.append(str(cam.get("preferred_dev")))
+    return out
+
+
+def detect_cameras(desired_count: int):
+    inventory = detect_camera_inventory(desired_count)
+    return [str(cam.get("preferred_dev")) for cam in inventory[:max(0, int(desired_count))] if cam.get("preferred_dev")]
 
 # ---------------- systemd helpers ----------------
 
@@ -1476,22 +1625,33 @@ def save_webpanel_update_state(state: dict):
         pass
 
 
-def start_webpanel_update_background() -> tuple[bool, str]:
-    """Startet das Webpanel-Update **außerhalb** des Service-CGroups, damit es den Service-Restart überlebt.
+def start_webpanel_update_background(mode: str = "update") -> tuple[bool, str]:
+    """Startet einen Webpanel-Job außerhalb des Service-CGroups.
 
-    Hintergrund:
-      Das Update-Script restarted am Ende `autodarts-web.service`. Wenn das Update als Child-Prozess
-      innerhalb des Webpanel-Services läuft, würde systemd beim Restart normalerweise auch den Updater killen
-      (KillMode=control-group). Deshalb starten wir es via `systemd-run` in einem eigenen transienten Unit.
+    Unterstützte Modi:
+      - "update"        -> normales Webpanel-Update
+      - "uvc-hack"      -> installiert nur den UVC-Hack
+      - "uvc-uninstall" -> deinstalliert nur den UVC-Hack
 
-    Zusätzlich:
-      - verhindert Doppelstarts ("Update läuft bereits") über ein Lockfile
-      - versucht *optional* das Update-Script vor dem Start aus GitHub zu aktualisieren (wenn vorhanden)
-      - bereinigt das Lockfile nach Abschluss (auch bei Fehlern)
+    Beide Jobs laufen in einer eigenen transienten systemd-Unit, damit ein möglicher
+    Service-Restart den gestarteten Prozess nicht abwürgt.
     """
     if not os.path.exists(WEBPANEL_UPDATE_SCRIPT):
         return False, f"Update-Script nicht gefunden: {WEBPANEL_UPDATE_SCRIPT}"
 
+    mode = (mode or "update").strip().lower()
+    if mode not in {"update", "uvc-hack", "uvc-uninstall"}:
+        return False, f"Unbekannter Webpanel-Job: {mode}"
+
+    if mode == "uvc-hack":
+        job_label = "UVC-Hack"
+        script_arg = "--uvc-hack"
+    elif mode == "uvc-uninstall":
+        job_label = "UVC-Hack Deinstallation"
+        script_arg = "--uvc-uninstall"
+    else:
+        job_label = "Webpanel-Update"
+        script_arg = ""
     lock_path = "/var/lib/autodarts/webpanel-update.lock"
 
     def _unit_is_active(unit: str) -> bool:
@@ -1514,16 +1674,16 @@ def start_webpanel_update_background() -> tuple[bool, str]:
             ts = int(info.get("ts") or 0)
 
             if unit and _unit_is_active(unit):
-                return False, "Webpanel-Update läuft bereits."
+                return False, f"{job_label} läuft bereits."
             # stale Lock nach 30 Minuten entfernen, wenn kein Unit mehr läuft
             if ts and (time.time() - ts) > 1800:
                 try:
                     os.remove(lock_path)
                 except Exception:
-                    return False, "Webpanel-Update läuft bereits (Lock konnte nicht entfernt werden)."
+                    return False, f"{job_label} läuft bereits (Lock konnte nicht entfernt werden)."
             else:
                 # kein aktiver Unit gefunden, aber Lock frisch -> trotzdem blocken
-                return False, "Webpanel-Update läuft bereits."
+                return False, f"{job_label} läuft bereits."
     except Exception:
         # im Zweifel nicht blockieren, sondern versuchen zu starten
         pass
@@ -1534,40 +1694,47 @@ def start_webpanel_update_background() -> tuple[bool, str]:
     state["finished"] = None
     state["success"] = None
     state["error"] = None
+    state["job"] = mode
     save_webpanel_update_state(state)
 
-    unit_name = f"autodarts-webpanel-update-{int(time.time())}"
+    unit_name = f"autodarts-webpanel-{mode}-{int(time.time())}"
 
     # Lock setzen
     try:
         os.makedirs(os.path.dirname(lock_path), exist_ok=True)
         with open(lock_path, "w", encoding="utf-8") as f:
-            json.dump({"ts": int(time.time()), "unit": unit_name}, f)
+            json.dump({"ts": int(time.time()), "unit": unit_name, "job": mode}, f)
     except Exception:
         # wenn wir kein Lock setzen können, lieber trotzdem starten
         pass
 
     remote_updater_url = WEBPANEL_RAW_BASE + "/autodarts-webpanel-update.sh"
+    cmd_suffix = f" {script_arg}" if script_arg else ""
+
+    updater_selfupdate = ""
+    if mode == "update":
+        updater_selfupdate = (
+            "tmp=$(mktemp); "
+            "if curl -fsSL --retry 2 --connect-timeout 5 --max-time 30 '{remote}' -o \"$tmp\"; then "
+            "sed -i 's/\r$//' \"$tmp\" || true; "
+            "sed -i '1s/^\xEF\xBB\xBF//' \"$tmp\" || true; "
+            "sudo -n install -m 755 \"$tmp\" '{local}'; "
+            "fi; "
+            "rm -f \"$tmp\" || true; "
+        ).format(remote=remote_updater_url, local=WEBPANEL_UPDATE_SCRIPT)
 
     # In der transienten Unit laufen lassen, damit der Webpanel-Service sich neu starten darf.
     # Wrapper entfernt am Ende das Lockfile.
     wrapper_cmd = (
         "set -euo pipefail; "
         "lock='{lock}'; "
-        "tmp=$(mktemp); "
-        # Optionales Self-Update des Update-Scripts:
-        "if curl -fsSL --retry 2 --connect-timeout 5 --max-time 30 '{remote}' -o \"$tmp\"; then "
-        "sed -i 's/\r$//' \"$tmp\" || true; "
-        "sed -i '1s/^\xEF\xBB\xBF//' \"$tmp\" || true; "
-        "sudo -n install -m 755 \"$tmp\" '{local}'; "
-        "fi; "
-        "rm -f \"$tmp\" || true; "
-        # Jetzt das eigentliche Update (Fehler dürfen das Lock nicht blockieren):
+        "{selfupdate}"
+        # Jetzt den gewünschten Job ausführen (Fehler dürfen das Lock nicht blockieren):
         "rc=0; "
-        "sudo -n '{local}' >> '{log}' 2>&1 || rc=$?; "
+        "sudo -n '{local}'{cmd_suffix} >> '{log}' 2>&1 || rc=$?; "
         "rm -f \"$lock\" || true; "
         "exit $rc"
-    ).format(lock=lock_path, remote=remote_updater_url, local=WEBPANEL_UPDATE_SCRIPT, log=WEBPANEL_UPDATE_LOG)
+    ).format(lock=lock_path, selfupdate=updater_selfupdate, local=WEBPANEL_UPDATE_SCRIPT, log=WEBPANEL_UPDATE_LOG, cmd_suffix=cmd_suffix)
 
     try:
         res = subprocess.run(
@@ -1595,7 +1762,7 @@ def start_webpanel_update_background() -> tuple[bool, str]:
             pass
 
         # Fallback: nohup (best effort)
-        fallback = f"nohup sudo -n {WEBPANEL_UPDATE_SCRIPT} >> {WEBPANEL_UPDATE_LOG} 2>&1 &"
+        fallback = f"nohup sudo -n {shlex.quote(WEBPANEL_UPDATE_SCRIPT)}{cmd_suffix} >> {shlex.quote(WEBPANEL_UPDATE_LOG)} 2>&1 &"
         res2 = subprocess.run(["bash", "-lc", fallback], capture_output=True, text=True)
         if res2.returncode == 0:
             state["unit"] = None
@@ -1607,6 +1774,18 @@ def start_webpanel_update_background() -> tuple[bool, str]:
         state["unit"] = None
         state["method"] = "failed"
         state["error"] = (res.stderr or res.stdout or "").strip()[:300]
+        save_webpanel_update_state(state)
+        return False, state["error"]
+
+    except Exception as e:
+        try:
+            if os.path.exists(lock_path):
+                os.remove(lock_path)
+        except Exception:
+            pass
+        state["unit"] = None
+        state["method"] = "exception"
+        state["error"] = str(e)[:300]
         save_webpanel_update_state(state)
         return False, state["error"]
 
@@ -3224,38 +3403,50 @@ def index():
     cam_config = load_cam_config()
     camera_mode = bool(cam_config.get("camera_mode", False))
 
-    desired_cams = int(cam_config.get("desired_cams", 3))
-    desired_cams = max(1, min(MAX_CAMERAS, desired_cams))
+    # Stale camera_mode vermeiden: wenn Autodarts aktiv ist, kann der Kamera-Modus
+    # nicht sinnvoll noch "aktiv" sein. Dann Status automatisch zurücksetzen.
+    if camera_mode and autodarts_active:
+        camera_mode = False
+        cam_config["camera_mode"] = False
+        save_cam_config(cam_config)
 
-    cam_devices = cam_config.get("devices", [])
     cam_info_message = ""
+    cam_inventory = cam_config.get("camera_inventory", [])
+    if not isinstance(cam_inventory, list):
+        cam_inventory = []
 
-    if not cam_devices:
-        cam_devices = detect_cameras(desired_cams)
-        if cam_devices:
-            cam_config["devices"] = cam_devices
-            cam_config["desired_cams"] = desired_cams
-            save_cam_config(cam_config)
+    if not cam_inventory:
+        legacy_devices = cam_config.get("devices", [])
+        if isinstance(legacy_devices, list) and legacy_devices:
+            cam_inventory = _legacy_inventory_from_devices(legacy_devices)
 
-    cam_count_found = len(cam_devices)
+    cam_slots = _normalize_camera_slots(cam_inventory, cam_config.get("camera_slots"))
+    cam_devices = _devices_for_slots(cam_inventory, cam_slots)
+    cam_count_found = len(cam_inventory)
 
-    if cam_count_found < desired_cams:
-        if cam_count_found == 0:
-            cam_info_message = (
-                f"Es wurden keine Kameras gefunden, obwohl {desired_cams} erwartet "
-                f"wurden. Bitte Verkabelung und USB-Anschlüsse prüfen."
-            )
-        else:
-            cam_info_message = (
-                f"Es wurden nur {cam_count_found} Kamera(s) gefunden, "
-                f"obwohl {desired_cams} eingestellt sind."
-            )
+    dirty_cam_cfg = False
+    if cam_config.get("camera_inventory") != cam_inventory:
+        cam_config["camera_inventory"] = cam_inventory
+        dirty_cam_cfg = True
+    if cam_config.get("camera_slots") != cam_slots:
+        cam_config["camera_slots"] = cam_slots
+        dirty_cam_cfg = True
+    if cam_config.get("devices") != cam_devices:
+        cam_config["devices"] = cam_devices
+        dirty_cam_cfg = True
+    if cam_config.get("desired_cams") != cam_count_found:
+        cam_config["desired_cams"] = cam_count_found
+        dirty_cam_cfg = True
+    if dirty_cam_cfg:
+        save_cam_config(cam_config)
+
+    if cam_count_found == 0:
+        cam_info_message = "Es wurden keine Kameras gefunden. Bitte Verkabelung und USB-Anschlüsse prüfen."
+
     host = request.host.split(":", 1)[0]
     darts_url = f"http://{host}:3180"
 
-    cam_count_options = list(range(1, MAX_CAMERAS + 1))
-    cam_devices_enum = list(enumerate(cam_devices, start=1))
-    cam_indices = list(range(1, cam_count_found + 1))
+    cam_indices = list(range(1, len(cam_slots) + 1))
 
     # LED panel info
     caller_email, caller_password, caller_board_id, caller_exists, caller_err = read_darts_caller_credentials()
@@ -3370,8 +3561,8 @@ def index():
     .ad-status { display:inline-block; padding:4px 10px; border-radius:999px; font-size:0.9rem; margin-bottom:10px; font-weight:bold; }
     .ad-on { background:#16a34a33; border:1px solid #16a34a; color:#bbf7d0; }
     .ad-off { background:#b91c1c33; border:1px solid #b91c1c; color:#fecaca; }
-    .slot-card { border:1px solid #333; border-radius:10px; padding:10px 12px; margin:10px 0; }
-    .slot-row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between; }
+    .slot-card { border:1px solid #333; border-radius:10px; padding:8px 10px; margin:8px 0; background:#151515; }
+    .slot-row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; justify-content:space-between; }
   </style>
 </head>
 <body>
@@ -3641,47 +3832,61 @@ def index():
 
   <hr style="border:none; border-top:1px solid #333; margin:14px 0;">
 
-  <form method="post" action="{{ url_for('set_cams') }}">
-    <label for="cam_count">Wie viele Kameras sind angeschlossen? (max. {{ max_cams }})</label>
-    <select id="cam_count" name="cam_count">
-      {% for n in cam_count_options %}
-        <option value="{{ n }}" {% if n == desired_cams %}selected{% endif %}>{{ n }}</option>
-      {% endfor %}
-    </select>
-    <div class="btn-row">
-      <button type="submit" class="btn btn-small btn-primary">Kameras suchen</button>
-    </div>
-  </form>
+  <details style="margin-top:10px;" {% if camera_mode %}open{% endif %}>
+    <summary>{% if camera_mode %}Kamera-Auswahl & Live-Bilder{% else %}Kamera-Auswahl anzeigen{% endif %}</summary>
 
-  {% if cam_count_found > 0 %}
-    <p style="margin-top:12px;">
-      Gefundene Kameras: {{ cam_count_found }}<br>
-      {% for idx, dev in cam_devices_enum %}
-        Kamera {{ idx }} → <code>{{ dev }}</code><br>
-      {% endfor %}
-    </p>
-  {% else %}
-    <p style="margin-top:12px;">Es wurden keine Kameras gefunden.</p>
-  {% endif %}
+    {% if camera_mode %}
+      <form method="post" action="{{ url_for('set_cams') }}" style="margin-top:12px;">
+        <div class="btn-row">
+          <button type="submit" class="btn btn-small btn-primary">Kameras suchen</button>
+        </div>
+      </form>
+      <p class="hint" style="margin-top:8px;">
+        Es werden bis zu {{ max_cams }} physische Kameras erkannt. Jeder Slot merkt sich eine Kamera – nicht nur ein altes <code>/dev/videoX</code>.
+      </p>
 
-  {% if cam_info_message %}
-    <p class="info-msg">{{ cam_info_message }}</p>
-  {% endif %}
+      {% if cam_count_found > 0 %}
+        <p style="margin-top:12px;">Gefundene Kameras: {{ cam_count_found }}</p>
 
-  {% if camera_mode and cam_count_found > 0 %}
-    <p style="margin-top:12px;">Klicken Sie auf eine Kamera, um das Live-Bild zu öffnen:</p>
-    <div class="cam-buttons">
-      {% for idx in cam_indices %}
-        <a href="{{ url_for('cam_view', cam_id=idx) }}" target="_blank" class="btn btn-small">
-          Kamera {{ idx }}
-        </a>
-      {% endfor %}
-    </div>
-  {% elif not camera_mode %}
-    <p class="hint" style="margin-top:10px;">
-      Tipp: Erst <strong>Kamera einstellen starten</strong> klicken – dann können Sie die Live-Bilder öffnen.
-    </p>
-  {% endif %}
+        {% for slot in cam_slots %}
+          <div class="slot-card">
+            <div class="slot-row">
+              <div>
+                <strong>kamera_{{ slot.slot }}</strong><br>
+                <span class="hint">Zuordnung: {{ slot.label or '—' }}</span><br>
+                <span class="hint">Aktuelles Device: {% if slot.device %}<code>{{ slot.device }}</code>{% else %}nicht verfügbar{% endif %}</span>
+              </div>
+
+              <div class="btn-row" style="margin:0;">
+                <form method="post" action="{{ url_for('set_cam_slot', slot_id=slot.slot) }}" style="margin:0; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                  <select name="camera_id">
+                    {% for cam in cam_inventory %}
+                      <option value="{{ cam.id }}" {% if cam.id == slot.camera_id %}selected{% endif %}>{{ cam.label }}</option>
+                    {% endfor %}
+                  </select>
+                  <button type="submit" class="btn btn-small">Zuordnen</button>
+                </form>
+
+                <a href="{{ url_for('cam_view', cam_id=slot.slot) }}" target="_blank" class="btn btn-small btn-primary">
+                  kamera_{{ slot.slot }} öffnen
+                </a>
+              </div>
+            </div>
+          </div>
+        {% endfor %}
+      {% else %}
+        <p style="margin-top:12px;">Es wurden noch keine Kameras gesucht.</p>
+      {% endif %}
+
+      {% if cam_info_message %}
+        <p class="info-msg">{{ cam_info_message }}</p>
+      {% endif %}
+    {% else %}
+      <p class="hint" style="margin-top:10px;">
+        Mit <strong>Kamera einstellen starten</strong> wird Autodarts pausiert und erst dann die Kamera-Auswahl eingeblendet.
+      </p>
+    {% endif %}
+  </details>
 </div>
 
 <!-- LED Konfiguration -->
@@ -4031,7 +4236,27 @@ def index():
                       {% if webpanel_update_available %}Update installieren{% else %}Webpanel aktualisieren{% endif %}
                     </button>
                   </form>
+                  <form method="post" action="{{ url_for('admin_uvc_hack_install') }}"
+                        onsubmit="return confirm('UVC Hack wirklich installieren?
+
+NICHT BEI FOLGENDEN KAMERAS INSTALLIEREN:
+GXVISION IMX179');" style="margin:0;">
+                    <button type="submit" class="btn btn-danger">UVC Hack installieren</button>
+                  </form>
+                  <form method="post" action="{{ url_for('admin_uvc_hack_uninstall') }}"
+                        onsubmit="return confirm('UVC Hack wirklich deinstallieren?
+
+Ablauf:
+- Autodarts wird gestoppt
+- UVC Hack wird entfernt
+- Originaltreiber wird vorbereitet
+- Danach startet der Raspberry Pi neu');" style="margin:0;">
+                    <button type="submit" class="btn">UVC Hack deinstallieren</button>
+                  </form>
                 </div>
+                <p class="hint" style="margin-top:8px; color:#ffb347;">
+                  UVC Hack nur manuell installieren. Nicht geeignet für: <strong>GXVISION IMX179</strong>.
+                </p>
 
 
             <p class="hint" style="margin-top:8px;">
@@ -4600,10 +4825,10 @@ cp /var/log/pi_monitor_test_README.txt ~/
     return render_template_string(
         html,
         darts_url=darts_url,
-        desired_cams=desired_cams,
         max_cams=MAX_CAMERAS,
-        cam_count_options=cam_count_options,
-        cam_devices_enum=cam_devices_enum,
+        cam_inventory=cam_inventory,
+        cam_slots=cam_slots,
+        cam_devices=cam_devices,
         cam_count_found=cam_count_found,
         cam_info_message=cam_info_message,
         base_port=STREAM_BASE_PORT,
@@ -5303,7 +5528,7 @@ def admin_webpanel_update():
         flash("Webpanel: Kein Update verfügbar.", "info")
         return redirect(url_for("index", admin="1") + "#admin_details")
 
-    ok, err = start_webpanel_update_background()
+    ok, err = start_webpanel_update_background("update")
     if ok:
         flash("Webpanel-Update gestartet. Die Weboberfläche kann kurz neu starten.", "success")
     else:
@@ -5311,6 +5536,26 @@ def admin_webpanel_update():
 
     return redirect(url_for("index", admin="1") + "#admin_details")
 
+
+
+@app.route("/admin/webpanel/uvc-hack", methods=["POST"])
+def admin_uvc_hack_install():
+    if not bool(session.get("admin_unlocked", False)):
+        return ("Forbidden", 403)
+
+    ok, err = start_webpanel_update_background("uvc-hack")
+    msg = "UVC-Hack Installation gestartet." if ok else f"UVC-Hack konnte nicht gestartet werden: {err or 'unbekannt'}."
+    return redirect(url_for("index", admin="1", adminok=("1" if ok else "0"), adminmsg=msg) + "#admin_details")
+
+
+@app.route("/admin/webpanel/uvc-hack-uninstall", methods=["POST"])
+def admin_uvc_hack_uninstall():
+    if not bool(session.get("admin_unlocked", False)):
+        return ("Forbidden", 403)
+
+    ok, err = start_webpanel_update_background("uvc-uninstall")
+    msg = "UVC-Hack Deinstallation gestartet. Der Raspberry Pi startet danach neu." if ok else f"UVC-Hack Deinstallation konnte nicht gestartet werden: {err or 'unbekannt'}."
+    return redirect(url_for("index", admin="1", adminok=("1" if ok else "0"), adminmsg=msg) + "#admin_details")
 
 
 @app.route("/admin/wled-update", methods=["POST"])
@@ -5344,18 +5589,50 @@ def admin_gpio_image():
 
 @app.route("/set_cams", methods=["POST"])
 def set_cams():
-    raw = request.form.get("cam_count", "3")
-    try:
-        desired = int(raw)
-    except ValueError:
-        desired = 3
-
-    desired = max(1, min(MAX_CAMERAS, desired))
-    devices = detect_cameras(desired)
+    cameras = detect_camera_inventory(MAX_CAMERAS)
 
     cfg = load_cam_config()
-    cfg["desired_cams"] = desired
-    cfg["devices"] = devices
+    slots = _normalize_camera_slots(cameras, cfg.get("camera_slots"))
+    cfg["camera_inventory"] = cameras
+    cfg["camera_slots"] = slots
+    cfg["desired_cams"] = len(cameras)
+    cfg["devices"] = _devices_for_slots(cameras, slots)
+    save_cam_config(cfg)
+
+    return redirect(url_for("index"))
+
+
+@app.route("/set_cam_slot/<int:slot_id>", methods=["POST"])
+def set_cam_slot(slot_id: int):
+    cfg = load_cam_config()
+    cameras = cfg.get("camera_inventory", [])
+    if not isinstance(cameras, list) or not cameras:
+        cameras = detect_camera_inventory(MAX_CAMERAS)
+
+    slots = _normalize_camera_slots(cameras, cfg.get("camera_slots"))
+    if slot_id < 1 or slot_id > len(slots):
+        cfg["camera_inventory"] = cameras
+        cfg["camera_slots"] = slots
+        cfg["devices"] = _devices_for_slots(cameras, slots)
+        cfg["desired_cams"] = len(cameras)
+        save_cam_config(cfg)
+        return redirect(url_for("index"))
+
+    selected_camera_id = str(request.form.get("camera_id") or "").strip()
+    valid_ids = {str(cam.get("id") or "").strip() for cam in cameras if isinstance(cam, dict)}
+    if selected_camera_id not in valid_ids:
+        return redirect(url_for("index"))
+
+    for slot in slots:
+        if slot.get("slot") != slot_id and str(slot.get("camera_id") or "") == selected_camera_id:
+            slot["camera_id"] = ""
+    slots[slot_id - 1]["camera_id"] = selected_camera_id
+    slots = _normalize_camera_slots(cameras, slots)
+
+    cfg["camera_inventory"] = cameras
+    cfg["camera_slots"] = slots
+    cfg["devices"] = _devices_for_slots(cameras, slots)
+    cfg["desired_cams"] = len(cameras)
     save_cam_config(cfg)
 
     return redirect(url_for("index"))
@@ -5368,6 +5645,12 @@ def camera_mode_start():
     subprocess.run(["pkill", "-f", "mjpg_streamer"], capture_output=True, text=True)
 
     cfg = load_cam_config()
+    cameras = detect_camera_inventory(MAX_CAMERAS)
+    slots = _normalize_camera_slots(cameras, cfg.get("camera_slots"))
+    cfg["camera_inventory"] = cameras
+    cfg["camera_slots"] = slots
+    cfg["desired_cams"] = len(cameras)
+    cfg["devices"] = _devices_for_slots(cameras, slots)
     cfg["camera_mode"] = True
     save_cam_config(cfg)
 
@@ -6427,11 +6710,10 @@ def cam_view(cam_id: int):
     Live-View einer Kamera:
       - nur möglich, wenn Kamera-Einstellung aktiv ist
       - startet genau EINEN mjpg_streamer (alle anderen werden beendet)
+      - löst den Slot vor dem Start erneut auf die aktuelle physische Kamera auf
     """
     cam_config = load_cam_config()
     camera_mode = bool(cam_config.get("camera_mode", False))
-    devices = cam_config.get("devices", [])
-    cam_count = len(devices)
 
     if not camera_mode:
         return (
@@ -6443,6 +6725,17 @@ def cam_view(cam_id: int):
             400,
         )
 
+    live_inventory = detect_camera_inventory(MAX_CAMERAS)
+    if not live_inventory:
+        live_inventory = cam_config.get("camera_inventory", [])
+        if not isinstance(live_inventory, list):
+            live_inventory = []
+        if not live_inventory:
+            live_inventory = _legacy_inventory_from_devices(cam_config.get("devices", []))
+
+    cam_slots = _normalize_camera_slots(live_inventory, cam_config.get("camera_slots"))
+    cam_count = len(cam_slots)
+
     if cam_count == 0 or cam_id < 1 or cam_id > cam_count:
         return (
             f"<html><body><h1>Kamera {cam_id} nicht verfügbar</h1>"
@@ -6453,7 +6746,36 @@ def cam_view(cam_id: int):
             404,
         )
 
-    dev = devices[cam_id - 1]
+    slot = cam_slots[cam_id - 1]
+    selected_camera_id = str(slot.get("camera_id") or "")
+    cam_entry = next((cam for cam in live_inventory if str(cam.get("id") or "") == selected_camera_id), None)
+    if not cam_entry and 0 <= (cam_id - 1) < len(live_inventory):
+        cam_entry = live_inventory[cam_id - 1]
+
+    if not cam_entry:
+        return (
+            f"<html><body><h1>Kamera {cam_id} nicht verfügbar</h1>"
+            "<p>Die gespeicherte Kamera-Zuordnung konnte nicht mehr aufgelöst werden.</p>"
+            f"<p><a href='{url_for('index')}'>Zurück</a></p>"
+            "</body></html>",
+            404,
+        )
+
+    dev = str(cam_entry.get("preferred_dev") or "").strip()
+    if not dev:
+        return (
+            f"<html><body><h1>Kamera {cam_id} nicht verfügbar</h1>"
+            "<p>Für diese Kamera konnte aktuell kein gültiges /dev/videoX gefunden werden.</p>"
+            f"<p><a href='{url_for('index')}'>Zurück</a></p>"
+            "</body></html>",
+            404,
+        )
+
+    cam_config["camera_inventory"] = live_inventory
+    cam_config["camera_slots"] = cam_slots
+    cam_config["devices"] = _devices_for_slots(live_inventory, cam_slots)
+    cam_config["desired_cams"] = len(live_inventory)
+    save_cam_config(cam_config)
 
     # Autodarts stoppen, damit nichts die Kamera blockiert
     # Alle mjpg_streamer beenden
