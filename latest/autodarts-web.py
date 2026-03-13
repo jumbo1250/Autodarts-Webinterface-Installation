@@ -258,7 +258,7 @@ WEBPANEL_VERSION_FILE = os.environ.get("WEBPANEL_VERSION_FILE", "/var/lib/autoda
 
 # Wenn du die Version lieber direkt im Script pflegen willst: hier eintragen.
 # Leer lassen ("") um wieder die Version aus WEBPANEL_VERSION_FILE / version.txt zu lesen.
-WEBPANEL_HARDCODED_VERSION = "1.49"
+WEBPANEL_HARDCODED_VERSION = "1.47"
 
 
 # Remote (GitHub Raw) – kann per ENV überschrieben werden
