@@ -17,12 +17,6 @@ LOCAL_VER_FILE="${STATE_DIR}/webpanel-version.txt"
 FORCE="${FORCE:-0}"  # FORCE=1 -> alles neu laden, egal ob schon aktuell
 MODE="${1:-update}"
 
-UVC_KERNEL="$(uname -r)"
-UVC_MODDIR="/lib/modules/${UVC_KERNEL}/kernel/drivers/media/usb/uvc"
-UVC_BACKUP_ROOT="${STATE_DIR}/uvc-backup"
-UVC_BACKUP_DIR="${UVC_BACKUP_ROOT}/${UVC_KERNEL}"
-UVC_MARKER="${STATE_DIR}/once-uvc-hack-${UVC_KERNEL}.done"
-
 ts() { date +"[%Y-%m-%d %H:%M:%S]"; }
 log(){ echo "$(ts) $*" | tee -a "${LOG_FILE}" >/dev/null; }
 
@@ -51,91 +45,11 @@ run_once() {
   return 0
 }
 
-uvc_backup_exists() {
-  [[ -f "${UVC_BACKUP_DIR}/uvcvideo.ko" || -f "${UVC_BACKUP_DIR}/uvcvideo.ko.xz" ]]
-}
-
-write_uvc_backup_manifest() {
-  mkdir -p "${UVC_BACKUP_DIR}"
-  local files=""
-  files="$(find "${UVC_BACKUP_DIR}" -maxdepth 1 -type f -printf '%f ' 2>/dev/null || true)"
-  cat > "${UVC_BACKUP_DIR}/manifest.txt" <<EOF
-kernel=${UVC_KERNEL}
-created_at=$(date +"%Y-%m-%d %H:%M:%S")
-source_dir=${UVC_MODDIR}
-files=${files}
-EOF
-}
-
-create_uvc_backup_if_safe() {
-  mkdir -p "${UVC_BACKUP_ROOT}"
-
-  if uvc_backup_exists; then
-    log "UVC backup already exists: ${UVC_BACKUP_DIR}"
-    write_uvc_backup_manifest
-    return 0
-  fi
-
-  if [[ -f "${UVC_MARKER}" ]]; then
-    log "SAFE-ABORT: Kein Original-Backup vorhanden, aber alter UVC-Marker gefunden: ${UVC_MARKER}"
-    log "SAFE-ABORT: Bitte Original-Dateien nach ${UVC_BACKUP_DIR} kopieren, bevor der UVC-Hack erneut installiert oder deinstalliert wird."
-    return 1
-  fi
-
-  if [[ ! -f "${UVC_MODDIR}/uvcvideo.ko" && ! -f "${UVC_MODDIR}/uvcvideo.ko.xz" ]]; then
-    log "SAFE-ABORT: Keine uvcvideo.ko / uvcvideo.ko.xz gefunden unter ${UVC_MODDIR}"
-    return 1
-  fi
-
-  mkdir -p "${UVC_BACKUP_DIR}"
-  if [[ -f "${UVC_MODDIR}/uvcvideo.ko" ]]; then
-    cp -a "${UVC_MODDIR}/uvcvideo.ko" "${UVC_BACKUP_DIR}/uvcvideo.ko"
-  fi
-  if [[ -f "${UVC_MODDIR}/uvcvideo.ko.xz" ]]; then
-    cp -a "${UVC_MODDIR}/uvcvideo.ko.xz" "${UVC_BACKUP_DIR}/uvcvideo.ko.xz"
-  fi
-
-  write_uvc_backup_manifest
-  log "UVC original backup created: ${UVC_BACKUP_DIR}"
-  return 0
-}
-
-restore_uvc_from_backup() {
-  if ! uvc_backup_exists; then
-    log "SAFE-ABORT: Kein lokales Original-Backup gefunden: ${UVC_BACKUP_DIR}"
-    return 1
-  fi
-
-  mkdir -p "${UVC_MODDIR}"
-
-  if [[ -f "${UVC_BACKUP_DIR}/uvcvideo.ko" ]]; then
-    install -m 644 "${UVC_BACKUP_DIR}/uvcvideo.ko" "${UVC_MODDIR}/uvcvideo.ko"
-  else
-    rm -f "${UVC_MODDIR}/uvcvideo.ko" 2>/dev/null || true
-  fi
-
-  if [[ -f "${UVC_BACKUP_DIR}/uvcvideo.ko.xz" ]]; then
-    install -m 644 "${UVC_BACKUP_DIR}/uvcvideo.ko.xz" "${UVC_MODDIR}/uvcvideo.ko.xz"
-  elif [[ -f "${UVC_BACKUP_DIR}/uvcvideo.ko" ]]; then
-    rm -f "${UVC_MODDIR}/uvcvideo.ko.xz" 2>/dev/null || true
-    xz -T0 -f -k "${UVC_MODDIR}/uvcvideo.ko" >>"${LOG_FILE}" 2>&1 || true
-  else
-    rm -f "${UVC_MODDIR}/uvcvideo.ko.xz" 2>/dev/null || true
-  fi
-
-  depmod -a "${UVC_KERNEL}" >>"${LOG_FILE}" 2>&1 || true
-  write_uvc_backup_manifest
-  return 0
-}
-
 install_uvc_hack() {
   log "===== UVC Hack START ====="
 
-  if ! create_uvc_backup_if_safe; then
-    log "===== UVC Hack ABORT ====="
-    echo "NO_BACKUP"
-    return 1
-  fi
+  #beispiel
+  #run_once "NAME" "DEIN_COMMAND"
 
   run_once "uvc-hack-$(uname -r)" '
     set +e
@@ -198,39 +112,33 @@ install_uvc_hack() {
 uninstall_uvc_hack() {
   log "===== UVC Hack UNINSTALL START ====="
 
-  if ! uvc_backup_exists; then
-    log "SAFE-ABORT: Kein lokales Original-Backup vorhanden: ${UVC_BACKUP_DIR}"
-    echo "NO_BACKUP"
-    return 1
-  fi
-
   set +e
 
-  # 1) Autodarts stoppen (damit uvcvideo nicht in Benutzung ist)
+  # 1) Autodarts stoppen (damit uvcvideo nicht "in use" ist)
   systemctl stop autodarts.service || true
-  pkill -f mjpg_streamer 2>/dev/null || true
-  fuser -k /dev/video* 2>/dev/null || true
-  modprobe -r uvcvideo 2>/dev/null || true
 
-  # 2) Originaltreiber ausschließlich aus lokalem Backup zurückspielen
-  if ! restore_uvc_from_backup; then
-    log "SAFE-ABORT: Restore aus Backup fehlgeschlagen."
-    echo "NO_BACKUP"
-    return 1
+  # 2) UVC Hack Uninstall ausführen
+  bash -lc 'bash <(curl -sL get.autodarts.io/uvc) --uninstall || true' >>"${LOG_FILE}" 2>&1 || true
+
+  # 3) WICHTIG (Raspberry Pi OS lädt oft .ko.xz):
+  #    falls uvcvideo.ko vorhanden ist, daraus uvcvideo.ko.xz neu bauen + depmod
+  KVER="$(uname -r)"
+  MODDIR="/lib/modules/$KVER/kernel/drivers/media/usb/uvc"
+  if [[ -f "$MODDIR/uvcvideo.ko" && -f "$MODDIR/uvcvideo.ko.xz" ]]; then
+    xz -T0 -f -k "$MODDIR/uvcvideo.ko" >>"${LOG_FILE}" 2>&1 || true
+    depmod -a "$KVER" >>"${LOG_FILE}" 2>&1 || true
   fi
-
-  # 3) Treiber wieder laden
-  modprobe uvcvideo 2>/dev/null || true
-  rm -f "${UVC_MARKER}" 2>/dev/null || true
 
   log "===== UVC Hack UNINSTALL OK ====="
   log "Schedule reboot system"
 
   # 4) Reboot (damit der Originaltreiber sicher geladen wird)
+  # minimal verzögert, damit Wrapper/Lock sauber aufräumen kann
   nohup bash -lc 'sleep 2; reboot' >/dev/null 2>&1 &
 
   echo "OK"
 }
+
 
 # Lock gegen Doppelklick / parallele Updates
 LOCK="/run/autodarts-webpanel-update.lock"
