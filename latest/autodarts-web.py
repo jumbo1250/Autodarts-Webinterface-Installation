@@ -496,6 +496,54 @@ def get_wifi_status():
 
     return ssid, ip
 
+def get_lan_status():
+    """
+    Liefert die IPv4-Adresse von eth0 oder None,
+    wenn keine aktive LAN-Verbindung vorhanden ist.
+    """
+    ip = None
+
+    try:
+        result = subprocess.run(
+            ["nmcli", "-t", "-f", "DEVICE,STATE", "device"],
+            capture_output=True,
+            text=True,
+            timeout=1.5,
+        )
+        if result.returncode != 0:
+            return None
+
+        eth_connected = False
+        for line in result.stdout.splitlines():
+            parts = line.strip().split(":", 1)
+            if len(parts) >= 2 and parts[0] == "eth0":
+                if parts[1] == "connected":
+                    eth_connected = True
+                break
+
+        if not eth_connected:
+            return None
+    except Exception:
+        return None
+
+    try:
+        result = subprocess.run(
+            ["nmcli", "-t", "-f", "IP4.ADDRESS", "device", "show", "eth0"],
+            capture_output=True,
+            text=True,
+            timeout=1.5,
+        )
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                if line.startswith("IP4.ADDRESS"):
+                    ip_addr = line.split(":", 1)[1].strip()
+                    if ip_addr:
+                        ip = ip_addr.split("/", 1)[0]
+                    break
+    except Exception:
+        pass
+
+    return ip
 
 def _get_default_route_interface() -> str | None:
     """Return interface used for the default route (best proxy for "home network" interface)."""
@@ -887,6 +935,8 @@ def get_index_stats_cached():
         pass
 
     ssid, ip = get_wifi_status()
+    lan_ip = get_lan_status()
+
     autodarts_active = is_autodarts_active()
     autodarts_version = get_autodarts_version()
     cpu_pct, mem_used, mem_total, temp_c = get_system_stats()
@@ -894,14 +944,18 @@ def get_index_stats_cached():
     ping_uplink_iface = get_ping_uplink_interface()
     net_ok = bool(ping_uplink_iface)
     ping_uplink_label = ping_iface_label(ping_uplink_iface) if ping_uplink_iface else ""
+
     wifi_ok = bool(ssid and ip)
-    dongle_ok = wifi_ok or wifi_dongle_present()
+    lan_ok = bool(lan_ip)
+
+    # Dongle nur dann problematisch, wenn weder WLAN noch LAN aktiv ist
+    dongle_ok = lan_ok or wifi_ok or wifi_dongle_present()
 
     data = (
-        ssid, ip,
+        ssid, ip, lan_ip,
         autodarts_active, autodarts_version,
         cpu_pct, mem_used, mem_total, temp_c,
-        wifi_ok, dongle_ok,
+        wifi_ok, lan_ok, dongle_ok,
         net_ok, ping_uplink_label,
         current_ap_ssid,
     )
@@ -3557,10 +3611,10 @@ def index():
     ensure_msg = ensure_autoupdate_default_once()
 
     (
-        ssid, ip,
+        ssid, ip, lan_ip,
         autodarts_active, autodarts_version,
         cpu_pct, mem_used, mem_total, temp_c,
-        wifi_ok, dongle_ok,
+        wifi_ok, lan_ok, dongle_ok,
         net_ok, ping_uplink_label,
         current_ap_ssid,
     ) = get_index_stats_cached()
@@ -3803,7 +3857,7 @@ def index():
   {% endif %}
     <div class="subtitle">by Peter Rottmann v.{{ webpanel_version or '1.20' }} (Multi-WLED)</div>
 
-    {% if not wifi_ok %}
+    {% if not wifi_ok and not lan_ok %}
       <div style="background:#7f1d1d; border:2px solid #f87171; color:#fee2e2;
                   padding:12px 16px; border-radius:10px; margin-bottom:18px;">
         <strong style="font-size:1.1rem;">
@@ -3828,19 +3882,24 @@ def index():
     <div class="card">
       <h2>1. Mit WLAN zuhause verbinden</h2>
       <p>
-        {% if ssid and ip %}
+        {% if lan_ok %}
+          <strong>LAN Verbindung erfolgreich vorhanden.</strong>
+          Der Mini PC ist über <strong>eth0</strong> mit Ihrem Heimnetzwerk verbunden
+          (IP-Adresse: <strong>{{ lan_ip }}</strong>).
+        {% elif ssid and ip %}
           Erfolgreich mit Ihrem WLAN <strong>{{ ssid }}</strong> verbunden
-          (IP-Adresse: <strong>{{ ip }}</strong>) · Signal: <strong id="wifiSignalOut">—</strong> <button type="button" class="btn btn-small" id="wifiSignalBtn" onclick="fetchWifiSignal()">Signal anzeigen</button>.
+          (IP-Adresse: <strong>{{ ip }}</strong>) · Signal: <strong id="wifiSignalOut">—</strong>
+          <button type="button" class="btn btn-small" id="wifiSignalBtn" onclick="fetchWifiSignal()">Signal anzeigen</button>.
         {% elif ssid and not ip %}
           Mit WLAN <strong>{{ ssid }}</strong> verbunden,
-          aber es wurde keine IPv4-Adresse vergeben. Signal: <strong id="wifiSignalOut">—</strong> <button type="button" class="btn btn-small" id="wifiSignalBtn" onclick="fetchWifiSignal()">Signal anzeigen</button>
+          aber es wurde keine IPv4-Adresse vergeben. Signal: <strong id="wifiSignalOut">—</strong>
+          <button type="button" class="btn btn-small" id="wifiSignalBtn" onclick="fetchWifiSignal()">Signal anzeigen</button>
         {% else %}
-          Aktuell ist der Mini PC nicht über den USB-WLAN-Dongle mit Ihrem
-          Heimnetzwerk verbunden.
+          Aktuell ist der Mini PC weder über WLAN noch über LAN mit Ihrem Heimnetzwerk verbunden.
         {% endif %}
       </p>
 
-      {% if not dongle_ok %}
+      {% if not dongle_ok and not lan_ok %}
         <p class="msg-bad">
           Der WLAN-USB-Stick wird aktuell nicht erkannt.
           Bitte ziehen Sie den USB-Stick kurz ab und stecken Sie ihn wieder ein,
@@ -5090,6 +5149,8 @@ cp /var/log/pi_monitor_test_README.txt ~/
         extensions_state=extensions_state,
         extensions_last=extensions_last,
         extensions_log_tail=extensions_log_tail,
+        lan_ok=lan_ok,
+        lan_ip=lan_ip,
     )
 
 
