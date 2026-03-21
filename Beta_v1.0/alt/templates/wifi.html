@@ -1,0 +1,190 @@
+
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <title>WLAN Konfiguration</title>
+  <style>
+    body { font-family: system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:#111; color:#eee; margin:0; padding:0; }
+    .container { max-width: 700px; margin: 0 auto; padding: 24px 16px 60px; }
+    h1 { font-size: 1.6rem; margin-bottom: 8px; }
+    .card { background:#1c1c1c; border-radius:12px; padding:16px 18px 18px; margin-bottom:18px; box-shadow:0 0 20px rgba(0,0,0,0.4); }
+    label { font-size:0.9rem; display:block; margin-bottom:4px; }
+    input[type=text], input[type=password] { width:100%; padding:8px; border-radius:8px; border:1px solid #444; background:#111; color:#eee; margin-bottom:10px; font-family:inherit; }
+    .btn-row { display:flex; gap:10px; margin-top:10px; flex-wrap:wrap; }
+    .btn { display:inline-block; padding:10px 16px; border-radius:999px; border:1px solid #444; background:#2a2a2a; color:#eee; text-decoration:none; font-size:0.95rem; cursor:pointer; }
+    .btn-primary { background:#3b82f6; border-color:#3b82f6; color:white; }
+    .btn-danger { background:#ef4444; border-color:#ef4444; color:white; }
+    .msg-ok { color:#6be26b; margin-bottom:8px; white-space:pre-line; }
+    .msg-bad { color:#ff6b6b; margin-bottom:8px; white-space:pre-line; }
+    .hint { font-size:0.8rem; opacity:0.7; margin-top:4px; }
+    code { background:#0b0b0b; padding:2px 6px; border-radius:6px; border:1px solid #333; }
+    .dot { display:inline-block; width:10px; height:10px; border-radius:999px; margin-right:6px; vertical-align:middle; }
+    .dot-green { background:#6be26b; }
+    .dot-red { background:#ff6b6b; }
+    .dot-gray { background:#9ca3af; }
+    details { border:1px solid #333; border-radius:12px; padding:12px 14px; background:#171717; }
+    details summary { cursor:pointer; list-style:none; user-select:none; font-weight:600; }
+    details summary::-webkit-details-marker { display:none; }
+    .admin-hint { font-size:0.8rem; opacity:0.75; margin-top:6px; }
+
+  
+    .msg-info { color:#9ad1ff; margin-bottom:8px; white-space:pre-line; }
+
+    .row { display:flex; gap:10px; align-items:center; }
+    .row.small { font-size: 0.95em; margin-top: 6px; }
+    #ssidPick { flex: 1; min-width: 220px; }
+    .hint-small { font-size: 0.9em; opacity: 0.85; }
+</style>
+</head>
+<body>
+  <div class="container">
+    <h1>WLAN Konfiguration (USB-Dongle)</h1>
+
+    <div class="card">
+      <p>{{ current_info | safe }}</p>
+
+      {% if message %}
+        <p class="{{ 'msg-ok' if success else 'msg-bad' }}">{{ message }}</p>
+      {% endif %}
+
+        <p id="workmsg" class="msg-info" style="display:none;">Verbindung wird hergestellt … bitte warten (kann 10–30 Sekunden dauern).</p>
+
+      <form method="post" id="wifiForm">
+        <label for="ssidPick">WLAN auswählen</label>
+        <div class="row">
+          <select id="ssidPick" aria-label="WLAN auswählen"></select>
+          <button type="button" class="btn" id="wifiRefresh">Refresh</button>
+        </div>
+        <label class="row small"><input type="checkbox" id="ssidManual"> SSID manuell eingeben (Hidden/unsichtbar)</label>
+
+        <label for="ssid" id="ssidLabel">WLAN Name (SSID)</label>
+        <input type="text" id="ssid" name="ssid" required>
+
+        <label for="password">WLAN Passwort</label>
+        <input type="password" id="password" name="password">
+
+        <p class="hint">
+          Für Profis: Interface = <code>{{ wifi_interface }}</code>,
+          Verbindung = <code>{{ wifi_connection_name }}</code><br>
+          Hinweis: Bei bestimmten Gerätefehlern wird die Verbindung
+          automatisch ein zweites Mal versucht (inkl. kurzem WLAN-Dongle-Reset).
+        
+
+</p>
+
+        <div class="btn-row">
+          <button type="submit" class="btn btn-primary">Verbinden</button>
+          <a href="{{ url_for('index') }}" class="btn">Zurück</a>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+  (function(){
+    const form = document.getElementById('wifiForm');
+    if (!form) return;
+    form.addEventListener('submit', function(){
+      const msg = document.getElementById('workmsg');
+      if (msg) msg.style.display = 'block';
+      const btn = form.querySelector('button[type="submit"]');
+      if (btn) { btn.disabled = true; btn.textContent = 'Bitte warten…'; }
+    });
+  })();
+  </script>
+
+<script>
+(function(){
+  const pick = document.getElementById('ssidPick');
+  const ssidInput = document.getElementById('ssid');
+  const manual = document.getElementById('ssidManual');
+  const refreshBtn = document.getElementById('wifiRefresh');
+  const ssidLabel = document.getElementById('ssidLabel');
+
+  function setManualMode(on){
+    if(on){
+      if(pick) pick.style.display = 'none';
+      if(refreshBtn) refreshBtn.style.display = 'none';
+      if(ssidLabel) ssidLabel.style.display = '';
+      if(ssidInput){ ssidInput.style.display = ''; ssidInput.readOnly = false; ssidInput.focus(); }
+    }else{
+      if(pick) pick.style.display = '';
+      if(refreshBtn) refreshBtn.style.display = '';
+      if(ssidLabel) ssidLabel.style.display = 'none';
+      if(ssidInput){ ssidInput.style.display = 'none'; ssidInput.readOnly = true; }
+    }
+  }
+
+  async function loadWifi(){
+    if(!pick) return;
+    pick.innerHTML = '<option>Suche WLANs…</option>';
+    try{
+      const r = await fetch('/api/wifi/scan', {cache:'no-store'});
+      const j = await r.json();
+      if(!j.ok){ throw new Error(j.msg || 'Scan fehlgeschlagen'); }
+
+      pick.innerHTML = '';
+      const nets = j.networks || [];
+      if(nets.length === 0){
+        pick.innerHTML = '<option value="">(Keine SSIDs gefunden – ggf. Refresh oder manuell)</option>';
+        setManualMode(true);
+        if(manual) manual.checked = true;
+        return;
+      }
+
+      // Placeholder
+      const ph = document.createElement('option');
+      ph.value = '';
+      ph.textContent = '(WLAN auswählen…)';
+      pick.appendChild(ph);
+
+      for(const n of nets){
+        const opt = document.createElement('option');
+        opt.value = n.ssid;
+        const sec = n.security ? n.security : 'open';
+        const star = n.in_use ? '★ ' : '';
+        opt.textContent = `${star}${n.ssid} (${n.signal}%, ${sec})`;
+        if(n.in_use) opt.selected = true;
+        pick.appendChild(opt);
+      }
+
+      // If something selected, sync into the real input
+      if(pick.value){
+        ssidInput.value = pick.value;
+      }else{
+        // If a ★ network exists, it will already be selected; ensure sync
+        const sel = pick.querySelector('option[selected]');
+        if(sel && sel.value){ pick.value = sel.value; ssidInput.value = sel.value; }
+      }
+
+      setManualMode(false);
+      if(manual) manual.checked = false;
+    }catch(e){
+      // On any error: fall back to manual entry
+      setManualMode(true);
+      if(manual) manual.checked = true;
+      if(pick) pick.innerHTML = '<option value="">(Scan fehlgeschlagen – manuell eingeben)</option>';
+      console.log(e);
+    }
+  }
+
+  if(manual){
+    manual.addEventListener('change', ()=> setManualMode(manual.checked));
+  }
+  if(pick){
+    pick.addEventListener('change', ()=>{
+      ssidInput.value = pick.value || '';
+      // if placeholder chosen, keep empty so required triggers on submit
+    });
+  }
+  if(refreshBtn){
+    refreshBtn.addEventListener('click', loadWifi);
+  }
+
+  // Start
+  loadWifi();
+})();
+</script>
+</body>
+</html>

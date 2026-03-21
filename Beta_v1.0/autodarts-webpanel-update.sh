@@ -23,11 +23,27 @@ UVC_BACKUP_ROOT="${STATE_DIR}/uvc-backup"
 UVC_BACKUP_DIR="${UVC_BACKUP_ROOT}/${UVC_KERNEL}"
 UVC_MARKER="${STATE_DIR}/once-uvc-hack-${UVC_KERNEL}.done"
 
+WEBPANEL_ZIP_NAME="webpanel.zip"
+WEBPANEL_ZIP_URL="${BASE_URL}/${WEBPANEL_ZIP_NAME}"
+
+# Dateien die einzeln aktualisiert werden sollen: "RemoteName|LocalPath"
+# WICHTIG: Fehlt eine Datei im Repo -> wird geskippt (kein Abbruch).
+# autodarts-web.py ist absichtlich NICHT mehr dabei, weil diese Datei nur noch aus webpanel.zip kommt.
+FILES=(
+  "autodarts-button-led.py|${BIN_DIR}/autodarts-button-led.py"
+  "autodarts-extensions-update.sh|${BIN_DIR}/autodarts-extensions-update.sh"
+  "Autodarts_install_manual.pdf|${DATA_DIR}/Autodarts_install_manual.pdf"
+  "GPIO_Setup.jpeg|${DATA_DIR}/GPIO_Setup.jpeg"
+  "Autodarts_Installationshandbuch_v2.docx|${DATA_DIR}/Autodarts_Installationshandbuch_v2.docx"
+  "start-custom.sh|/var/lib/autodarts/config/darts-wled/start-custom.sh"
+  "version.txt|${LOCAL_VER_FILE}"
+  # OPTIONAL: Updater selbst (wenn nicht vorhanden -> skip)
+  "autodarts-webpanel-update.sh|${BIN_DIR}/autodarts-webpanel-update.sh"
+)
+
 ts() { date +"[%Y-%m-%d %H:%M:%S]"; }
 log(){ echo "$(ts) $*" | tee -a "${LOG_FILE}" >/dev/null; }
 
-# curl installation
-# Ergebnis: jeder Job bekommt seinen eigenen Marker
 run_once() {
   local name="$1"
   local cmd="$2"
@@ -51,6 +67,121 @@ run_once() {
   return 0
 }
 
+normalize_text_file() {
+  local f="$1"
+  sed -i 's/\r$//' "$f" 2>/dev/null || true
+  sed -i '1s/^\xEF\xBB\xBF//' "$f" 2>/dev/null || true
+}
+
+is_text_ext() {
+  case "$1" in
+    *.sh|*.py|*.service|*.txt|*.json|*.yml|*.yaml|*.md|*.conf|*.cfg|*.html|*.css|*.js) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+version_gt() {
+  local a="${1:-}"
+  local b="${2:-}"
+
+  [[ -n "$a" ]] || return 1
+  [[ -n "$b" ]] || return 0
+  [[ "$a" == "$b" ]] && return 1
+
+  local highest
+  highest="$(printf '%s\n%s\n' "$a" "$b" | sort -V | tail -n1)"
+  [[ "$highest" == "$a" ]]
+}
+
+backup_path() {
+  local path="$1"
+  if [[ -e "$path" ]]; then
+    cp -a "$path" "${path}.bak.$(date +%Y%m%d_%H%M%S)" || true
+  fi
+}
+
+extract_zip_with_python() {
+  local zip_file="$1"
+  local dest_dir="$2"
+
+  python3 - "$zip_file" "$dest_dir" >>"${LOG_FILE}" 2>&1 <<'PY'
+import os
+import sys
+import zipfile
+
+zip_file = sys.argv[1]
+dest_dir = sys.argv[2]
+
+os.makedirs(dest_dir, exist_ok=True)
+with zipfile.ZipFile(zip_file, 'r') as zf:
+    zf.extractall(dest_dir)
+PY
+}
+
+extract_zip() {
+  local zip_file="$1"
+  local dest_dir="$2"
+
+  if command -v unzip >/dev/null 2>&1; then
+    unzip -oq "$zip_file" -d "$dest_dir" >>"${LOG_FILE}" 2>&1
+    return $?
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    extract_zip_with_python "$zip_file" "$dest_dir"
+    return $?
+  fi
+
+  log "ERROR: Weder unzip noch python3 verfügbar - ZIP kann nicht entpackt werden"
+  return 1
+}
+
+install_webpanel_from_zip() {
+  local zip_file="$1"
+  local extract_dir="$2/webpanel_zip"
+  local ts_now
+  ts_now="$(date +%Y%m%d_%H%M%S)"
+
+  log "Installiere Webpanel aus ${WEBPANEL_ZIP_NAME}"
+  rm -rf "$extract_dir"
+  mkdir -p "$extract_dir"
+
+  if ! extract_zip "$zip_file" "$extract_dir"; then
+    log "ERROR: ${WEBPANEL_ZIP_NAME} konnte nicht entpackt werden"
+    return 1
+  fi
+
+  if [[ ! -f "${extract_dir}/autodarts-web.py" ]]; then
+    log "ERROR: ${WEBPANEL_ZIP_NAME} enthält keine autodarts-web.py"
+    return 1
+  fi
+
+  mkdir -p "${BIN_DIR}"
+
+  if [[ -f "${BIN_DIR}/autodarts-web.py" ]]; then
+    cp -a "${BIN_DIR}/autodarts-web.py" "${BIN_DIR}/autodarts-web.py.bak.${ts_now}" || true
+  fi
+  install -m 644 "${extract_dir}/autodarts-web.py" "${BIN_DIR}/autodarts-web.py"
+  chmod 777 "${BIN_DIR}/autodarts-web.py" || true
+
+  for dir_name in templates static; do
+    if [[ -d "${extract_dir}/${dir_name}" ]]; then
+      if [[ -e "${BIN_DIR}/${dir_name}" ]]; then
+        cp -a "${BIN_DIR}/${dir_name}" "${BIN_DIR}/${dir_name}.bak.${ts_now}" || true
+        rm -rf "${BIN_DIR:?}/${dir_name}"
+      fi
+      mkdir -p "${BIN_DIR}/${dir_name}"
+      cp -a "${extract_dir}/${dir_name}/." "${BIN_DIR}/${dir_name}/"
+      chmod -R 777 "${BIN_DIR}/${dir_name}" || true
+      log "OK: ${dir_name}/ aus ZIP ersetzt"
+    else
+      log "INFO: ${dir_name}/ nicht in ${WEBPANEL_ZIP_NAME} enthalten -> skip"
+    fi
+  done
+
+  return 0
+}
+
 uvc_backup_exists() {
   [[ -f "${UVC_BACKUP_DIR}/uvcvideo.ko" || -f "${UVC_BACKUP_DIR}/uvcvideo.ko.xz" ]]
 }
@@ -59,12 +190,12 @@ write_uvc_backup_manifest() {
   mkdir -p "${UVC_BACKUP_DIR}"
   local files=""
   files="$(find "${UVC_BACKUP_DIR}" -maxdepth 1 -type f -printf '%f ' 2>/dev/null || true)"
-  cat > "${UVC_BACKUP_DIR}/manifest.txt" <<EOF
+  cat > "${UVC_BACKUP_DIR}/manifest.txt" <<EOF2
 kernel=${UVC_KERNEL}
 created_at=$(date +"%Y-%m-%d %H:%M:%S")
 source_dir=${UVC_MODDIR}
 files=${files}
-EOF
+EOF2
 }
 
 create_uvc_backup_if_safe() {
@@ -143,7 +274,6 @@ install_uvc_hack() {
     AD_SERVICE="autodarts.service"
     WAS_ACTIVE=0
 
-    # Autodarts stoppen (nur wenn Service existiert & aktiv ist)
     if systemctl status "$AD_SERVICE" >/dev/null 2>&1; then
       if systemctl is-active --quiet "$AD_SERVICE"; then
         WAS_ACTIVE=1
@@ -155,13 +285,8 @@ install_uvc_hack() {
       echo "Service $AD_SERVICE not found -> skip stop"
     fi
 
-    # (optional) Falls irgendwas anderes die Cam blockiert:
-    # fuser -k /dev/video* 2>/dev/null || true
-
-    # UVC Hack installieren (build + copy)
     bash <(curl -sL get.autodarts.io/uvc)
 
-    # Dein .ko.xz Problem fixen (System lädt .ko.xz)
     KVER="$(uname -r)"
     MODDIR="/lib/modules/${KVER}/kernel/drivers/media/usb/uvc"
 
@@ -171,11 +296,9 @@ install_uvc_hack() {
       depmod -a "${KVER}"
     fi
 
-    # Treiber reloaden (klappt jetzt eher, weil Autodarts gestoppt ist)
     modprobe -r uvcvideo 2>/dev/null || true
     modprobe uvcvideo 2>/dev/null || true
 
-    # Autodarts wieder starten, falls vorher aktiv
     if [[ "$WAS_ACTIVE" -eq 1 ]]; then
       echo "Starting $AD_SERVICE ..."
       systemctl start "$AD_SERVICE" || true
@@ -184,7 +307,6 @@ install_uvc_hack() {
     exit 0
   '
 
-  # Kernel-Hold wie bisher mitnehmen, damit der UVC-Treiber nicht überschrieben wird
   run_once "Kernel_hold_2026-07-06_off" '
     apt-mark hold raspi-firmware 2>/dev/null || true
     dpkg -l | awk "/^ii  linux-(image|headers)-rpi/ {print \$2}" | xargs -r apt-mark hold 2>/dev/null || true
@@ -206,33 +328,28 @@ uninstall_uvc_hack() {
 
   set +e
 
-  # 1) Autodarts stoppen (damit uvcvideo nicht in Benutzung ist)
   systemctl stop autodarts.service || true
   pkill -f mjpg_streamer 2>/dev/null || true
   fuser -k /dev/video* 2>/dev/null || true
   modprobe -r uvcvideo 2>/dev/null || true
 
-  # 2) Originaltreiber ausschließlich aus lokalem Backup zurückspielen
   if ! restore_uvc_from_backup; then
     log "SAFE-ABORT: Restore aus Backup fehlgeschlagen."
     echo "NO_BACKUP"
     return 1
   fi
 
-  # 3) Treiber wieder laden
   modprobe uvcvideo 2>/dev/null || true
   rm -f "${UVC_MARKER}" 2>/dev/null || true
 
   log "===== UVC Hack UNINSTALL OK ====="
   log "Schedule reboot system"
 
-  # 4) Reboot (damit der Originaltreiber sicher geladen wird)
   nohup bash -lc 'sleep 2; reboot' >/dev/null 2>&1 &
 
   echo "OK"
 }
 
-# Lock gegen Doppelklick / parallele Updates
 LOCK="/run/autodarts-webpanel-update.lock"
 if command -v flock >/dev/null 2>&1; then
   exec 9>"$LOCK"
@@ -251,88 +368,54 @@ if [[ "${MODE}" == "--uvc-uninstall" || "${MODE}" == "uvc-uninstall" ]]; then
   exit 0
 fi
 
-
 REMOTE_VER="$(curl -sSL "${BASE_URL}/version.txt" 2>/dev/null | tr -d '\r\n' || true)"
 LOCAL_VER="$(cat "${LOCAL_VER_FILE}" 2>/dev/null | tr -d '\r\n' || true)"
 log "Local:  ${LOCAL_VER:-unknown}"
 log "Remote: ${REMOTE_VER:-unknown}"
 
+if [[ -z "${REMOTE_VER}" ]]; then
+  log "ERROR: Remote version.txt konnte nicht gelesen werden"
+  exit 1
+fi
+
+if [[ "${FORCE}" != "1" ]] && [[ -n "${LOCAL_VER}" ]] && ! version_gt "${REMOTE_VER}" "${LOCAL_VER}"; then
+  log "Kein Update nötig (lokal aktuell oder neuer)."
+  echo "UP_TO_DATE"
+  exit 0
+fi
+
 TMP_DIR="$(mktemp -d)"
 cleanup(){ rm -rf "${TMP_DIR}"; }
 trap cleanup EXIT
 
-# Dateien die aktualisiert werden sollen: "RemoteName|LocalPath"
-# WICHTIG: Fehlt eine Datei im Repo -> wird geskippt (kein Abbruch).
-FILES=(
-  "autodarts-web.py|${BIN_DIR}/autodarts-web.py"
-  "autodarts-button-led.py|${BIN_DIR}/autodarts-button-led.py"
-  "autodarts-extensions-update.sh|${BIN_DIR}/autodarts-extensions-update.sh"
-  "Autodarts_install_manual.pdf|${DATA_DIR}/Autodarts_install_manual.pdf"
-  "GPIO_Setup.jpeg|${DATA_DIR}/GPIO_Setup.jpeg"
-  "Autodarts_Installationshandbuch_v2.docx|${DATA_DIR}/Autodarts_Installationshandbuch_v2.docx"
-  "start-custom.sh|/var/lib/autodarts/config/darts-wled/start-custom.sh"
-  "version.txt|${LOCAL_VER_FILE}"
-  # OPTIONAL: Updater selbst (wenn nicht vorhanden -> skip)
-  "autodarts-webpanel-update.sh|${BIN_DIR}/autodarts-webpanel-update.sh"
-)
-
-# Merken, was erfolgreich geladen wurde (damit wir nur das ersetzen)
 declare -A DOWNLOADED=()
+UPDATED_START_CUSTOM=0
+UPDATED_ANY=0
 
-normalize_text_file() {
-  local f="$1"
-  # Windows-CRLF -> LF
-  sed -i 's/\r$//' "$f" 2>/dev/null || true
-  # optional: UTF-8 BOM entfernen
-  sed -i '1s/^\xEF\xBB\xBF//' "$f" 2>/dev/null || true
-}
-
-is_text_ext() {
-  case "$1" in
-    *.sh|*.py|*.service|*.txt|*.json|*.yml|*.yaml|*.md|*.conf|*.cfg) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-# 1) Download-Phase (aber: fehlende Dateien -> SKIP, unveränderte -> SKIP)
+# 1) Einzeldateien laden
 for entry in "${FILES[@]}"; do
   IFS="|" read -r src dst <<< "${entry}"
   url="${BASE_URL}/${src}"
   out="${TMP_DIR}/${src}"
 
   rm -f "${out}" 2>/dev/null || true
-
-  # Conditional Download: wenn lokal vorhanden und FORCE!=1 -> nur holen, wenn remote neuer ist
-  if [[ "${FORCE}" != "1" && -f "${dst}" ]]; then
-    log "Check/Download (nur wenn neuer): ${src}"
-    http_code="$(curl -sSL --retry 2 --connect-timeout 5 --max-time 30 \
-      -z "${dst}" -o "${out}" -w "%{http_code}" "${url}" || true)"
-  else
-    log "Download: ${src}"
-    http_code="$(curl -sSL --retry 2 --connect-timeout 5 --max-time 30 \
-      -o "${out}" -w "%{http_code}" "${url}" || true)"
-  fi
+  log "Download: ${src}"
+  http_code="$(curl -sSL --retry 2 --connect-timeout 5 --max-time 60 -o "${out}" -w "%{http_code}" "${url}" || true)"
 
   case "${http_code}" in
     200)
-      # nicht leer (falls GitHub mal Mist liefert)
       if [[ ! -s "${out}" ]]; then
         log "WARN: ${src} wurde leer geladen -> skip"
         rm -f "${out}" || true
         continue
       fi
 
-      # Textdateien normalisieren (CRLF/BOM)
       if is_text_ext "${src}"; then
         normalize_text_file "${out}"
       fi
 
       DOWNLOADED["${src}"]=1
       log "OK: ${src} geladen"
-      ;;
-    304)
-      log "UNCHANGED: ${src} (skip)"
-      rm -f "${out}" || true
       ;;
     404)
       log "MISSING: ${src} nicht im Repo -> skip"
@@ -349,33 +432,63 @@ for entry in "${FILES[@]}"; do
   esac
 done
 
-# 2) Ersetzen (mit Backup) + ALLES 777 (wie bisher)
-UPDATED_START_CUSTOM=0
+# 2) webpanel.zip optional laden und installieren
+WEBPANEL_ZIP_FILE="${TMP_DIR}/${WEBPANEL_ZIP_NAME}"
+rm -f "${WEBPANEL_ZIP_FILE}" 2>/dev/null || true
+log "Prüfe optionales Paket: ${WEBPANEL_ZIP_NAME}"
+ZIP_HTTP_CODE="$(curl -sSL --retry 2 --connect-timeout 5 --max-time 120 -o "${WEBPANEL_ZIP_FILE}" -w "%{http_code}" "${WEBPANEL_ZIP_URL}" || true)"
 
+case "${ZIP_HTTP_CODE}" in
+  200)
+    if [[ -s "${WEBPANEL_ZIP_FILE}" ]]; then
+      if install_webpanel_from_zip "${WEBPANEL_ZIP_FILE}" "${TMP_DIR}"; then
+        UPDATED_ANY=1
+        log "OK: ${WEBPANEL_ZIP_NAME} installiert"
+      else
+        log "ERROR: Installation aus ${WEBPANEL_ZIP_NAME} fehlgeschlagen"
+        exit 1
+      fi
+    else
+      log "WARN: ${WEBPANEL_ZIP_NAME} wurde leer geladen -> skip"
+    fi
+    ;;
+  404)
+    log "INFO: ${WEBPANEL_ZIP_NAME} nicht im Repo -> skip"
+    ;;
+  000|"")
+    log "WARN: ${WEBPANEL_ZIP_NAME} Download-Problem (network/timeout?) -> skip"
+    ;;
+  *)
+    log "WARN: ${WEBPANEL_ZIP_NAME} HTTP=${ZIP_HTTP_CODE} -> skip"
+    ;;
+esac
+
+# 3) Einzeldateien ersetzen
 for entry in "${FILES[@]}"; do
   IFS="|" read -r src dst <<< "${entry}"
 
-  # nur ersetzen, wenn geladen
   if [[ -z "${DOWNLOADED[${src}]+x}" ]]; then
     continue
   fi
 
   mkdir -p "$(dirname "${dst}")"
-
-  if [[ -f "${dst}" ]]; then
-    cp -a "${dst}" "${dst}.bak.$(date +%Y%m%d_%H%M%S)" || true
-  fi
-
+  backup_path "${dst}"
   install -m 644 "${TMP_DIR}/${src}" "${dst}"
   chmod 777 "${dst}" || true
+  UPDATED_ANY=1
 
   if [[ "${src}" == "start-custom.sh" ]]; then
     UPDATED_START_CUSTOM=1
   fi
 done
 
-# Optional: auch die Ordner offen lassen (wenn du willst, sonst rauslöschen)
 chmod 777 "${BIN_DIR}" "${DATA_DIR}" "${STATE_DIR}" 2>/dev/null || true
+
+if [[ "${UPDATED_ANY}" != "1" ]]; then
+  log "Kein Updatepaket installiert."
+  echo "NOTHING_UPDATED"
+  exit 0
+fi
 
 log "Restart ${WEB_SERVICE}"
 systemctl restart "${WEB_SERVICE}" || {
@@ -383,7 +496,6 @@ systemctl restart "${WEB_SERVICE}" || {
   exit 1
 }
 
-# darts-wled nur neu starten, wenn start-custom.sh wirklich aktualisiert wurde
 if [[ "${UPDATED_START_CUSTOM}" == "1" ]]; then
   if systemctl list-unit-files | grep -q "^darts-wled.service"; then
     log "Restart darts-wled.service (start-custom.sh updated)"
@@ -391,19 +503,6 @@ if [[ "${UPDATED_START_CUSTOM}" == "1" ]]; then
   fi
 fi
 
-#
-# EIN!
-# Kernel update stop update, damit der geflashte kamera kernerl treiber uvc hack
-# nicht ueberschreiben wird. bei jedem mal wenn es gemacht werden soll aktiv sein soll
-# muss man das aktuelle datum reinschreiben
-#run_once "Kernel_update_stop_16.02_on" '
-  #apt-mark unhold raspi-firmware 2>/dev/null || true
-  #dpkg -l | awk "/^ii  linux-(image|headers)-rpi/ {print \$2}" | xargs -r apt-mark unhold 2>/dev/null || true
-  #exit 0
-#'
-#
-# AUS!
-# uppdate einschalten, muss aber wieder ausgeschaltet werden, entweder EIn oder Aus auskommtieren
 run_once "Kernel_hold_2026-07-06_off" '
   apt-mark hold raspi-firmware 2>/dev/null || true
   dpkg -l | awk "/^ii  linux-(image|headers)-rpi/ {print \$2}" | xargs -r apt-mark hold 2>/dev/null || true
