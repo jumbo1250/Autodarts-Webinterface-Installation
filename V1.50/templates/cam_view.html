@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <title>Kamera {{ cam_id }} – Live-Stream</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/cam_view.css') }}">
+  <script src="{{ url_for('static', filename='js/i18n.js') }}"></script>
+</head>
+<body>
+  <h1>
+    <span data-key="cam_view.camera_label">Kamera</span>
+    {{ cam_id }}
+    <span data-key="cam_view.live_stream_suffix">– Live-Stream</span>
+  </h1>
+  <div class="info">
+    <span data-key="cam_view.paused_notice">Autodarts wurde für die Kamera-Feinjustierung vorübergehend angehalten.</span><br>
+    <span data-key="cam_view.stream_url_label">Stream-URL:</span> {{ stream_url }}
+  </div>
+  <img src="{{ stream_url }}" alt="Kamera-Stream {{ cam_id }}">
+</body>
+</html>

@@ -1,0 +1,35 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title data-key="journal.page_title">Live Logs</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/admin_journal.css') }}">
+   <script src="{{ url_for('static', filename='js/i18n.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/admin_journal.js') }}"></script>
+
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div class="row" id="tabs">
+        <a class="btn active" href="#" data-unit="darts-caller.service">darts-caller</a>
+        <a class="btn" href="#" data-unit="darts-wled.service">darts-wled</a>
+      </div>
+      <div class="row" style="margin-left:auto;">
+        <a class="btn" href="#" id="btnPause" data-key="journal.pause">⏸ Pause</a>
+        <a class="btn" href="#" id="btnClear" data-key="journal.clear">🧹 Clear</a>
+        <a class="btn danger" href="#" id="btnClose" data-key="journal.close">✖ Close</a>
+      </div>
+    </div>
+    <div class="hint">
+      <span data-key="journal.hint.live_stream">Live-Stream aus</span>
+      <code>journalctl -f -o cat</code>.
+      <span data-key="journal.hint.admin_only">(Admin-only)</span>
+      –
+      <span data-key="journal.hint.passwords_masked">Passwörter werden grob maskiert.</span>
+    </div>
+    <div id="log"></div>
+  </div>
+</body>
+</html>

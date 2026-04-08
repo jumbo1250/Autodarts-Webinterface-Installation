@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title data-key="wifi_ping.page_title">Verbindungstest</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/wifi_ping.css') }}">
+  <script src="{{ url_for('static', filename='js/i18n.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/wifi_ping.js') }}"></script>
+</head>
+<body>
+  <div class="container">
+    <h1 data-key="wifi_ping.title">Verbindungstest (30 Pakete)</h1>
+
+    <div class="card">
+      <div class="hint" style="margin-top:0;">
+        <span data-key="wifi_ping.hint.test_prefix">Dieser Test pingt den</span>
+        <strong data-key="wifi_ping.hint.gateway_router">Gateway/Router</strong>
+        <span data-key="wifi_ping.hint.test_middle">(nicht autodarts.io) und zeigt Paketverlust &amp; Latenz.</span>
+        <span data-key="wifi_ping.hint.duration">Dauer: ca. 30 Sekunden.</span>
+      </div>
+
+      <div id="st" class="hint" style="margin-top:10px;" data-key="wifi_ping.status.starting">Starte…</div>
+
+      <div style="height:10px; background:#0b0b0b; border:1px solid #333; border-radius:999px; overflow:hidden; margin-top:10px;">
+        <div id="bar" style="height:100%; width:0%; background:#3b82f6;"></div>
+      </div>
+
+      <pre id="out">—</pre>
+
+      <div class="btn-row">
+        <a href="{{ url_for('index') }}" class="btn" data-key="common.back">Zurück</a>
+        <button type="button" id="again" class="btn btn-primary" data-key="wifi_ping.restart">Erneut starten</button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
