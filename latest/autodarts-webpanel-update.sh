@@ -164,7 +164,7 @@ install_webpanel_from_zip() {
   install -m 644 "${extract_dir}/autodarts-web.py" "${BIN_DIR}/autodarts-web.py"
   chmod 777 "${BIN_DIR}/autodarts-web.py" || true
 
-  for dir_name in templates static; do
+  for dir_name in templates static theme; do
     if [[ -d "${extract_dir}/${dir_name}" ]]; then
       if [[ -e "${BIN_DIR}/${dir_name}" ]]; then
         cp -a "${BIN_DIR}/${dir_name}" "${BIN_DIR}/${dir_name}.bak.${ts_now}" || true
