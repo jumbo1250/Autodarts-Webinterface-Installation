@@ -37,6 +37,7 @@ FILES=(
   "Autodarts_Installationshandbuch_v2.docx|${DATA_DIR}/Autodarts_Installationshandbuch_v2.docx"
   "start-custom.sh|/var/lib/autodarts/config/darts-wled/start-custom.sh"
   "version.txt|${LOCAL_VER_FILE}"
+  "fix_ap_internet_sharing_v3.sh|${BIN_DIR}/autodarts-ap-internet-fix.sh"
   # OPTIONAL: Updater selbst (wenn nicht vorhanden -> skip)
   "autodarts-webpanel-update.sh|${BIN_DIR}/autodarts-webpanel-update.sh"
 )
@@ -134,6 +135,24 @@ extract_zip() {
 
   log "ERROR: Weder unzip noch python3 verfügbar - ZIP kann nicht entpackt werden"
   return 1
+}
+
+
+run_ap_internet_fix_if_present() {
+  local fix_script="${BIN_DIR}/autodarts-ap-internet-fix.sh"
+  if [[ ! -f "$fix_script" ]]; then
+    log "INFO: Kein AP-Internet-Fix-Script vorhanden -> skip"
+    return 0
+  fi
+  chmod +x "$fix_script" 2>/dev/null || true
+  log "Starte AP-Internet-Fix-Script: $fix_script"
+  if AP_IF="wlan_ap" UPLINK_IFS="wlan0 eth0" bash "$fix_script" >>"${LOG_FILE}" 2>&1; then
+    log "OK: AP-Internet-Fix-Script erfolgreich ausgeführt"
+  else
+    local rc=$?
+    log "WARN: AP-Internet-Fix-Script meldete Fehler (exit=$rc) -> Update läuft weiter"
+  fi
+  return 0
 }
 
 install_webpanel_from_zip() {
@@ -502,6 +521,8 @@ if [[ "${UPDATED_START_CUSTOM}" == "1" ]]; then
     systemctl restart darts-wled.service || true
   fi
 fi
+
+run_ap_internet_fix_if_present
 
 run_once "Kernel_hold_2026-07-06_off" '
   apt-mark hold raspi-firmware 2>/dev/null || true
