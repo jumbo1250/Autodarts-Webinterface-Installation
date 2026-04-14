@@ -2,139 +2,312 @@
 set -euo pipefail
 
 AP_IF="${AP_IF:-wlan_ap}"
-UPLINK_IFS="${UPLINK_IFS:-eth0 wlan0}"
+AP_CONN="${AP_CONN:-Autodarts-AP}"
+UPLINK_IFS="${UPLINK_IFS:-wlan0 eth0}"
+
 STATE_DIR="/var/lib/autodarts"
-STATE_FILE="$STATE_DIR/ap-internet-status.json"
-INSTALL_DIR="/usr/local/lib/autodarts"
-APPLY_SCRIPT="$INSTALL_DIR/apply-ap-internet-rules.sh"
-DISPATCHER_SCRIPT="/etc/NetworkManager/dispatcher.d/90-autodarts-ap-internet"
-SYSCTL_FILE="/etc/sysctl.d/99-autodarts-ap-forwarding.conf"
+STATUS_FILE="${STATE_DIR}/ap-internet-status.json"
+
+LIB_DIR="/usr/local/lib/autodarts"
+RULES_SCRIPT="${LIB_DIR}/apply-ap-internet-rules.sh"
+
 SERVICE_FILE="/etc/systemd/system/autodarts-ap-internet.service"
+DISPATCHER_DIR="/etc/NetworkManager/dispatcher.d"
+DISPATCHER_SCRIPT="${DISPATCHER_DIR}/90-autodarts-ap-internet"
 
-mkdir -p "$STATE_DIR" "$INSTALL_DIR"
-log(){ printf '[autodarts-ap] %s\n' "$*"; }
+SYSCTL_FILE="/etc/sysctl.d/99-autodarts-ap-forward.conf"
 
-cat > "$APPLY_SCRIPT" <<'EOS'
-#!/usr/bin/env bash
-set -euo pipefail
-AP_IF="${AP_IF:-wlan_ap}"
-UPLINK_IFS="${UPLINK_IFS:-eth0 wlan0}"
-STATE_DIR="/var/lib/autodarts"
-STATE_FILE="$STATE_DIR/ap-internet-status.json"
-mkdir -p "$STATE_DIR"
+NFT_TABLE="autodarts_ap"
+NFT_TABLE_FAMILY="inet"
+NFT_FORWARD_CHAIN="autodarts_forward"
+NFT_POSTROUTING_CHAIN="autodarts_postrouting"
 
-have_cmd(){ command -v "$1" >/dev/null 2>&1; }
-iface_exists(){ ip link show "$1" >/dev/null 2>&1; }
-is_iface_up(){ ip -o link show "$1" 2>/dev/null | grep -q 'UP'; }
+log() {
+  echo "[autodarts-ap-fix-nft] $*"
+}
 
-json_escape(){
-  python3 - <<'PY' "$1"
-import json,sys
+have_cmd() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+ensure_root() {
+  if [ "${EUID}" -ne 0 ]; then
+    echo "Bitte mit sudo/root ausführen."
+    exit 1
+  fi
+}
+
+json_escape() {
+  local s="${1:-}"
+  python3 - "$s" <<'PY'
+import json, sys
 print(json.dumps(sys.argv[1]))
 PY
 }
 
-choose_uplinks(){
-  local default_if ifc
-  local -a all=() unique=() active=()
-  default_if="$(ip route show default 2>/dev/null | awk '/default/ {print $5; exit}')"
-  if [[ -n "$default_if" && "$default_if" != "$AP_IF" ]] && iface_exists "$default_if"; then
-    all+=("$default_if")
-  fi
-  for ifc in $UPLINK_IFS; do
-    if [[ "$ifc" != "$AP_IF" ]] && iface_exists "$ifc"; then
-      all+=("$ifc")
-    fi
-  done
-  if ((${#all[@]}==0)); then
-    return 0
-  fi
-  mapfile -t unique < <(printf '%s\n' "${all[@]}" | awk 'NF && !seen[$0]++')
-  for ifc in "${unique[@]}"; do
-    is_iface_up "$ifc" && active+=("$ifc")
-  done
-  if ((${#active[@]} > 0)); then
-    printf '%s\n' "${active[@]}"
-  else
-    printf '%s\n' "${unique[@]}"
-  fi
-}
+write_status() {
+  local status="$1"
+  local pi_online="$2"
+  local forwarding_ready="$3"
+  local ap_active="$4"
+  local uplinks_json="$5"
+  local note="$6"
 
-write_state(){
-  local status="$1" pi_online="$2" forwarding="$3" ap_active="$4" uplinks="$5" note="$6"
-  cat > "$STATE_FILE" <<JSON
+  mkdir -p "${STATE_DIR}"
+  cat > "${STATUS_FILE}" <<JSON
 {
-  "status": $(json_escape "$status"),
-  "pi_online": $pi_online,
-  "forwarding_ready": $forwarding,
-  "ap_active": $ap_active,
-  "uplinks": $(python3 - <<'PY' "$uplinks"
-import json,sys
-print(json.dumps([x for x in sys.argv[1].split() if x]))
-PY
-),
-  "note": $(json_escape "$note")
+  "status": "${status}",
+  "pi_online": ${pi_online},
+  "forwarding_ready": ${forwarding_ready},
+  "ap_active": ${ap_active},
+  "uplinks": ${uplinks_json},
+  "note": ${note}
 }
 JSON
 }
 
-AP_ACTIVE=false
-iface_exists "$AP_IF" && is_iface_up "$AP_IF" && AP_ACTIVE=true
-mapfile -t UPLINKS < <(choose_uplinks)
-U_LIST="${UPLINKS[*]:-}"
-FORWARDING=false
-[[ "$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null || echo 0)" = "1" ]] && FORWARDING=true
+ensure_nft_present() {
+  if ! have_cmd nft; then
+    local note
+    note="$(json_escape 'nft fehlt')"
+    write_status "red" "false" "false" "false" "[]" "${note}"
+    echo "nft fehlt"
+    exit 1
+  fi
+}
 
-PI_ONLINE=false
-for target in 1.1.1.1 8.8.8.8; do
-  if ping -c 1 -W 2 "$target" >/dev/null 2>&1; then
-    PI_ONLINE=true
-    break
+ensure_ip_forward() {
+  mkdir -p /etc/sysctl.d
+  cat > "${SYSCTL_FILE}" <<EOF
+net.ipv4.ip_forward=1
+EOF
+  sysctl -w net.ipv4.ip_forward=1 >/dev/null
+}
+
+ap_is_active() {
+  nmcli -t -f NAME connection show --active 2>/dev/null | grep -Fxq "${AP_CONN}"
+}
+
+pi_is_online() {
+  timeout 4 ping -c 1 -W 2 1.1.1.1 >/dev/null 2>&1 ||   timeout 4 ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1
+}
+
+list_present_uplinks_json() {
+  local arr=()
+  local ifc
+  for ifc in ${UPLINK_IFS}; do
+    if ip link show "${ifc}" >/dev/null 2>&1; then
+      arr+=("\"${ifc}\"")
+    fi
+  done
+  if [ "${#arr[@]}" -eq 0 ]; then
+    echo "[]"
+  else
+    local joined
+    joined=$(IFS=,; echo "${arr[*]}")
+    echo "[${joined}]"
+  fi
+}
+
+ensure_base_table() {
+  if ! nft list table "${NFT_TABLE_FAMILY}" "${NFT_TABLE}" >/dev/null 2>&1; then
+    nft add table "${NFT_TABLE_FAMILY}" "${NFT_TABLE}"
+  fi
+
+  if ! nft list chain "${NFT_TABLE_FAMILY}" "${NFT_TABLE}" "${NFT_FORWARD_CHAIN}" >/dev/null 2>&1; then
+    nft add chain "${NFT_TABLE_FAMILY}" "${NFT_TABLE}" "${NFT_FORWARD_CHAIN}"       "{ type filter hook forward priority 0; policy accept; }"
+  fi
+
+  if ! nft list chain "${NFT_TABLE_FAMILY}" "${NFT_TABLE}" "${NFT_POSTROUTING_CHAIN}" >/dev/null 2>&1; then
+    nft add chain "${NFT_TABLE_FAMILY}" "${NFT_TABLE}" "${NFT_POSTROUTING_CHAIN}"       "{ type nat hook postrouting priority 100; policy accept; }"
+  fi
+}
+
+rule_exists() {
+  local pattern="$1"
+  nft -a list table "${NFT_TABLE_FAMILY}" "${NFT_TABLE}" 2>/dev/null | grep -Fq -- "${pattern}"
+}
+
+add_rule_if_missing() {
+  local chain="$1"
+  local pattern="$2"
+  shift 2
+  if ! rule_exists "${pattern}"; then
+    nft add rule "${NFT_TABLE_FAMILY}" "${NFT_TABLE}" "${chain}" "$@"
+  fi
+}
+
+apply_rules() {
+  local applied=1
+  local ifc
+
+  ensure_base_table
+
+  for ifc in ${UPLINK_IFS}; do
+    if ! ip link show "${ifc}" >/dev/null 2>&1; then
+      continue
+    fi
+
+    add_rule_if_missing "${NFT_FORWARD_CHAIN}"       "iifname \"${AP_IF}\" oifname \"${ifc}\" accept"       iifname "${AP_IF}" oifname "${ifc}" accept
+
+    add_rule_if_missing "${NFT_FORWARD_CHAIN}"       "iifname \"${ifc}\" oifname \"${AP_IF}\" ct state established,related accept"       iifname "${ifc}" oifname "${AP_IF}" ct state established,related accept
+
+    add_rule_if_missing "${NFT_POSTROUTING_CHAIN}"       "oifname \"${ifc}\" masquerade"       oifname "${ifc}" masquerade
+
+    applied=0
+  done
+
+  return "${applied}"
+}
+
+rules_ready() {
+  local ifc
+  for ifc in ${UPLINK_IFS}; do
+    if ! ip link show "${ifc}" >/dev/null 2>&1; then
+      continue
+    fi
+
+    rule_exists "iifname \"${AP_IF}\" oifname \"${ifc}\" accept" || continue
+    rule_exists "iifname \"${ifc}\" oifname \"${AP_IF}\" ct state established,related accept" || continue
+    rule_exists "oifname \"${ifc}\" masquerade" || continue
+
+    return 0
+  done
+  return 1
+}
+
+install_rules_script() {
+  mkdir -p "${LIB_DIR}"
+  cat > "${RULES_SCRIPT}" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+AP_IF="${AP_IF:-wlan_ap}"
+AP_CONN="${AP_CONN:-Autodarts-AP}"
+UPLINK_IFS="${UPLINK_IFS:-wlan0 eth0}"
+STATUS_FILE="/var/lib/autodarts/ap-internet-status.json"
+
+NFT_TABLE="autodarts_ap"
+NFT_TABLE_FAMILY="inet"
+NFT_FORWARD_CHAIN="autodarts_forward"
+NFT_POSTROUTING_CHAIN="autodarts_postrouting"
+
+json_escape() {
+  local s="${1:-}"
+  python3 - "$s" <<'PY'
+import json, sys
+print(json.dumps(sys.argv[1]))
+PY
+}
+
+write_status() {
+  local status="$1"
+  local pi_online="$2"
+  local forwarding_ready="$3"
+  local ap_active="$4"
+  local uplinks_json="$5"
+  local note="$6"
+  mkdir -p /var/lib/autodarts
+  cat > "${STATUS_FILE}" <<JSON
+{
+  "status": "${status}",
+  "pi_online": ${pi_online},
+  "forwarding_ready": ${forwarding_ready},
+  "ap_active": ${ap_active},
+  "uplinks": ${uplinks_json},
+  "note": ${note}
+}
+JSON
+}
+
+rule_exists() {
+  local pattern="$1"
+  nft -a list table "${NFT_TABLE_FAMILY}" "${NFT_TABLE}" 2>/dev/null | grep -Fq -- "${pattern}"
+}
+
+add_rule_if_missing() {
+  local chain="$1"
+  local pattern="$2"
+  shift 2
+  if ! rule_exists "${pattern}"; then
+    nft add rule "${NFT_TABLE_FAMILY}" "${NFT_TABLE}" "${chain}" "$@"
+  fi
+}
+
+ensure_base_table() {
+  if ! nft list table "${NFT_TABLE_FAMILY}" "${NFT_TABLE}" >/dev/null 2>&1; then
+    nft add table "${NFT_TABLE_FAMILY}" "${NFT_TABLE}"
+  fi
+
+  if ! nft list chain "${NFT_TABLE_FAMILY}" "${NFT_TABLE}" "${NFT_FORWARD_CHAIN}" >/dev/null 2>&1; then
+    nft add chain "${NFT_TABLE_FAMILY}" "${NFT_TABLE}" "${NFT_FORWARD_CHAIN}"       "{ type filter hook forward priority 0; policy accept; }"
+  fi
+
+  if ! nft list chain "${NFT_TABLE_FAMILY}" "${NFT_TABLE}" "${NFT_POSTROUTING_CHAIN}" >/dev/null 2>&1; then
+    nft add chain "${NFT_TABLE_FAMILY}" "${NFT_TABLE}" "${NFT_POSTROUTING_CHAIN}"       "{ type nat hook postrouting priority 100; policy accept; }"
+  fi
+}
+
+pi_online=false
+if timeout 4 ping -c 1 -W 2 1.1.1.1 >/dev/null 2>&1 || timeout 4 ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1; then
+  pi_online=true
+fi
+
+ap_active=false
+if nmcli -t -f NAME connection show --active 2>/dev/null | grep -Fxq "${AP_CONN}"; then
+  ap_active=true
+fi
+
+if ! command -v nft >/dev/null 2>&1; then
+  write_status "red" "${pi_online}" "false" "${ap_active}" "[]" "$(json_escape 'nft fehlt')"
+  exit 0
+fi
+
+sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
+ensure_base_table
+
+arr=()
+applied=1
+for ifc in ${UPLINK_IFS}; do
+  if ip link show "${ifc}" >/dev/null 2>&1; then
+    arr+=("\"${ifc}\"")
+    add_rule_if_missing "${NFT_FORWARD_CHAIN}"       "iifname \"${AP_IF}\" oifname \"${ifc}\" accept"       iifname "${AP_IF}" oifname "${ifc}" accept
+    add_rule_if_missing "${NFT_FORWARD_CHAIN}"       "iifname \"${ifc}\" oifname \"${AP_IF}\" ct state established,related accept"       iifname "${ifc}" oifname "${AP_IF}" ct state established,related accept
+    add_rule_if_missing "${NFT_POSTROUTING_CHAIN}"       "oifname \"${ifc}\" masquerade"       oifname "${ifc}" masquerade
+    applied=0
   fi
 done
 
-if ! iface_exists "$AP_IF"; then
-  write_state red "$PI_ONLINE" "$FORWARDING" false "$U_LIST" "AP-Interface $AP_IF fehlt"
-  exit 0
+uplinks_json="[]"
+if [ "${#arr[@]}" -gt 0 ]; then
+  uplinks_json="[$(IFS=,; echo "${arr[*]}")]"
 fi
 
-if ! have_cmd iptables; then
-  write_state red "$PI_ONLINE" false "$AP_ACTIVE" "$U_LIST" "iptables fehlt"
-  exit 0
+forwarding_ready=false
+if [ "${applied}" -eq 0 ]; then
+  forwarding_ready=true
 fi
 
-for uplink in "${UPLINKS[@]:-}"; do
-  [[ -z "$uplink" ]] && continue
-  iptables -t nat -C POSTROUTING -o "$uplink" -j MASQUERADE 2>/dev/null || \
-    iptables -t nat -A POSTROUTING -o "$uplink" -j MASQUERADE
-  iptables -C FORWARD -i "$AP_IF" -o "$uplink" -j ACCEPT 2>/dev/null || \
-    iptables -A FORWARD -i "$AP_IF" -o "$uplink" -j ACCEPT
-  iptables -C FORWARD -i "$uplink" -o "$AP_IF" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || \
-    iptables -A FORWARD -i "$uplink" -o "$AP_IF" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-  FORWARDING=true
-done
-
-if $PI_ONLINE && $FORWARDING && $AP_ACTIVE && [[ -n "$U_LIST" ]]; then
-  write_state green true true true "$U_LIST" "Pi online und AP-Freigabe aktiv"
-elif $PI_ONLINE && [[ -n "$U_LIST" ]]; then
-  write_state yellow true false "$AP_ACTIVE" "$U_LIST" "Pi online, aber AP-Freigabe unvollständig"
-else
-  write_state red false "$FORWARDING" "$AP_ACTIVE" "$U_LIST" "Pi hat gerade keinen Internet-Uplink"
+status="red"
+note="AP-Weitergabe noch nicht bereit"
+if [ "${pi_online}" = true ] && [ "${ap_active}" = true ] && [ "${forwarding_ready}" = true ]; then
+  status="green"
+  note="Verbundenen AP-Geräten steht Internet zur Verfügung."
+elif [ "${pi_online}" = true ] && [ "${ap_active}" = true ] && [ "${forwarding_ready}" = false ]; then
+  note="Pi online, aber AP-Weitergabe nicht bereit."
+elif [ "${pi_online}" = false ]; then
+  note="Pi hat selbst kein Internet."
+elif [ "${ap_active}" = false ]; then
+  note="Access Point ist nicht aktiv."
 fi
-EOS
-chmod +x "$APPLY_SCRIPT"
 
-printf 'net.ipv4.ip_forward=1\n' > "$SYSCTL_FILE"
-sysctl -q -w net.ipv4.ip_forward=1 >/dev/null
+write_status "${status}" "${pi_online}" "${forwarding_ready}" "${ap_active}" "${uplinks_json}" "$(json_escape "${note}")"
+EOF
+  chmod 755 "${RULES_SCRIPT}"
+}
 
-cat > "$DISPATCHER_SCRIPT" <<'EOS'
-#!/usr/bin/env bash
-set -euo pipefail
-/usr/local/lib/autodarts/apply-ap-internet-rules.sh >/dev/null 2>&1 || true
-EOS
-chmod +x "$DISPATCHER_SCRIPT"
-
-cat > "$SERVICE_FILE" <<EOS
+install_service() {
+  cat > "${SERVICE_FILE}" <<EOF
 [Unit]
 Description=Autodarts AP Internet Sharing
 After=network-online.target NetworkManager.service
@@ -142,20 +315,85 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-Environment=AP_IF=$AP_IF
-Environment=UPLINK_IFS=$UPLINK_IFS
-ExecStart=$APPLY_SCRIPT
+Environment=AP_IF=${AP_IF}
+Environment=AP_CONN=${AP_CONN}
+Environment=UPLINK_IFS=${UPLINK_IFS}
+ExecStart=${RULES_SCRIPT}
 RemainAfterExit=yes
 
 [Install]
 WantedBy=multi-user.target
-EOS
+EOF
+}
 
-systemctl daemon-reload
-systemctl enable autodarts-ap-internet.service >/dev/null
-systemctl start autodarts-ap-internet.service >/dev/null || true
+install_dispatcher() {
+  mkdir -p "${DISPATCHER_DIR}"
+  cat > "${DISPATCHER_SCRIPT}" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+export AP_IF="${AP_IF}"
+export AP_CONN="${AP_CONN}"
+export UPLINK_IFS="${UPLINK_IFS}"
+${RULES_SCRIPT} >/dev/null 2>&1 || true
+EOF
+  chmod 755 "${DISPATCHER_SCRIPT}"
+}
 
-log "Wende Regeln sofort an"
-AP_IF="$AP_IF" UPLINK_IFS="$UPLINK_IFS" "$APPLY_SCRIPT"
-log "Fertig. Status: $STATE_FILE"
-cat "$STATE_FILE"
+main() {
+  ensure_root
+  ensure_nft_present
+  ensure_ip_forward
+  install_rules_script
+  install_service
+  install_dispatcher
+
+  systemctl daemon-reload
+  systemctl enable autodarts-ap-internet.service >/dev/null 2>&1 || true
+  systemctl restart autodarts-ap-internet.service >/dev/null 2>&1 || true
+
+  "${RULES_SCRIPT}" >/dev/null 2>&1 || true
+
+  local pi_online="false"
+  local ap_active="false"
+  local forwarding_ready="false"
+  local status="red"
+  local note="Unbekannt"
+  local uplinks_json
+
+  uplinks_json="$(list_present_uplinks_json)"
+
+  if pi_is_online; then
+    pi_online="true"
+  fi
+
+  if ap_is_active; then
+    ap_active="true"
+  fi
+
+  if rules_ready; then
+    forwarding_ready="true"
+  fi
+
+  if [ "${pi_online}" = "true" ] && [ "${ap_active}" = "true" ] && [ "${forwarding_ready}" = "true" ]; then
+    status="green"
+    note="Verbundenen AP-Geräten steht Internet zur Verfügung."
+  elif ! have_cmd nft; then
+    note="nft fehlt"
+  elif [ "${pi_online}" = "true" ] && [ "${ap_active}" = "true" ] && [ "${forwarding_ready}" = "false" ]; then
+    note="Pi online, aber AP-Weitergabe nicht bereit."
+  elif [ "${pi_online}" = "false" ]; then
+    note="Pi hat selbst kein Internet."
+  elif [ "${ap_active}" = "false" ]; then
+    note="Access Point ist nicht aktiv."
+  else
+    note="AP-Internetstatus unbekannt."
+  fi
+
+  write_status "${status}" "${pi_online}" "${forwarding_ready}" "${ap_active}" "${uplinks_json}" "$(json_escape "${note}")"
+
+  log "Fertig."
+  log "Statusdatei: ${STATUS_FILE}"
+  cat "${STATUS_FILE}"
+}
+
+main "$@"
