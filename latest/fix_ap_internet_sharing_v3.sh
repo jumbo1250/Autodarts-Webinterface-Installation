@@ -503,6 +503,11 @@ EOF
 
 install_dispatcher() {
   mkdir -p "${DISPATCHER_DIR}"
+
+  # Self-healing: Falls ein Test/alter Stand den Dispatcher deaktiviert hat,
+  # soll ein normales Webpanel-Update ihn wieder sauber aktiv installieren.
+  rm -f "${DISPATCHER_SCRIPT}.off" 2>/dev/null || true
+
   cat > "${DISPATCHER_SCRIPT}" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -531,6 +536,11 @@ sleep 2
 ${APPLY_SCRIPT} >/dev/null 2>&1 || true
 EOF
   chmod 755 "${DISPATCHER_SCRIPT}"
+
+  if [ ! -x "${DISPATCHER_SCRIPT}" ]; then
+    echo "[webpanel_AP] ERROR: Dispatcher wurde nicht aktiv angelegt: ${DISPATCHER_SCRIPT}"
+    return 1
+  fi
 }
 
 main() {
