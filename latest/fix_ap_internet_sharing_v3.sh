@@ -209,12 +209,25 @@ pick_best_ap_channel() {
   local uplink_ch="$1"
   local uplink_freq="$2"
 
+  # Wenn wlan0 nicht verbunden ist, keine Frequenz -> Setup-Funk nicht anfassen.
   if [ -z "${uplink_freq}" ]; then
-    echo "1"
+    echo ""
     return 0
   fi
 
+  case "${uplink_freq}" in
+    ''|*[!0-9]*)
+      echo ""
+      return 0
+      ;;
+  esac
+
+  # Nur bei echtem 2.4 GHz optimieren. 5 GHz oder unbekannt: nichts ändern.
   if [ "${uplink_freq}" -ge 5000 ]; then
+    echo ""
+    return 0
+  fi
+  if [ "${uplink_freq}" -lt 2400 ] || [ "${uplink_freq}" -gt 2500 ]; then
     echo ""
     return 0
   fi
@@ -223,7 +236,7 @@ pick_best_ap_channel() {
     1|2|3|4|5) echo "11" ;;
     6) echo "1" ;;
     7|8|9|10|11|12|13) echo "1" ;;
-    *) echo "1" ;;
+    *) echo "" ;;
   esac
 }
 
@@ -364,19 +377,35 @@ get_ap_channel() {
 pick_best_ap_channel() {
   local uplink_ch="$1"
   local uplink_freq="$2"
+
+  # Wenn wlan0 nicht verbunden ist, keine Frequenz -> Setup-Funk nicht anfassen.
   if [ -z "${uplink_freq}" ]; then
-    echo "1"
+    echo ""
     return 0
   fi
+
+  case "${uplink_freq}" in
+    ''|*[!0-9]*)
+      echo ""
+      return 0
+      ;;
+  esac
+
+  # Nur bei echtem 2.4 GHz optimieren. 5 GHz oder unbekannt: nichts ändern.
   if [ "${uplink_freq}" -ge 5000 ]; then
     echo ""
     return 0
   fi
+  if [ "${uplink_freq}" -lt 2400 ] || [ "${uplink_freq}" -gt 2500 ]; then
+    echo ""
+    return 0
+  fi
+
   case "${uplink_ch}" in
     1|2|3|4|5) echo "11" ;;
     6) echo "1" ;;
     7|8|9|10|11|12|13) echo "1" ;;
-    *) echo "1" ;;
+    *) echo "" ;;
   esac
 }
 
