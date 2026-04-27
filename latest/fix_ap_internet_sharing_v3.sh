@@ -8,6 +8,8 @@ EXTRA_UPLINK_IFS="${EXTRA_UPLINK_IFS:-eth0}"
 
 STATE_DIR="/var/lib/autodarts"
 STATUS_FILE="${STATE_DIR}/ap-internet-status.json"
+MANUAL_WIFI_FLAG="${MANUAL_WIFI_FLAG:-/run/autodarts_manual_wifi_connect.flag}"
+MANUAL_WIFI_DELAY="${MANUAL_WIFI_DELAY:-10}"
 
 LIB_DIR="/usr/local/lib/autodarts"
 APPLY_SCRIPT="${LIB_DIR}/webpanel_AP_apply.sh"
@@ -213,7 +215,7 @@ pick_best_ap_channel() {
   fi
 
   if [ "${uplink_freq}" -ge 5000 ]; then
-    echo "1"
+    echo ""
     return 0
   fi
 
@@ -223,6 +225,24 @@ pick_best_ap_channel() {
     7|8|9|10|11|12|13) echo "1" ;;
     *) echo "1" ;;
   esac
+}
+
+manual_wifi_flag_recent() {
+  [ -f "${MANUAL_WIFI_FLAG}" ] || return 1
+
+  local now mtime age
+  now="$(date +%s)"
+  mtime="$(stat -c %Y "${MANUAL_WIFI_FLAG}" 2>/dev/null || echo 0)"
+  age=$((now - mtime))
+
+  [ "${age}" -ge 0 ] && [ "${age}" -le 60 ]
+}
+
+delay_for_manual_wifi_if_needed() {
+  if manual_wifi_flag_recent; then
+    sleep "${MANUAL_WIFI_DELAY}"
+    rm -f "${MANUAL_WIFI_FLAG}" >/dev/null 2>&1 || true
+  fi
 }
 
 set_ap_channel_if_needed() {
@@ -242,6 +262,7 @@ set_ap_channel_if_needed() {
   fi
 
   log "AP-Kanal anpassen: wlan0=${uplink_ch:-unknown} (${uplink_freq:-unknown} MHz) -> AP=${target_ap_ch}"
+  delay_for_manual_wifi_if_needed
   nmcli connection modify "${AP_CONN}" 802-11-wireless.band bg
   nmcli connection modify "${AP_CONN}" 802-11-wireless.channel "${target_ap_ch}"
   nmcli connection down "${AP_CONN}" >/dev/null 2>&1 || true
@@ -260,6 +281,8 @@ AP_CONN="${AP_CONN:-Autodarts-AP}"
 UPLINK_IF="${UPLINK_IF:-wlan0}"
 EXTRA_UPLINK_IFS="${EXTRA_UPLINK_IFS:-eth0}"
 STATUS_FILE="/var/lib/autodarts/ap-internet-status.json"
+MANUAL_WIFI_FLAG="${MANUAL_WIFI_FLAG:-/run/autodarts_manual_wifi_connect.flag}"
+MANUAL_WIFI_DELAY="${MANUAL_WIFI_DELAY:-10}"
 
 NFT_TABLE="autodarts_ap"
 NFT_TABLE_FAMILY="inet"
@@ -346,7 +369,7 @@ pick_best_ap_channel() {
     return 0
   fi
   if [ "${uplink_freq}" -ge 5000 ]; then
-    echo "1"
+    echo ""
     return 0
   fi
   case "${uplink_ch}" in
@@ -355,6 +378,24 @@ pick_best_ap_channel() {
     7|8|9|10|11|12|13) echo "1" ;;
     *) echo "1" ;;
   esac
+}
+
+manual_wifi_flag_recent() {
+  [ -f "${MANUAL_WIFI_FLAG}" ] || return 1
+
+  local now mtime age
+  now="$(date +%s)"
+  mtime="$(stat -c %Y "${MANUAL_WIFI_FLAG}" 2>/dev/null || echo 0)"
+  age=$((now - mtime))
+
+  [ "${age}" -ge 0 ] && [ "${age}" -le 60 ]
+}
+
+delay_for_manual_wifi_if_needed() {
+  if manual_wifi_flag_recent; then
+    sleep "${MANUAL_WIFI_DELAY}"
+    rm -f "${MANUAL_WIFI_FLAG}" >/dev/null 2>&1 || true
+  fi
 }
 
 set_ap_channel_if_needed() {
@@ -371,6 +412,7 @@ set_ap_channel_if_needed() {
     return 0
   fi
 
+  delay_for_manual_wifi_if_needed
   nmcli connection modify "${AP_CONN}" 802-11-wireless.band bg
   nmcli connection modify "${AP_CONN}" 802-11-wireless.channel "${target_ap_ch}"
   nmcli connection down "${AP_CONN}" >/dev/null 2>&1 || true
@@ -469,7 +511,7 @@ IFACE="\${1:-}"
 ACTION="\${2:-}"
 
 case "\${ACTION}" in
-  up|dhcp4-change|connectivity-change|reapply|hostname|down)
+  up|dhcp4-change|connectivity-change|reapply|hostname)
     ;;
   *)
     exit 0
