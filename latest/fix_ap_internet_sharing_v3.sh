@@ -261,6 +261,14 @@ delay_for_manual_wifi_if_needed() {
 set_ap_channel_if_needed() {
   local uplink_ch uplink_freq current_ap_ch target_ap_ch
 
+  # Bei einer manuellen Verbindung über das Webpanel steuert das Webpanel
+  # Countdown, Abbrechen, Kanalwechsel und Reboot. Der Dispatcher darf den
+  # AP während des Countdowns nicht eigenständig down/up schalten.
+  if manual_wifi_flag_recent; then
+    log "Manuelle Webpanel-WLAN-Verbindung erkannt: Kanalwechsel wird kontrolliert vom Webpanel ausgeführt."
+    return 0
+  fi
+
   uplink_ch="$(get_uplink_channel)"
   uplink_freq="$(get_uplink_freq)"
   current_ap_ch="$(get_ap_channel)"
@@ -275,7 +283,6 @@ set_ap_channel_if_needed() {
   fi
 
   log "AP-Kanal anpassen: wlan0=${uplink_ch:-unknown} (${uplink_freq:-unknown} MHz) -> AP=${target_ap_ch}"
-  delay_for_manual_wifi_if_needed
   nmcli connection modify "${AP_CONN}" 802-11-wireless.band bg
   nmcli connection modify "${AP_CONN}" 802-11-wireless.channel "${target_ap_ch}"
   nmcli connection down "${AP_CONN}" >/dev/null 2>&1 || true
@@ -429,6 +436,14 @@ delay_for_manual_wifi_if_needed() {
 
 set_ap_channel_if_needed() {
   local uplink_ch uplink_freq current_ap_ch target_ap_ch
+
+  # Webpanel-Verbindungen werden absichtlich nicht sofort umgeschaltet.
+  # Das Webpanel zeigt zuerst den Countdown und entscheidet dann zwischen
+  # Reboot oder Kanalwechsel ohne Reboot.
+  if manual_wifi_flag_recent; then
+    return 0
+  fi
+
   uplink_ch="$(get_uplink_channel)"
   uplink_freq="$(get_uplink_freq)"
   current_ap_ch="$(get_ap_channel)"
@@ -441,7 +456,6 @@ set_ap_channel_if_needed() {
     return 0
   fi
 
-  delay_for_manual_wifi_if_needed
   nmcli connection modify "${AP_CONN}" 802-11-wireless.band bg
   nmcli connection modify "${AP_CONN}" 802-11-wireless.channel "${target_ap_ch}"
   nmcli connection down "${AP_CONN}" >/dev/null 2>&1 || true
