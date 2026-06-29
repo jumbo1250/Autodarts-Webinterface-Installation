@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# BUILD: WEBPANEL-UPDATER-CALLER-WLED-V2-20260627-03
 set -euo pipefail
 
 REPO="jumbo1250/Autodarts-Webinterface-Installation"
@@ -32,10 +33,10 @@ WEBPANEL_ZIP_URL="${BASE_URL}/${WEBPANEL_ZIP_NAME}"
 FILES=(
   "autodarts-button-led.py|${BIN_DIR}/autodarts-button-led.py"
   "autodarts-extensions-update.sh|${BIN_DIR}/autodarts-extensions-update.sh"
+  "autodarts-extensions-v2-install.sh|${BIN_DIR}/autodarts-extensions-v2-install.sh"
   "Autodarts_install_manual.pdf|${DATA_DIR}/Autodarts_install_manual.pdf"
   "GPIO_Setup.jpeg|${DATA_DIR}/GPIO_Setup.jpeg"
   "Autodarts_Installationshandbuch_v2.docx|${DATA_DIR}/Autodarts_Installationshandbuch_v2.docx"
-  "start-custom.sh|/var/lib/autodarts/config/darts-wled/start-custom.sh"
   "version.txt|${LOCAL_VER_FILE}"
   "fix_ap_internet_sharing_v3.sh|${BIN_DIR}/autodarts-ap-internet-fix.sh"
   # OPTIONAL: Updater selbst (wenn nicht vorhanden -> skip)
@@ -408,7 +409,6 @@ cleanup(){ rm -rf "${TMP_DIR}"; }
 trap cleanup EXIT
 
 declare -A DOWNLOADED=()
-UPDATED_START_CUSTOM=0
 UPDATED_ANY=0
 
 # 1) Einzeldateien laden
@@ -496,9 +496,6 @@ for entry in "${FILES[@]}"; do
   chmod 777 "${dst}" || true
   UPDATED_ANY=1
 
-  if [[ "${src}" == "start-custom.sh" ]]; then
-    UPDATED_START_CUSTOM=1
-  fi
 done
 
 chmod 777 "${BIN_DIR}" "${DATA_DIR}" "${STATE_DIR}" 2>/dev/null || true
@@ -515,12 +512,6 @@ systemctl restart "${WEB_SERVICE}" || {
   exit 1
 }
 
-if [[ "${UPDATED_START_CUSTOM}" == "1" ]]; then
-  if systemctl list-unit-files | grep -q "^darts-wled.service"; then
-    log "Restart darts-wled.service (start-custom.sh updated)"
-    systemctl restart darts-wled.service || true
-  fi
-fi
 
 run_ap_internet_fix_if_present
 
