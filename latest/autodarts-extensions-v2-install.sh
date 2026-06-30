@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# BUILD: CALLER-WLED-V2-MANIFESTFIX-20260627-03
+# BUILD: CALLER-WLED-V2-AUTOREBOOT-20260629-05
 set -Eeuo pipefail
 
 CALLER_REPO="Peschi90/darts-caller"
@@ -28,6 +28,12 @@ STATE="/var/lib/autodarts/extensions-v2-install-state.json"
 LOG="/var/log/autodarts_extensions_v2_install.log"
 BACKUP_ROOT="/var/lib/autodarts/config/backups"
 LOCK="/run/autodarts-extensions-v2-install.lock"
+
+# Nach erfolgreicher Installation wird der Raspberry automatisch neu gestartet.
+# Für eine bewusste Diagnose kann der Installer einmalig mit AUTO_REBOOT=0
+# gestartet werden.
+AUTO_REBOOT="${AUTO_REBOOT:-1}"
+AUTO_REBOOT_DELAY="${AUTO_REBOOT_DELAY:-8}"
 
 TS="$(date +'%Y%m%d-%H%M%S')"
 BACKUP="${BACKUP_ROOT}/extensions-v2-migration-${TS}"
@@ -225,31 +231,36 @@ def first(patterns, default=""):
     return default
 
 board = first([
-    r'autodarts_board_id\s*=\s*["\']([^"\']+)["\']',
+    r'(?m)^[ \t]*autodarts_board_id[ \t]*=[ \t]*["\']([^"\']+)["\']',
     r'(?:^|\s)-B\s+["\']?([^"\'\s\\]+)'
 ])
 media = first([
-    r'media_path\s*=\s*["\']?([^"\'\n]+)',
+    r'(?m)^[ \t]*media_path[ \t]*=[ \t]*["\']?([^"\'\n#]+)',
     r'(?:^|\s)-M\s+["\']?([^"\'\s\\]+)'
-], "/var/lib/autodarts/media")
+], "/var/lib/autodarts/media").strip()
+
+# Nur gültige Werte übernehmen. Leere oder auskommentierte Altwerte
+# wie "caller_volume = # ..." dürfen niemals "#" ergeben.
 every = first([
-    r'call_every_dart\s*=\s*["\']?([^"\'\s]+)',
-    r'(?:^|\s)-E\s+["\']?([^"\'\s\\]+)'
+    r'(?m)^[ \t]*call_every_dart[ \t]*=[ \t]*["\']?([01])(?:["\']|[ \t]*(?:#.*)?$)',
+    r'(?:^|\s)-E\s+["\']?([01])(?:["\']|[\s\\]|$)'
 ], "1")
+
 volume = first([
-    r'caller_volume\s*=\s*["\']?([^"\'\s]+)',
-    r'(?:^|\s)-V\s+["\']?([^"\'\s\\]+)'
+    r'(?m)^[ \t]*caller_volume[ \t]*=[ \t]*["\']?([0-9]+(?:\.[0-9]+)?)(?:["\']|[ \t]*(?:#.*)?$)',
+    r'(?:^|\s)-V\s+["\']?([0-9]+(?:\.[0-9]+)?)(?:["\']|[\s\\]|$)'
 ], "0")
+
 local_playback = first([
-    r'local_playback\s*=\s*["\']?([^"\'\s]+)',
-    r'(?:^|\s)-LPB\s+["\']?([^"\'\s\\]+)'
+    r'(?m)^[ \t]*local_playback[ \t]*=[ \t]*["\']?([01])(?:["\']|[ \t]*(?:#.*)?$)',
+    r'(?:^|\s)-LPB\s+["\']?([01])(?:["\']|[\s\\]|$)'
 ], "0")
 
 print(board)
-print(media)
-print(every)
-print(volume)
-print(local_playback)
+print(media or "/var/lib/autodarts/media")
+print(every if every in {"0", "1"} else "1")
+print(volume if re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", volume) else "0")
+print(local_playback if local_playback in {"0", "1"} else "0")
 PY
 }
 
@@ -304,6 +315,30 @@ PY
   chmod 777 "$WLED_CONFIG"
 }
 
+schedule_reboot() {
+  if [[ "$AUTO_REBOOT" != "1" ]]; then
+    log "Automatischer Neustart wurde mit AUTO_REBOOT=0 deaktiviert."
+    return 0
+  fi
+
+  local unit="autodarts-v2-reboot-${TS}"
+  log "Installation erfolgreich. Raspberry Pi startet in ${AUTO_REBOOT_DELAY} Sekunden neu."
+
+  if command -v systemd-run >/dev/null 2>&1; then
+    if systemd-run \
+      --unit="$unit" \
+      --on-active="${AUTO_REBOOT_DELAY}s" \
+      /usr/bin/systemctl reboot >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+
+  # Fallback, falls systemd-run auf einem älteren System nicht verfügbar ist.
+  nohup /bin/bash -c \
+    "sleep '${AUTO_REBOOT_DELAY}'; /usr/bin/systemctl reboot" \
+    >/dev/null 2>&1 &
+}
+
 if [[ "$(id -u)" -ne 0 ]]; then
   fail "Installer muss als root gestartet werden."
 fi
@@ -317,7 +352,7 @@ flock -n 9 || fail "Installation läuft bereits."
 
 write_state "running" "Neue Caller-/WLED-Version wird installiert."
 log "===== V2-Migration START ====="
-log "Build: CALLER-WLED-V2-MANIFESTFIX-20260627-02"
+log "Build: CALLER-WLED-V2-AUTOREBOOT-20260629-05"
 
 mapfile -t CALLER_VALUES < <(read_caller_values)
 BOARD_ID="${CALLER_VALUES[0]:-}"
@@ -442,7 +477,7 @@ chmod 777 "$CALLER_SERVICE" "$WLED_SERVICE"
 rm -rf "$CALLER_OVERRIDE_DIR"
 
 systemctl daemon-reload
-systemctl reset-failed darts-caller.service darts-wled.service || true
+systemctl reset-failed darts-caller.service darts-wled.service >/dev/null 2>&1 || true
 systemctl enable darts-caller.service darts-wled.service >/dev/null 2>&1 || true
 
 systemctl start darts-caller.service
@@ -468,8 +503,10 @@ os.chmod(path, 0o777)
 PY
 
 SUCCESS=1
-write_state "success" "Neue Caller-/WLED-Version wurde erfolgreich installiert."
+write_state "success" "Neue Caller-/WLED-Version wurde erfolgreich installiert. Raspberry Pi wird neu gestartet."
 log "Caller installiert: $CALLER_VERSION"
 log "WLED installiert: $WLED_VERSION"
 log "WLED-Manifest installiert: $WLED_MANIFEST"
 log "===== V2-Migration ERFOLGREICH ====="
+
+schedule_reboot
