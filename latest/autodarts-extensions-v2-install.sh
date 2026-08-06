@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# BUILD: CALLER-WLED-V2-SERVICEHOOK-JSONFIX-20260806-08
+# BUILD: CALLER-WLED-V2-SERVICEHOOK-JSONFIX-WLEDWATCH-20260806-09
 set -Eeuo pipefail
 
 CALLER_REPO="Peschi90/darts-caller"
@@ -25,6 +25,9 @@ CALLER_OVERRIDE_DIR="/etc/systemd/system/darts-caller.service.d"
 WLED_WAIT_SCRIPT="/usr/local/bin/autodarts-wait-caller-ready.sh"
 WLED_DROPIN_DIR="/etc/systemd/system/darts-wled.service.d"
 WLED_DROPIN="${WLED_DROPIN_DIR}/wait-caller.conf"
+WLED_WATCHDOG_SCRIPT="/usr/local/bin/autodarts-wled-reconnect-watchdog.sh"
+WLED_WATCHDOG_SERVICE="/etc/systemd/system/autodarts-wled-reconnect-watchdog.service"
+WLED_WATCHDOG_TIMER="/etc/systemd/system/autodarts-wled-reconnect-watchdog.timer"
 
 FLAG="/var/lib/autodarts/config/extensions-v2-installed.json"
 STATE="/var/lib/autodarts/extensions-v2-install-state.json"
@@ -421,43 +424,180 @@ PY
 
 
 install_wled_wait_hook() {
-  log "Installiere dauerhaften WLED-Start-Wait auf Caller/Auth …"
+  log "Installiere dauerhaften WLED-Start-Wait und sparsamen Reconnect-Watchdog …"
 
   cat >"$WLED_WAIT_SCRIPT" <<'EOF'
 #!/usr/bin/env bash
-# BUILD: WAIT-CALLER-READY-20260806-01
+# BUILD: WAIT-CALLER-WLED-READY-20260806-02
 set -Eeuo pipefail
 
-TIMEOUT="${AUTODARTS_WAIT_CALLER_TIMEOUT:-75}"
-AFTER_AUTH_SLEEP="${AUTODARTS_WAIT_CALLER_AFTER_AUTH_SLEEP:-4}"
-URL="https://127.0.0.1:8079/api/auth/status"
+CALLER_TIMEOUT="${AUTODARTS_WAIT_CALLER_TIMEOUT:-90}"
+WLED_TIMEOUT="${AUTODARTS_WAIT_WLED_TIMEOUT:-90}"
+AFTER_AUTH_SLEEP="${AUTODARTS_WAIT_CALLER_AFTER_AUTH_SLEEP:-10}"
+CALLER_URL="https://127.0.0.1:8079/api/auth/status"
+WLED_CONFIG="/var/lib/autodarts/config/darts-wled/start-custom.sh"
+
+read_wled_endpoint() {
+  python3 - "$WLED_CONFIG" <<'PY'
+import shlex, sys
+path = sys.argv[1]
+try:
+    text = open(path, encoding="utf-8", errors="ignore").read()
+except OSError:
+    print("Dart-Led1.local")
+    raise SystemExit(0)
+try:
+    parts = shlex.split(text, comments=True, posix=True)
+except Exception:
+    parts = text.replace('\
+', ' ').split()
+for i, part in enumerate(parts):
+    if part == "-WEPS" and i + 1 < len(parts):
+        print(parts[i + 1])
+        break
+else:
+    print("Dart-Led1.local")
+PY
+}
+
+wled_ready() {
+  local ep="$1"
+  [[ -n "$ep" ]] || return 1
+  curl -fsS --max-time 2 "http://${ep}/json/info" >/dev/null 2>&1
+}
 
 if ! command -v curl >/dev/null 2>&1; then
-  echo "[wait-caller] curl fehlt, WLED startet ohne Warteprüfung." >&2
+  echo "[wait-caller-wled] curl fehlt, WLED startet ohne Warteprüfung." >&2
   exit 0
 fi
 
-for i in $(seq 1 "$TIMEOUT"); do
-  raw="$(curl -sk --max-time 2 "$URL" 2>/dev/null || true)"
+for i in $(seq 1 "$CALLER_TIMEOUT"); do
+  raw="$(curl -sk --max-time 2 "$CALLER_URL" 2>/dev/null || true)"
   if echo "$raw" | grep -q '"state":"authenticated"'; then
-    echo "[wait-caller] Caller ist authenticated. Warte ${AFTER_AUTH_SLEEP}s auf internen Event-Feed ..."
+    echo "[wait-caller-wled] Caller ist authenticated. Warte ${AFTER_AUTH_SLEEP}s auf internen Event-Feed ..."
     sleep "$AFTER_AUTH_SLEEP"
-    exit 0
+    break
+  fi
+  if [[ "$i" == "$CALLER_TIMEOUT" ]]; then
+    echo "[wait-caller-wled] WARN: Caller wurde nach ${CALLER_TIMEOUT}s nicht authenticated erkannt. WLED startet trotzdem." >&2
   fi
   sleep 1
 done
 
-echo "[wait-caller] WARN: Caller wurde nach ${TIMEOUT}s nicht authenticated erkannt. WLED startet trotzdem." >&2
+WLED_EP="${AUTODARTS_WLED_ENDPOINT:-$(read_wled_endpoint)}"
+if [[ -n "$WLED_EP" ]]; then
+  for i in $(seq 1 "$WLED_TIMEOUT"); do
+    if wled_ready "$WLED_EP"; then
+      echo "[wait-caller-wled] WLED-ESP erreichbar: ${WLED_EP}"
+      exit 0
+    fi
+    sleep 1
+  done
+  echo "[wait-caller-wled] WARN: WLED-ESP ${WLED_EP} nach ${WLED_TIMEOUT}s nicht erreichbar. Dienst startet trotzdem; Watchdog verbindet später neu." >&2
+fi
+
 exit 0
 EOF
 
   chmod 777 "$WLED_WAIT_SCRIPT"
+
   mkdir -p "$WLED_DROPIN_DIR"
   cat >"$WLED_DROPIN" <<EOF
 [Service]
 ExecStartPre=$WLED_WAIT_SCRIPT
 EOF
   chmod 777 "$WLED_DROPIN"
+
+  cat >"$WLED_WATCHDOG_SCRIPT" <<'EOF'
+#!/usr/bin/env bash
+# BUILD: WLED-RECONNECT-WATCHDOG-20260806-01
+set -Eeuo pipefail
+
+LOCK="/run/autodarts-wled-reconnect-watchdog.lock"
+LOG="/var/log/autodarts_wled_watchdog.log"
+CALLER_URL="https://127.0.0.1:8079/api/auth/status"
+WLED_CONFIG="/var/lib/autodarts/config/darts-wled/start-custom.sh"
+
+mkdir -p "$(dirname "$LOG")"
+exec 9>"$LOCK"
+flock -n 9 || exit 0
+
+log() { echo "[$(date +'%F %T')] $*" >>"$LOG"; }
+
+read_wled_endpoint() {
+  python3 - "$WLED_CONFIG" <<'PY'
+import shlex, sys
+path = sys.argv[1]
+try:
+    text = open(path, encoding="utf-8", errors="ignore").read()
+except OSError:
+    print("")
+    raise SystemExit(0)
+try:
+    parts = shlex.split(text, comments=True, posix=True)
+except Exception:
+    parts = text.replace('\
+', ' ').split()
+for i, part in enumerate(parts):
+    if part == "-WEPS" and i + 1 < len(parts):
+        print(parts[i + 1])
+        break
+PY
+}
+
+EP="${AUTODARTS_WLED_ENDPOINT:-$(read_wled_endpoint)}"
+[[ -n "$EP" ]] || exit 0
+
+AUTH="$(curl -sk --max-time 2 "$CALLER_URL" 2>/dev/null || true)"
+echo "$AUTH" | grep -q '"state":"authenticated"' || exit 0
+
+if ! curl -fsS --max-time 2 "http://${EP}/json/info" >/dev/null 2>&1; then
+  exit 0
+fi
+
+if ! systemctl is-active --quiet darts-wled.service; then
+  log "darts-wled ist nicht active, ESP ${EP} ist erreichbar -> start"
+  systemctl start darts-wled.service >/dev/null 2>&1 || true
+  exit 0
+fi
+
+if journalctl -u darts-wled.service --since "3 minutes ago" --no-pager -o cat 2>/dev/null \
+  | grep -Eiq 'WLED not available|Name or service not known|WLED Controller connection lost|Connection lost: WLED|failed to resolve'; then
+  log "WLED-Fehler erkannt und ESP ${EP} wieder erreichbar -> restart darts-wled"
+  systemctl restart darts-wled.service >/dev/null 2>&1 || true
+fi
+EOF
+  chmod 777 "$WLED_WATCHDOG_SCRIPT"
+
+  cat >"$WLED_WATCHDOG_SERVICE" <<EOF
+[Unit]
+Description=Autodarts WLED reconnect watchdog
+After=network-online.target darts-caller.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=$WLED_WATCHDOG_SCRIPT
+EOF
+  chmod 777 "$WLED_WATCHDOG_SERVICE"
+
+  cat >"$WLED_WATCHDOG_TIMER" <<'EOF'
+[Unit]
+Description=Run Autodarts WLED reconnect watchdog periodically
+
+[Timer]
+OnBootSec=120s
+OnUnitActiveSec=120s
+AccuracySec=30s
+Persistent=false
+
+[Install]
+WantedBy=timers.target
+EOF
+  chmod 777 "$WLED_WATCHDOG_TIMER"
+
+  systemctl enable autodarts-wled-reconnect-watchdog.timer >/dev/null 2>&1 || true
+  systemctl start autodarts-wled-reconnect-watchdog.timer >/dev/null 2>&1 || true
 }
 
 fix_wled_service_startlimit_location() {
@@ -481,7 +621,9 @@ for line in lines:
 if not inserted:
     out = ["[Unit]", "StartLimitIntervalSec=0"] + out
 
-path.write_text("\n".join(out).rstrip() + "\n", encoding="utf-8")
+path.write_text("
+".join(out).rstrip() + "
+", encoding="utf-8")
 PY
   chmod 777 "$WLED_SERVICE"
 }
@@ -523,7 +665,7 @@ flock -n 9 || fail "Installation läuft bereits."
 
 write_state "running" "Neue Caller-/WLED-Version wird installiert."
 log "===== V2-Migration START ====="
-log "Build: CALLER-WLED-V2-SERVICEHOOK-JSONFIX-20260806-08"
+log "Build: CALLER-WLED-V2-SERVICEHOOK-JSONFIX-WLEDWATCH-20260806-09"
 
 mapfile -t CALLER_VALUES < <(read_caller_values)
 BOARD_ID="${CALLER_VALUES[0]:-}"

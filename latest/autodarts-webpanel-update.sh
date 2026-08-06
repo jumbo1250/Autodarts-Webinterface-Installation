@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# BUILD: WEBPANEL-UPDATER-AUTHRESET-V2-SERVICE-REPAIR-20260806-05
+# BUILD: WEBPANEL-UPDATER-AUTHRESET-FILESONLY-20260806-06
 set -euo pipefail
 
 REPO="jumbo1250/Autodarts-Webinterface-Installation"
@@ -47,45 +47,6 @@ FILES=(
 ts() { date +"[%Y-%m-%d %H:%M:%S]"; }
 log(){ echo "$(ts) $*" | tee -a "${LOG_FILE}" >/dev/null; }
 
-
-extensions_v2_installed() {
-  local flag="${STATE_DIR}/config/extensions-v2-installed.json"
-  [[ -f "$flag" ]] || return 1
-
-  python3 - "$flag" <<'PY'
-import json, sys
-try:
-    with open(sys.argv[1], encoding="utf-8") as f:
-        data = json.load(f)
-    raise SystemExit(0 if data.get("installed") is True else 1)
-except Exception:
-    raise SystemExit(1)
-PY
-}
-
-run_extensions_v2_service_repair_if_present() {
-  local updater="${BIN_DIR}/autodarts-extensions-update.sh"
-
-  if [[ ! -x "$updater" ]]; then
-    log "V2-Service-Reparatur: skip, Updater fehlt: $updater"
-    return 0
-  fi
-
-  if ! extensions_v2_installed; then
-    log "V2-Service-Reparatur: skip, V2/Peschi ist noch nicht installiert."
-    return 0
-  fi
-
-  log "V2-Service-Reparatur: starte ${updater} service-repair"
-  if "$updater" service-repair >>"${LOG_FILE}" 2>&1; then
-    log "V2-Service-Reparatur: OK"
-  else
-    local rc=$?
-    log "V2-Service-Reparatur: WARN exit=${rc}; Webpanel-Update läuft weiter."
-  fi
-
-  return 0
-}
 
 run_once() {
   local name="$1"
