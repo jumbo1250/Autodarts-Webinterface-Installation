@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# BUILD: CALLER-WLED-V2-SERVICEWAIT-20260804-06
+# BUILD: CALLER-WLED-V2-SERVICEHOOK-20260806-07
 set -Eeuo pipefail
 
 CALLER_REPO="Peschi90/darts-caller"
@@ -22,6 +22,9 @@ WLED_CONFIG="${WLED_CONFIG_DIR}/start-custom.sh"
 CALLER_SERVICE="/etc/systemd/system/darts-caller.service"
 WLED_SERVICE="/etc/systemd/system/darts-wled.service"
 CALLER_OVERRIDE_DIR="/etc/systemd/system/darts-caller.service.d"
+WLED_WAIT_SCRIPT="/usr/local/bin/autodarts-wait-caller-ready.sh"
+WLED_DROPIN_DIR="/etc/systemd/system/darts-wled.service.d"
+WLED_DROPIN="${WLED_DROPIN_DIR}/wait-caller.conf"
 
 FLAG="/var/lib/autodarts/config/extensions-v2-installed.json"
 STATE="/var/lib/autodarts/extensions-v2-install-state.json"
@@ -417,6 +420,73 @@ PY
   chmod 777 "$WLED_CONFIG"
 }
 
+
+install_wled_wait_hook() {
+  log "Installiere dauerhaften WLED-Start-Wait auf Caller/Auth …"
+
+  cat >"$WLED_WAIT_SCRIPT" <<'EOF'
+#!/usr/bin/env bash
+# BUILD: WAIT-CALLER-READY-20260806-01
+set -Eeuo pipefail
+
+TIMEOUT="${AUTODARTS_WAIT_CALLER_TIMEOUT:-75}"
+AFTER_AUTH_SLEEP="${AUTODARTS_WAIT_CALLER_AFTER_AUTH_SLEEP:-4}"
+URL="https://127.0.0.1:8079/api/auth/status"
+
+if ! command -v curl >/dev/null 2>&1; then
+  echo "[wait-caller] curl fehlt, WLED startet ohne Warteprüfung." >&2
+  exit 0
+fi
+
+for i in $(seq 1 "$TIMEOUT"); do
+  raw="$(curl -sk --max-time 2 "$URL" 2>/dev/null || true)"
+  if echo "$raw" | grep -q '"state":"authenticated"'; then
+    echo "[wait-caller] Caller ist authenticated. Warte ${AFTER_AUTH_SLEEP}s auf internen Event-Feed ..."
+    sleep "$AFTER_AUTH_SLEEP"
+    exit 0
+  fi
+  sleep 1
+done
+
+echo "[wait-caller] WARN: Caller wurde nach ${TIMEOUT}s nicht authenticated erkannt. WLED startet trotzdem." >&2
+exit 0
+EOF
+
+  chmod 777 "$WLED_WAIT_SCRIPT"
+  mkdir -p "$WLED_DROPIN_DIR"
+  cat >"$WLED_DROPIN" <<EOF
+[Service]
+ExecStartPre=$WLED_WAIT_SCRIPT
+EOF
+  chmod 777 "$WLED_DROPIN"
+}
+
+fix_wled_service_startlimit_location() {
+  [[ -f "$WLED_SERVICE" ]] || return 0
+  python3 - "$WLED_SERVICE" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+lines = [line for line in lines if not line.strip().startswith("StartLimitIntervalSec=")]
+
+out = []
+inserted = False
+for line in lines:
+    out.append(line)
+    if line.strip() == "[Unit]" and not inserted:
+        out.append("StartLimitIntervalSec=0")
+        inserted = True
+
+if not inserted:
+    out = ["[Unit]", "StartLimitIntervalSec=0"] + out
+
+path.write_text("\n".join(out).rstrip() + "\n", encoding="utf-8")
+PY
+  chmod 777 "$WLED_SERVICE"
+}
+
 schedule_reboot() {
   if [[ "$AUTO_REBOOT" != "1" ]]; then
     log "Automatischer Neustart wurde mit AUTO_REBOOT=0 deaktiviert."
@@ -454,7 +524,7 @@ flock -n 9 || fail "Installation läuft bereits."
 
 write_state "running" "Neue Caller-/WLED-Version wird installiert."
 log "===== V2-Migration START ====="
-log "Build: CALLER-WLED-V2-SERVICEWAIT-20260804-06"
+log "Build: CALLER-WLED-V2-SERVICEHOOK-20260806-07"
 
 mapfile -t CALLER_VALUES < <(read_caller_values)
 BOARD_ID="${CALLER_VALUES[0]:-}"
@@ -560,6 +630,7 @@ After=network-online.target darts-caller.service
 Requires=darts-caller.service
 PartOf=darts-caller.service
 BindsTo=darts-caller.service
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -567,7 +638,6 @@ WorkingDirectory=/var/lib/autodarts/extensions/darts-wled
 ExecStart=/var/lib/autodarts/extensions/darts-wled/start-custom.sh
 Restart=always
 RestartSec=2
-StartLimitIntervalSec=0
 TimeoutStopSec=10
 KillMode=process
 
@@ -577,6 +647,9 @@ EOF
 
 chmod 777 "$CALLER_SERVICE" "$WLED_SERVICE"
 rm -rf "$CALLER_OVERRIDE_DIR"
+
+install_wled_wait_hook
+fix_wled_service_startlimit_location
 
 systemctl daemon-reload
 systemctl reset-failed darts-caller.service darts-wled.service >/dev/null 2>&1 || true
