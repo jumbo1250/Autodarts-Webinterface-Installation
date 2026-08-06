@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# BUILD: WEBPANEL-UPDATER-CALLER-WLED-V2-AUTHRESET-20260806-04
+# BUILD: WEBPANEL-UPDATER-CALLER-WLED-V2-20260627-03
 set -euo pipefail
 
 REPO="jumbo1250/Autodarts-Webinterface-Installation"
@@ -34,7 +34,6 @@ FILES=(
   "autodarts-button-led.py|${BIN_DIR}/autodarts-button-led.py"
   "autodarts-extensions-update.sh|${BIN_DIR}/autodarts-extensions-update.sh"
   "autodarts-extensions-v2-install.sh|${BIN_DIR}/autodarts-extensions-v2-install.sh"
-  "autodarts-caller-auth-reset.sh|${BIN_DIR}/autodarts-caller-auth-reset.sh"
   "Autodarts_install_manual.pdf|${DATA_DIR}/Autodarts_install_manual.pdf"
   "GPIO_Setup.jpeg|${DATA_DIR}/GPIO_Setup.jpeg"
   "Autodarts_Installationshandbuch_v2.docx|${DATA_DIR}/Autodarts_Installationshandbuch_v2.docx"

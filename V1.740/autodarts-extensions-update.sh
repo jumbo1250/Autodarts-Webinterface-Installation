@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# BUILD: CALLER-WLED-BINARY-UPDATER-SERVICEWAIT-20260804-04
+# BUILD: CALLER-WLED-BINARY-UPDATER-20260627-03
 set -Eeuo pipefail
 
 CALLER_REPO="Peschi90/darts-caller"
@@ -101,95 +101,6 @@ service_stable() {
   done
   after="$(systemctl show "$service" -p NRestarts --value 2>/dev/null || echo 0)"
   [[ "$before" == "$after" ]]
-}
-
-caller_auth_json() {
-  curl -sk --max-time 2 https://127.0.0.1:8079/api/auth/status 2>/dev/null || true
-}
-
-json_field() {
-  local key="$1"
-  python3 - "$key" <<'PY'
-import json, sys
-key = sys.argv[1]
-try:
-    data = json.load(sys.stdin)
-except Exception:
-    print("")
-    raise SystemExit(0)
-value = data.get(key, "")
-if value is None:
-    print("")
-else:
-    print(value)
-PY
-}
-
-wait_for_caller_api() {
-  local timeout="${1:-30}"
-  local i raw state
-  for ((i=0; i<timeout; i++)); do
-    raw="$(caller_auth_json)"
-    state="$(printf '%s' "$raw" | json_field state)"
-    if [[ -n "$state" ]]; then
-      log "Caller API erreichbar: auth_state=$state"
-      return 0
-    fi
-    sleep 1
-  done
-  log "WARN: Caller API nach ${timeout}s nicht erreichbar."
-  return 1
-}
-
-wait_for_caller_authenticated() {
-  local timeout="${1:-20}"
-  local i raw state account
-  for ((i=0; i<timeout; i++)); do
-    raw="$(caller_auth_json)"
-    state="$(printf '%s' "$raw" | json_field state)"
-    account="$(printf '%s' "$raw" | json_field account)"
-    if [[ "$state" == "authenticated" ]]; then
-      if [[ -n "$account" ]]; then
-        log "Caller authentifiziert: account erkannt."
-      else
-        log "Caller authentifiziert: account noch leer."
-      fi
-      return 0
-    fi
-    sleep 1
-  done
-  log "WARN: Caller ist noch nicht authenticated. WLED wird trotzdem gestartet und verbindet sich später erneut."
-  return 1
-}
-
-wait_for_wled_process() {
-  local timeout="${1:-20}"
-  local i
-  for ((i=0; i<timeout; i++)); do
-    if pgrep -f "$WLED_BIN" >/dev/null 2>&1; then
-      log "WLED-Prozess läuft."
-      return 0
-    fi
-    sleep 1
-  done
-  log "WARN: WLED-Prozess wurde nach ${timeout}s nicht gefunden."
-  return 1
-}
-
-wait_for_wled_ready_log() {
-  local since="$1"
-  local timeout="${2:-45}"
-  local i
-  for ((i=0; i<timeout; i++)); do
-    if journalctl -u darts-wled.service --since "$since" --no-pager -o cat 2>/dev/null \
-      | grep -Eq '\[OK\] Caller successfully connected|CONNECTED TO DATA-FEEDER|APPLICATION RUNNING'; then
-      log "WLED-Start bestätigt: Dienst läuft und Log zeigt Verbindung/Laufzustand."
-      return 0
-    fi
-    sleep 1
-  done
-  log "WARN: WLED läuft, aber Log-Bestätigung für Caller-Verbindung wurde nach ${timeout}s nicht gesehen."
-  return 1
 }
 
 resolve_release() {
@@ -449,27 +360,13 @@ if [[ "$NEED_WLED" == "1" ]]; then
 fi
 
 if [[ "$NEED_CALLER" == "1" && ("$CALLER_WAS_ACTIVE" == "1" || "$WLED_WAS_ACTIVE" == "1") ]]; then
-  log "Starte Caller-Dienst nach Update …"
   systemctl start darts-caller.service
-  service_stable darts-caller.service 8 || fail "Caller startet nach dem Update nicht stabil."
-  wait_for_caller_api 35 || fail "Caller API ist nach dem Update nicht erreichbar."
-  wait_for_caller_authenticated 20 || true
-  sleep 4
-elif [[ "$WLED_WAS_ACTIVE" == "1" ]]; then
-  # Caller wurde nicht aktualisiert, aber WLED wird neu gestartet.
-  # Trotzdem kurz sicherstellen, dass der Data-Feeder erreichbar ist.
-  wait_for_caller_api 20 || true
-  wait_for_caller_authenticated 8 || true
-  sleep 2
+  service_stable darts-caller.service 5 || fail "Caller startet nach dem Update nicht stabil."
 fi
 
 if [[ "$WLED_WAS_ACTIVE" == "1" ]]; then
-  log "Starte WLED-Dienst nach Update …"
-  WLED_START_SINCE="$(date +'%F %T')"
   systemctl start darts-wled.service
-  service_stable darts-wled.service 12 || fail "WLED startet nach dem Update nicht stabil."
-  wait_for_wled_process 20 || fail "WLED-Prozess läuft nach dem Update nicht."
-  wait_for_wled_ready_log "$WLED_START_SINCE" 45 || true
+  service_stable darts-wled.service 10 || fail "WLED startet nach dem Update nicht stabil."
 fi
 
 update_flag \
