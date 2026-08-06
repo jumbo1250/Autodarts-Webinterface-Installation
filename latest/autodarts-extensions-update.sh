@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# BUILD: CALLER-WLED-BINARY-UPDATER-SERVICEHOOK-REPAIRMODE-20260806-06
+# BUILD: CALLER-WLED-BINARY-UPDATER-SERVICEHOOK-REPAIRMODE-JSONFIX-20260806-07
 set -Eeuo pipefail
 
 CALLER_REPO="Peschi90/darts-caller"
@@ -113,20 +113,19 @@ caller_auth_json() {
 
 json_field() {
   local key="$1"
-  python3 - "$key" <<'PY'
+  python3 -c '
 import json, sys
 key = sys.argv[1]
+raw = sys.stdin.read()
 try:
-    data = json.load(sys.stdin)
+    data = json.loads(raw) if raw.strip() else {}
 except Exception:
-    print("")
-    raise SystemExit(0)
+    data = {}
 value = data.get(key, "")
 if value is None:
-    print("")
-else:
-    print(value)
-PY
+    value = ""
+print(value)
+' "$key"
 }
 
 wait_for_caller_api() {
