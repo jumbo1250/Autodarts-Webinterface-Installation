@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# BUILD: CALLER-WLED-V2-SERVICEHOOK-JSONFIX-WLEDWATCH-20260806-09
+# BUILD: CALLER-WLED-V2-SERVICEHOOK-JSONFIX-WLEDWATCH-SYNTAXFIX-20260806-10
 set -Eeuo pipefail
 
 CALLER_REPO="Peschi90/darts-caller"
@@ -449,8 +449,7 @@ except OSError:
 try:
     parts = shlex.split(text, comments=True, posix=True)
 except Exception:
-    parts = text.replace('\
-', ' ').split()
+    parts = text.replace("\\", " ").split()
 for i, part in enumerate(parts):
     if part == "-WEPS" and i + 1 < len(parts):
         print(parts[i + 1])
@@ -536,8 +535,7 @@ except OSError:
 try:
     parts = shlex.split(text, comments=True, posix=True)
 except Exception:
-    parts = text.replace('\
-', ' ').split()
+    parts = text.replace("\\", " ").split()
 for i, part in enumerate(parts):
     if part == "-WEPS" and i + 1 < len(parts):
         print(parts[i + 1])
@@ -621,9 +619,7 @@ for line in lines:
 if not inserted:
     out = ["[Unit]", "StartLimitIntervalSec=0"] + out
 
-path.write_text("
-".join(out).rstrip() + "
-", encoding="utf-8")
+path.write_text("\\n".join(out).rstrip() + "\\n", encoding="utf-8")
 PY
   chmod 777 "$WLED_SERVICE"
 }
@@ -665,7 +661,7 @@ flock -n 9 || fail "Installation läuft bereits."
 
 write_state "running" "Neue Caller-/WLED-Version wird installiert."
 log "===== V2-Migration START ====="
-log "Build: CALLER-WLED-V2-SERVICEHOOK-JSONFIX-WLEDWATCH-20260806-09"
+log "Build: CALLER-WLED-V2-SERVICEHOOK-JSONFIX-WLEDWATCH-SYNTAXFIX-20260806-10"
 
 mapfile -t CALLER_VALUES < <(read_caller_values)
 BOARD_ID="${CALLER_VALUES[0]:-}"
