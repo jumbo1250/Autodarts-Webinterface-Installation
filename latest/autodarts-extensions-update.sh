@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# BUILD: CALLER-WLED-BINARY-UPDATER-SERVICEHOOK-REPAIRMODE-JSONFIX-WLEDWATCH-SYNTAXFIX-20260806-08
+# BUILD: CALLER-WLED-BINARY-UPDATER-SERVICEHOOK-REPAIRMODE-JSONFIX-WLEDWATCH-UNITFIX-20260806-09
 set -Eeuo pipefail
 
 CALLER_REPO="Peschi90/darts-caller"
@@ -395,7 +395,7 @@ for line in lines:
 if not inserted:
     out = ["[Unit]", "StartLimitIntervalSec=0"] + out
 
-path.write_text("\\n".join(out).rstrip() + "\\n", encoding="utf-8")
+path.write_text("\n".join(out).rstrip() + "\n", encoding="utf-8")
 PY
   chmod 777 "$WLED_SERVICE"
 }
