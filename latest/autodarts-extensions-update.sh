@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# BUILD: CALLER-WLED-BINARY-UPDATER-SERVICEHOOK-20260806-05
+# BUILD: CALLER-WLED-BINARY-UPDATER-SERVICEHOOK-REPAIRMODE-20260806-06
 set -Eeuo pipefail
 
 CALLER_REPO="Peschi90/darts-caller"
@@ -22,7 +22,7 @@ RESULT="/var/lib/autodarts/extensions-update-last.json"
 BACKUP_ROOT="/var/lib/autodarts/config/backups"
 LOCK="/run/autodarts-extensions-update.lock"
 
-TARGET="${1:-all}"                 # all | caller | wled
+TARGET="${1:-all}"                 # all | caller | wled | service-repair
 FORCE="${FORCE:-0}"                # FORCE=1 installiert auch dieselbe Version erneut
 TS="$(date +'%Y%m%d-%H%M%S')"
 BACKUP="${BACKUP_ROOT}/extensions-binary-update-${TS}"
@@ -422,6 +422,15 @@ flock -n 9 || fail "Update läuft bereits."
 install_wled_wait_hook
 fix_wled_service_startlimit_location
 systemctl daemon-reload
+
+if [[ "$TARGET" == "service-repair" || "$TARGET" == "services" || "$TARGET" == "repair" ]]; then
+  CALLER_STATUS="SKIPPED"
+  WLED_STATUS="SERVICE_REPAIR"
+  FINAL_STATUS="success"
+  LAST_ERROR=""
+  log "Service-Reparatur erfolgreich: WLED-Wait-Hook installiert und systemd neu geladen."
+  exit 0
+fi
 
 DO_CALLER=0
 DO_WLED=0
