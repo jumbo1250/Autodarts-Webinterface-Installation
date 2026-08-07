@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# BUILD: WEBPANEL-UPDATER-OPTIONAL-DESKTOP-HOOK-20260807-01
+# BUILD: WEBPANEL-UPDATER-AUTHRESET-FILESONLY-20260806-06
 set -euo pipefail
 
 REPO="jumbo1250/Autodarts-Webinterface-Installation"
@@ -40,9 +40,6 @@ FILES=(
   "Autodarts_Installationshandbuch_v2.docx|${DATA_DIR}/Autodarts_Installationshandbuch_v2.docx"
   "version.txt|${LOCAL_VER_FILE}"
   "fix_ap_internet_sharing_v3.sh|${BIN_DIR}/autodarts-ap-internet-fix.sh"
-  # OPTIONAL: Desktop-Migration + Wallpaper. Fehlen sie im Repo -> sauberer Skip.
-  "autodarts-desktop-migration.sh|${BIN_DIR}/autodarts-desktop-migration.sh"
-  "Wallpaper.png|${DATA_DIR}/Wallpaper.png"
   # OPTIONAL: Updater selbst (wenn nicht vorhanden -> skip)
   "autodarts-webpanel-update.sh|${BIN_DIR}/autodarts-webpanel-update.sh"
 )
@@ -143,40 +140,6 @@ extract_zip() {
   return 1
 }
 
-
-
-run_optional_desktop_migration_if_downloaded() {
-  local remote_name="autodarts-desktop-migration.sh"
-  local migration_script="${BIN_DIR}/${remote_name}"
-
-  # WICHTIG: Nur ausführen, wenn der Hook in DIESEM Update wirklich von GitHub
-  # geladen wurde. Eine alte lokal liegengebliebene Version wird nicht ausgeführt,
-  # wenn die Datei später aus dem Repo entfernt wurde oder der Download fehlschlug.
-  if [[ -z "${DOWNLOADED[${remote_name}]+x}" ]]; then
-    log "INFO: Optionaler Desktop-Migrations-Hook nicht geladen -> skip"
-    return 0
-  fi
-
-  if [[ ! -f "$migration_script" ]]; then
-    log "WARN: Desktop-Migrations-Hook wurde geladen, fehlt aber lokal -> skip"
-    return 0
-  fi
-
-  chmod 755 "$migration_script" 2>/dev/null || true
-  chmod 644 "${DATA_DIR}/Wallpaper.png" 2>/dev/null || true
-
-  log "Starte optionalen Desktop-Migrations-Hook: ${migration_script}"
-  if bash "$migration_script" >>"${LOG_FILE}" 2>&1; then
-    log "OK: Optionaler Desktop-Migrations-Hook abgeschlossen"
-  else
-    local rc=$?
-    # Der Hook besitzt seinen eigenen Rollback. Ein Fehler dort soll das eigentliche
-    # Webpanel-Update nicht zerstören; er bleibt aber deutlich im Update-Log sichtbar.
-    log "WARN: Desktop-Migrations-Hook meldete Fehler (exit=${rc}) -> Webpanel-Update läuft weiter"
-  fi
-
-  return 0
-}
 
 run_ap_internet_fix_if_present() {
   local fix_script="${BIN_DIR}/autodarts-ap-internet-fix.sh"
@@ -538,10 +501,6 @@ for entry in "${FILES[@]}"; do
 done
 
 chmod 777 "${BIN_DIR}" "${DATA_DIR}" "${STATE_DIR}" 2>/dev/null || true
-
-# 4) Optionalen Migrations-Hook nur dann ausführen, wenn er in diesem Update
-#    tatsächlich von GitHub geladen wurde. Fehlt die Datei -> keinerlei Änderung.
-run_optional_desktop_migration_if_downloaded
 
 if [[ "${UPDATED_ANY}" != "1" ]]; then
   log "Kein Updatepaket installiert."
