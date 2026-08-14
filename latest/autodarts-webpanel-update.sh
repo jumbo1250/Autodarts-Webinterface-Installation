@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# BUILD: WEBPANEL-UPDATER-OPTIONAL-DESKTOP-HOOK-20260807-01
+# BUILD: WEBPANEL-UPDATER-DESKTOP-V2-20260814-01
 set -euo pipefail
 
 REPO="jumbo1250/Autodarts-Webinterface-Installation"
@@ -43,6 +43,7 @@ FILES=(
   # OPTIONAL: Desktop-Migration + Wallpaper. Fehlen sie im Repo -> sauberer Skip.
   "autodarts-desktop-migration.sh|${BIN_DIR}/autodarts-desktop-migration.sh"
   "Wallpaper.png|${DATA_DIR}/Wallpaper.png"
+  "autodarts.png|${DATA_DIR}/autodarts.png"
   # OPTIONAL: Updater selbst (wenn nicht vorhanden -> skip)
   "autodarts-webpanel-update.sh|${BIN_DIR}/autodarts-webpanel-update.sh"
 )
@@ -164,6 +165,7 @@ run_optional_desktop_migration_if_downloaded() {
 
   chmod 755 "$migration_script" 2>/dev/null || true
   chmod 644 "${DATA_DIR}/Wallpaper.png" 2>/dev/null || true
+  chmod 644 "${DATA_DIR}/autodarts.png" 2>/dev/null || true
 
   log "Starte optionalen Desktop-Migrations-Hook: ${migration_script}"
   if bash "$migration_script" >>"${LOG_FILE}" 2>&1; then

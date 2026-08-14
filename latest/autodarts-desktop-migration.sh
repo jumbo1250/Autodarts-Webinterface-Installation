@@ -1,12 +1,19 @@
 #!/usr/bin/env bash
-# BUILD: AUTODARTS-DESKTOP-COM-FALLBACK-WALLPAPER-20260807-01
+# BUILD: AUTODARTS-DESKTOP-MIGRATION-V2-20260814-01
 #
-# Optionaler Webpanel-Migrations-Hook.
-# - verändert NUR Raspberry-Pis, auf denen die bestehende Autodarts-Desktop-Funktion erkannt wird
-# - behält das vorhandene Startscript inkl. Zenity/Delays/"now" bei
-# - ergänzt play.autodarts.com als bevorzugte Domain mit play.autodarts.io als Fallback
-# - installiert/aktiviert optional Wallpaper.png
-# - erstellt vor Änderungen ein Rollback-Backup
+# Optionaler Webpanel-Migrations-Hook fuer bestehende Autodarts-Desktop-Pis.
+#
+# Funktionen:
+# - erkennt vorhandene Autodarts-Desktop-Funktion und veraendert nur passende Pis
+# - behaelt/ergänzt .com bevorzugt + .io Fallback (V1)
+# - manueller Start ("now"): 4 Sekunden Zenity-Hinweis, KEIN Chromium-Kill
+# - Chromium-Hilfe fuer sauberes Vollbild: maximized + fullscreen + Position 0,0
+# - installiert optional Wallpaper.png
+# - installiert optional autodarts.png als Desktop-Icon
+# - erstellt/aktualisiert Desktop-Shortcuts:
+#     Autodarts Spiel
+#     Autodarts Einstellung -> http://127.0.0.1/
+# - Backup + automatischer Rollback bei kritischem Fehler
 #
 # Manueller Rollback der letzten Änderung:
 #   sudo /usr/local/bin/autodarts-desktop-migration.sh --rollback
@@ -19,13 +26,22 @@ HOME_DIR="${AUTODARTS_HOME:-${USER_HOME_FROM_PASSWD:-/home/${USER_NAME}}}"
 
 LAUNCHER="${AUTODARTS_LAUNCHER:-${HOME_DIR}/bin/autodarts-start.sh}"
 AUTOSTART_FILE="${AUTODARTS_AUTOSTART:-/etc/xdg/autostart/chrome-Autodarts_Spiel.desktop}"
-DESKTOP_ICON="${AUTODARTS_DESKTOP_ICON:-${HOME_DIR}/Desktop/Autodarts_Spiel.desktop}"
+PLAY_DESKTOP="${AUTODARTS_DESKTOP_ICON:-${HOME_DIR}/Desktop/Autodarts_Spiel.desktop}"
+SETTINGS_DESKTOP="${AUTODARTS_SETTINGS_ICON:-${HOME_DIR}/Desktop/Autodarts_Einstellungen.desktop}"
+
 WALLPAPER_SRC="${AUTODARTS_WALLPAPER_SRC:-${HOME_DIR}/autodarts-data/Wallpaper.png}"
 WALLPAPER_DST="${AUTODARTS_WALLPAPER_DST:-${HOME_DIR}/.local/share/backgrounds/Autodarts-Wallpaper.png}"
 
+APP_ICON_SRC="${AUTODARTS_ICON_SRC:-${HOME_DIR}/autodarts-data/autodarts.png}"
+APP_ICON_DST="${AUTODARTS_ICON_DST:-${HOME_DIR}/.local/share/icons/autodarts.png}"
+# Bootstrap-Fallback: falls der bereits installierte alte Updater autodarts.png noch nicht kennt,
+# kann diese V2 das Icon beim ersten Lauf selbst nachladen. Zukuenftige Updater laden es regulaer.
+APP_ICON_URL="${AUTODARTS_ICON_URL:-https://raw.githubusercontent.com/jumbo1250/Autodarts-Webinterface-Installation/main/latest/autodarts.png}"
+
 STATE_ROOT="${AUTODARTS_DESKTOP_STATE:-/var/lib/autodarts/desktop-migration}"
 BACKUP_ROOT="${STATE_ROOT}/backups"
-MIGRATION_TAG="AUTODARTS_DOMAIN_FALLBACK_V1"
+DOMAIN_TAG="AUTODARTS_DOMAIN_FALLBACK_V1"
+TUNE_TAG="AUTODARTS_DESKTOP_TUNE_V2"
 
 log() {
   printf '[autodarts-desktop-migration] %s\n' "$*"
@@ -42,6 +58,16 @@ path_exists() {
 TARGET_FOUND=0
 BACKUP_DIR=""
 ROLLBACK_ARMED=0
+TMP_LAUNCHER=""
+TMP_PLAY=""
+TMP_SETTINGS=""
+
+cleanup_tmp() {
+  [[ -n "${TMP_LAUNCHER:-}" ]] && rm -f "$TMP_LAUNCHER" 2>/dev/null || true
+  [[ -n "${TMP_PLAY:-}" ]] && rm -f "$TMP_PLAY" 2>/dev/null || true
+  [[ -n "${TMP_SETTINGS:-}" ]] && rm -f "$TMP_SETTINGS" 2>/dev/null || true
+}
+trap cleanup_tmp EXIT
 
 backup_one() {
   local path="$1"
@@ -70,7 +96,6 @@ restore_backup() {
 
   log "Rollback aus: ${dir}"
 
-  # Rückwärts wiederherstellen, falls Pfade ineinander verschachtelt sind.
   tac "${dir}/files.list" | while IFS=$'\t' read -r existed path; do
     [[ -n "${path:-}" ]] || continue
     src="${dir}/root${path}"
@@ -118,9 +143,13 @@ is_root || {
   exit 1
 }
 
+if ! id "$USER_NAME" >/dev/null 2>&1; then
+  log "SKIP: Benutzer ${USER_NAME} existiert nicht."
+  exit 0
+fi
+
 # -----------------------------------------------------------------------------
-# 1) Erkennen, ob dieser Pi überhaupt die Desktop-/Autostart-Funktion besitzt.
-#    Fehlt sie, wird NICHTS neu angelegt.
+# 1) Nur bestehende Autodarts-Desktop-Pis bearbeiten.
 # -----------------------------------------------------------------------------
 if [[ ! -f "$LAUNCHER" ]]; then
   log "SKIP: ${LAUNCHER} fehlt - dieser Pi besitzt die Desktop-Startfunktion offenbar nicht."
@@ -130,7 +159,7 @@ fi
 if [[ -f "$AUTOSTART_FILE" ]] && grep -Fq "$LAUNCHER" "$AUTOSTART_FILE" 2>/dev/null; then
   TARGET_FOUND=1
 fi
-if [[ -f "$DESKTOP_ICON" ]] && grep -Fq "$LAUNCHER" "$DESKTOP_ICON" 2>/dev/null; then
+if [[ -f "$PLAY_DESKTOP" ]] && grep -Fq "$LAUNCHER" "$PLAY_DESKTOP" 2>/dev/null; then
   TARGET_FOUND=1
 fi
 
@@ -145,81 +174,26 @@ if ! grep -q 'chromium' "$LAUNCHER" 2>/dev/null; then
   exit 0
 fi
 
-NEED_LAUNCHER=0
-if grep -Fq "$MIGRATION_TAG" "$LAUNCHER" 2>/dev/null; then
-  log "Launcher: .com/.io-Fallback bereits vorhanden."
-else
-  if grep -Eq '^[[:space:]]*URL=["'"'"']https://play\.autodarts\.(io|com)/?["'"'"'][[:space:]]*$' "$LAUNCHER"; then
-    NEED_LAUNCHER=1
-  else
-    log "WARN: Keine eindeutig erkennbare URL=play.autodarts.io/.com-Zeile gefunden."
-    log "      Launcher wird nicht automatisch verändert."
-  fi
-fi
-
-NEED_WALLPAPER=0
-if [[ -s "$WALLPAPER_SRC" ]]; then
-  if [[ ! -f "$WALLPAPER_DST" ]] || ! cmp -s "$WALLPAPER_SRC" "$WALLPAPER_DST"; then
-    NEED_WALLPAPER=1
-  else
-    log "Wallpaper-Datei ist bereits aktuell."
-  fi
-else
-  log "INFO: ${WALLPAPER_SRC} fehlt/ist leer - Wallpaper wird übersprungen."
-fi
-
-if [[ "$NEED_LAUNCHER" -eq 0 && "$NEED_WALLPAPER" -eq 0 ]]; then
-  log "Keine Änderungen nötig."
-  exit 0
-fi
-
-mkdir -p "$BACKUP_ROOT"
-BACKUP_DIR="${BACKUP_ROOT}/$(date +%Y%m%d_%H%M%S)_$$"
-mkdir -p "$BACKUP_DIR"
-: > "${BACKUP_DIR}/files.list"
-
-if [[ "$NEED_LAUNCHER" -eq 1 ]]; then
-  backup_one "$LAUNCHER"
-fi
-if [[ "$NEED_WALLPAPER" -eq 1 ]]; then
-  backup_one "$WALLPAPER_DST"
-  # pcmanfm kann beim Setzen des Hintergrunds mehrere Dateien in diesem Ordner ändern.
-  backup_one "${HOME_DIR}/.config/pcmanfm"
-fi
-
-cat > "${BACKUP_DIR}/info.txt" <<EOF2
-created_at=$(date '+%Y-%m-%d %H:%M:%S')
-user=${USER_NAME}
-home=${HOME_DIR}
-launcher=${LAUNCHER}
-autostart=${AUTOSTART_FILE}
-desktop_icon=${DESKTOP_ICON}
-wallpaper_src=${WALLPAPER_SRC}
-wallpaper_dst=${WALLPAPER_DST}
-EOF2
-
-ROLLBACK_ARMED=1
-
 # -----------------------------------------------------------------------------
-# 2) Nur die Domainlogik in das vorhandene Script einbauen.
-#    Alle übrigen Zeilen (Zenity, INFO_DELAY, EXTRA_DELAY, now, Chromium-Flags)
-#    bleiben unverändert.
+# 2) Launcher-Kandidat bauen.
+#    - Domain-V1 nur ergänzen, wenn noch nicht vorhanden.
+#    - V2-Tuning immer idempotent auf den gewuenschten Stand bringen.
 # -----------------------------------------------------------------------------
-if [[ "$NEED_LAUNCHER" -eq 1 ]]; then
-  tmp_launcher="$(mktemp)"
-
-  python3 - "$LAUNCHER" "$tmp_launcher" <<'PY'
+TMP_LAUNCHER="$(mktemp)"
+python3 - "$LAUNCHER" "$TMP_LAUNCHER" "$DOMAIN_TAG" "$TUNE_TAG" <<'PY'
 import re
 import sys
 
-src, dst = sys.argv[1], sys.argv[2]
+src, dst, domain_tag, tune_tag = sys.argv[1:5]
 text = open(src, "r", encoding="utf-8").read()
 
-url_re = re.compile(
-    r'(?m)^[ \t]*URL=(["\'])https://play\.autodarts\.(?:io|com)/?\1[ \t]*$'
-)
+# ---- V1: .com bevorzugt, .io Fallback --------------------------------------
+if domain_tag not in text:
+    url_re = re.compile(
+        r'(?m)^[ \t]*URL=(["\'])https://play\.autodarts\.(?:io|com)/?\1[ \t]*$'
+    )
 
-replacement = r'''# AUTODARTS_DOMAIN_FALLBACK_V1
+    replacement = r'''# AUTODARTS_DOMAIN_FALLBACK_V1
 COM_URL="https://play.autodarts.com/"
 IO_URL="https://play.autodarts.io/"
 URL="$COM_URL"
@@ -263,9 +237,6 @@ finish_autodarts_url_check() {
     wait "$AD_COM_PID" 2>/dev/null || true
     wait "$AD_IO_PID" 2>/dev/null || true
 
-    # .com ist bevorzugt. Nur wenn .com nicht antwortet und .io antwortet,
-    # wird .io verwendet. Sind BEIDE nicht erreichbar (z.B. Internet/DNS down),
-    # bleibt .com die Standardwahl.
     if grep -qx 'OK' "$AD_COM_RESULT" 2>/dev/null; then
         URL="$COM_URL"
     elif grep -qx 'OK' "$AD_IO_RESULT" 2>/dev/null; then
@@ -278,43 +249,262 @@ finish_autodarts_url_check() {
 }
 '''
 
-text2, count = url_re.subn(lambda _m: replacement, text, count=1)
-if count != 1:
-    raise SystemExit("URL-Zeile konnte nicht eindeutig ersetzt werden")
+    text2, count = url_re.subn(lambda _m: replacement, text, count=1)
+    if count == 1:
+        # Nur der originale Launcher hat genau dieses sleep. Bei V1 ist es bereits ersetzt.
+        sleep_re = re.compile(r'(?m)^([ \t]*)sleep[ \t]+["\']?\$EXTRA_DELAY["\']?[ \t]*$')
 
-sleep_re = re.compile(r'(?m)^([ \t]*)sleep[ \t]+["\']?\$EXTRA_DELAY["\']?[ \t]*$')
+        def repl_sleep(m):
+            indent = m.group(1)
+            return (
+                f'{indent}start_autodarts_url_check\n'
+                f'{indent}sleep "$EXTRA_DELAY"\n'
+                f'{indent}finish_autodarts_url_check'
+            )
 
-def repl_sleep(m):
-    indent = m.group(1)
-    return (
-        f'{indent}start_autodarts_url_check\n'
-        f'{indent}sleep "$EXTRA_DELAY"\n'
-        f'{indent}finish_autodarts_url_check'
-    )
+        text3, sleep_count = sleep_re.subn(repl_sleep, text2, count=1)
+        if sleep_count != 1:
+            raise SystemExit("Domain-V1: sleep $EXTRA_DELAY konnte nicht eindeutig gefunden werden")
+        text = text3
+    else:
+        # Kein bekannter URL-Aufbau: Domainteil aus Sicherheitsgruenden nicht anfassen.
+        pass
 
-text3, sleep_count = sleep_re.subn(repl_sleep, text2, count=1)
-if sleep_count != 1:
-    raise SystemExit("sleep $EXTRA_DELAY konnte nicht eindeutig gefunden werden")
+# ---- V2: manueller Start 4 Sekunden -----------------------------------------
+# Bekannten now-Block finden und INFO_DELAY=4 / EXTRA_DELAY=0 setzen.
+now_re = re.compile(
+    r'(?ms)^(?P<indent>[ \t]*)if[ \t]+\[[ \t]+["\']?\$\{1:-\}["\']?[ \t]+=[ \t]+["\']now["\'][ \t]+\];[ \t]*then[ \t]*\n'
+    r'(?P<body>.*?)'
+    r'^(?P=indent)fi[ \t]*$'
+)
 
-open(dst, "w", encoding="utf-8", newline="\n").write(text3)
+m = now_re.search(text)
+if not m:
+    raise SystemExit("V2: bekannter 'now'-Block wurde nicht gefunden")
+
+body = m.group('body')
+body2, c1 = re.subn(r'(?m)^([ \t]*)INFO_DELAY=[^\n]*$', r'\1INFO_DELAY=4', body, count=1)
+body3, c2 = re.subn(r'(?m)^([ \t]*)EXTRA_DELAY=[^\n]*$', r'\1EXTRA_DELAY=0', body2, count=1)
+if c1 != 1 or c2 != 1:
+    raise SystemExit("V2: INFO_DELAY/EXTRA_DELAY im now-Block nicht eindeutig gefunden")
+
+new_block = m.group(0)
+new_block = new_block.replace(body, body3, 1)
+if tune_tag not in text:
+    new_block = f'# {tune_tag}\n' + new_block
+text = text[:m.start()] + new_block + text[m.end():]
+
+# ---- V2: Chromium Fullscreen-Hilfe ------------------------------------------
+# Nur die eigentliche Startzeile bearbeiten; keine Chromium-Vorkommen in Kommentaren/Funktionen.
+lines = text.splitlines()
+found = False
+for i, line in enumerate(lines):
+    stripped = line.lstrip()
+    if stripped.startswith('chromium ') and '$URL' not in stripped:
+        # Die bekannte erste Chromium-Kommandozeile endet mit Backslash.
+        indent = line[:len(line) - len(stripped)]
+        trail = ' \\' if stripped.rstrip().endswith('\\') else ''
+        core = stripped.rstrip()
+        if core.endswith('\\'):
+            core = core[:-1].rstrip()
+        tokens = core.split()
+        # tokens[0] == chromium
+        wanted = ['--start-maximized', '--start-fullscreen', '--window-position=0,0']
+        # Vorhandene Varianten entfernen, danach genau einmal einfuegen.
+        filtered = [tokens[0]]
+        for t in tokens[1:]:
+            if t in wanted:
+                continue
+            filtered.append(t)
+        # Nach --new-window einfuegen, sonst direkt nach chromium.
+        insert_at = 2 if '--new-window' in filtered and filtered.index('--new-window') == 1 else 1
+        for w in reversed(wanted):
+            filtered.insert(insert_at, w)
+        lines[i] = indent + ' '.join(filtered) + trail
+        found = True
+        break
+
+if not found:
+    raise SystemExit("V2: Chromium-Startzeile wurde nicht gefunden")
+
+text = '\n'.join(lines) + ('\n' if text.endswith('\n') else '')
+open(dst, "w", encoding="utf-8", newline="\n").write(text)
 PY
 
-  bash -n "$tmp_launcher"
-  grep -Fq "$MIGRATION_TAG" "$tmp_launcher"
-  grep -Fq 'https://play.autodarts.com/' "$tmp_launcher"
-  grep -Fq 'https://play.autodarts.io/' "$tmp_launcher"
-
-  old_mode="$(stat -c '%a' "$LAUNCHER")"
-  old_uid="$(stat -c '%u' "$LAUNCHER")"
-  old_gid="$(stat -c '%g' "$LAUNCHER")"
-  install -m "$old_mode" -o "$old_uid" -g "$old_gid" "$tmp_launcher" "$LAUNCHER"
-  rm -f "$tmp_launcher"
-
-  log "OK: Launcher ergänzt (.com bevorzugt, .io Fallback)."
+bash -n "$TMP_LAUNCHER"
+NEED_LAUNCHER=0
+if ! cmp -s "$LAUNCHER" "$TMP_LAUNCHER"; then
+  NEED_LAUNCHER=1
 fi
 
 # -----------------------------------------------------------------------------
-# 3) Wallpaper installieren und möglichst sofort aktivieren.
+# 3) Optionale Dateien / Shortcuts vorbereiten.
+# -----------------------------------------------------------------------------
+# Bootstrap fuer genau den Fall: alter bereits installierter Updater kennt autodarts.png noch nicht.
+if [[ ! -s "$APP_ICON_SRC" ]] && command -v curl >/dev/null 2>&1; then
+  mkdir -p "$(dirname "$APP_ICON_SRC")"
+  icon_tmp="$(mktemp)"
+  if curl -fsSL --retry 2 --connect-timeout 5 --max-time 30 -o "$icon_tmp" "$APP_ICON_URL" 2>/dev/null \
+      && [[ -s "$icon_tmp" ]]; then
+    install -m 644 "$icon_tmp" "$APP_ICON_SRC"
+    chown "$USER_NAME:$(id -gn "$USER_NAME")" "$APP_ICON_SRC" 2>/dev/null || true
+    log "INFO: autodarts.png wurde einmalig direkt nachgeladen (Bootstrap fuer alten Updater)."
+  fi
+  rm -f "$icon_tmp" 2>/dev/null || true
+fi
+
+NEED_WALLPAPER=0
+if [[ -s "$WALLPAPER_SRC" ]]; then
+  if [[ ! -f "$WALLPAPER_DST" ]] || ! cmp -s "$WALLPAPER_SRC" "$WALLPAPER_DST"; then
+    NEED_WALLPAPER=1
+  else
+    log "Wallpaper-Datei ist bereits aktuell."
+  fi
+else
+  log "INFO: ${WALLPAPER_SRC} fehlt/ist leer - Wallpaper wird übersprungen."
+fi
+
+NEED_APP_ICON=0
+if [[ -s "$APP_ICON_SRC" ]]; then
+  if [[ ! -f "$APP_ICON_DST" ]] || ! cmp -s "$APP_ICON_SRC" "$APP_ICON_DST"; then
+    NEED_APP_ICON=1
+  else
+    log "Autodarts-Icon ist bereits aktuell."
+  fi
+else
+  log "INFO: ${APP_ICON_SRC} fehlt/ist leer - eigenes Autodarts-Icon wird übersprungen."
+fi
+
+ICON_FOR_SHORTCUT="$APP_ICON_DST"
+if [[ ! -s "$APP_ICON_SRC" && ! -s "$APP_ICON_DST" ]]; then
+  ICON_FOR_SHORTCUT="applications-games"
+fi
+
+mkdir -p "${HOME_DIR}/Desktop"
+TMP_PLAY="$(mktemp)"
+cat > "$TMP_PLAY" <<EOF2
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Autodarts Spiel
+Comment=Startet Autodarts im Vollbild.
+Exec=${LAUNCHER} now
+Icon=${ICON_FOR_SHORTCUT}
+Terminal=false
+EOF2
+
+TMP_SETTINGS="$(mktemp)"
+cat > "$TMP_SETTINGS" <<'EOF2'
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Autodarts Einstellung
+Comment=Öffnet das Autodarts Webinterface.
+Exec=chromium --new-window --profile-directory=Default --ignore-profile-directory-if-not-exists http://127.0.0.1/
+Icon=preferences-system
+Terminal=false
+EOF2
+
+NEED_PLAY=0
+if [[ ! -f "$PLAY_DESKTOP" ]] || ! cmp -s "$TMP_PLAY" "$PLAY_DESKTOP"; then
+  NEED_PLAY=1
+fi
+
+NEED_SETTINGS=0
+if [[ ! -f "$SETTINGS_DESKTOP" ]] || ! cmp -s "$TMP_SETTINGS" "$SETTINGS_DESKTOP"; then
+  NEED_SETTINGS=1
+fi
+
+if [[ "$NEED_LAUNCHER" -eq 0 && "$NEED_WALLPAPER" -eq 0 && "$NEED_APP_ICON" -eq 0 \
+   && "$NEED_PLAY" -eq 0 && "$NEED_SETTINGS" -eq 0 ]]; then
+  log "Keine Änderungen nötig."
+  exit 0
+fi
+
+# -----------------------------------------------------------------------------
+# 4) Backup fuer alle tatsaechlich betroffenen Pfade.
+# -----------------------------------------------------------------------------
+mkdir -p "$BACKUP_ROOT"
+BACKUP_DIR="${BACKUP_ROOT}/$(date +%Y%m%d_%H%M%S)_$$"
+mkdir -p "$BACKUP_DIR"
+: > "${BACKUP_DIR}/files.list"
+
+[[ "$NEED_LAUNCHER" -eq 1 ]] && backup_one "$LAUNCHER"
+[[ "$NEED_WALLPAPER" -eq 1 ]] && backup_one "$WALLPAPER_DST"
+if [[ "$NEED_WALLPAPER" -eq 1 ]]; then
+  backup_one "${HOME_DIR}/.config/pcmanfm"
+fi
+[[ "$NEED_APP_ICON" -eq 1 ]] && backup_one "$APP_ICON_DST"
+[[ "$NEED_PLAY" -eq 1 ]] && backup_one "$PLAY_DESKTOP"
+[[ "$NEED_SETTINGS" -eq 1 ]] && backup_one "$SETTINGS_DESKTOP"
+
+cat > "${BACKUP_DIR}/info.txt" <<EOF2
+created_at=$(date '+%Y-%m-%d %H:%M:%S')
+user=${USER_NAME}
+home=${HOME_DIR}
+launcher=${LAUNCHER}
+autostart=${AUTOSTART_FILE}
+play_desktop=${PLAY_DESKTOP}
+settings_desktop=${SETTINGS_DESKTOP}
+wallpaper_src=${WALLPAPER_SRC}
+wallpaper_dst=${WALLPAPER_DST}
+icon_src=${APP_ICON_SRC}
+icon_dst=${APP_ICON_DST}
+EOF2
+
+ROLLBACK_ARMED=1
+
+# -----------------------------------------------------------------------------
+# 5) Launcher installieren.
+# -----------------------------------------------------------------------------
+if [[ "$NEED_LAUNCHER" -eq 1 ]]; then
+  old_mode="$(stat -c '%a' "$LAUNCHER")"
+  old_uid="$(stat -c '%u' "$LAUNCHER")"
+  old_gid="$(stat -c '%g' "$LAUNCHER")"
+  install -m "$old_mode" -o "$old_uid" -g "$old_gid" "$TMP_LAUNCHER" "$LAUNCHER"
+  bash -n "$LAUNCHER"
+  log "OK: Launcher aktualisiert (4s manueller Start + Fullscreen-Hilfe; Domainlogik erhalten/ergänzt)."
+fi
+
+# -----------------------------------------------------------------------------
+# 6) Autodarts-Icon installieren.
+# -----------------------------------------------------------------------------
+user_uid="$(id -u "$USER_NAME")"
+user_gid="$(id -g "$USER_NAME")"
+
+if [[ "$NEED_APP_ICON" -eq 1 ]]; then
+  mkdir -p "$(dirname "$APP_ICON_DST")"
+  install -m 644 -o "$user_uid" -g "$user_gid" "$APP_ICON_SRC" "$APP_ICON_DST"
+  log "OK: Autodarts-Icon installiert: ${APP_ICON_DST}"
+fi
+
+# -----------------------------------------------------------------------------
+# 7) Desktop-Shortcuts installieren/aktualisieren.
+# -----------------------------------------------------------------------------
+mark_desktop_trusted() {
+  local f="$1"
+  chmod 755 "$f" 2>/dev/null || true
+  chown "$user_uid:$user_gid" "$f" 2>/dev/null || true
+
+  if command -v gio >/dev/null 2>&1 && command -v runuser >/dev/null 2>&1; then
+    runuser -u "$USER_NAME" -- gio set "$f" metadata::trusted true >/dev/null 2>&1 || true
+  fi
+}
+
+if [[ "$NEED_PLAY" -eq 1 ]]; then
+  install -m 755 -o "$user_uid" -g "$user_gid" "$TMP_PLAY" "$PLAY_DESKTOP"
+  mark_desktop_trusted "$PLAY_DESKTOP"
+  log "OK: Desktop-Shortcut erstellt/aktualisiert: Autodarts Spiel"
+fi
+
+if [[ "$NEED_SETTINGS" -eq 1 ]]; then
+  install -m 755 -o "$user_uid" -g "$user_gid" "$TMP_SETTINGS" "$SETTINGS_DESKTOP"
+  mark_desktop_trusted "$SETTINGS_DESKTOP"
+  log "OK: Desktop-Shortcut erstellt/aktualisiert: Autodarts Einstellung"
+fi
+
+# -----------------------------------------------------------------------------
+# 8) Wallpaper wie bisher installieren und aktivieren.
 # -----------------------------------------------------------------------------
 set_wallpaper_live() {
   command -v pcmanfm >/dev/null 2>&1 || return 1
@@ -336,7 +526,6 @@ set_wallpaper_live() {
     done
   fi
 
-  # Sinnvolle Fallbacks für den normalen Raspberry-Pi-Desktop.
   if ! printf '%s\n' "${env_args[@]}" | grep -q '^XDG_RUNTIME_DIR=' && [[ -d "/run/user/${uid}" ]]; then
     env_args+=("XDG_RUNTIME_DIR=/run/user/${uid}")
   fi
@@ -411,8 +600,6 @@ PY
 
 if [[ "$NEED_WALLPAPER" -eq 1 ]]; then
   mkdir -p "$(dirname "$WALLPAPER_DST")"
-  user_uid="$(id -u "$USER_NAME")"
-  user_gid="$(id -g "$USER_NAME")"
   install -m 644 -o "$user_uid" -g "$user_gid" "$WALLPAPER_SRC" "$WALLPAPER_DST"
 
   wallpaper_ok=0
@@ -430,7 +617,6 @@ if [[ "$NEED_WALLPAPER" -eq 1 ]]; then
   fi
 
   if [[ "$wallpaper_ok" -ne 1 ]]; then
-    # Das Wallpaper ist optisch/optional. Deshalb NICHT den wichtigen Launcher zurückrollen.
     log "WARN: Wallpaper-Datei wurde installiert, konnte aber nicht automatisch aktiviert werden."
   fi
 fi
