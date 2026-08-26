@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# BUILD: CALLER-WLED-BINARY-UPDATER-SERVICEHOOK-REPAIRMODE-JSONFIX-WLEDWATCH-UNITFIX-PENDINGOK-20260826-10
+# BUILD: CALLER-WLED-BINARY-UPDATER-SERVICEHOOK-REPAIRMODE-JSONFIX-WLEDWATCH-UNITFIX-20260806-09
 set -Eeuo pipefail
 
 CALLER_REPO="Peschi90/darts-caller"
@@ -209,7 +209,7 @@ set -Eeuo pipefail
 
 CALLER_TIMEOUT="${AUTODARTS_WAIT_CALLER_TIMEOUT:-90}"
 WLED_TIMEOUT="${AUTODARTS_WAIT_WLED_TIMEOUT:-90}"
-AFTER_AUTH_SLEEP="${AUTODARTS_WAIT_CALLER_AFTER_AUTH_SLEEP:-20}"
+AFTER_AUTH_SLEEP="${AUTODARTS_WAIT_CALLER_AFTER_AUTH_SLEEP:-10}"
 CALLER_URL="https://127.0.0.1:8079/api/auth/status"
 WLED_CONFIG="/var/lib/autodarts/config/darts-wled/start-custom.sh"
 
@@ -669,49 +669,28 @@ if [[ "$NEED_WLED" == "1" ]]; then
   install -m 0777 "$TMP/manifest.sig.json" "$WLED_MANIFEST"
 fi
 
-# WLED darf bei auth_state=pending kein Update-Rollback auslösen.
-# Pending ist z.B. nach Token-Reset oder frischer Installation ein normaler Zustand.
-CALLER_AUTHENTICATED=0
-
 if [[ "$NEED_CALLER" == "1" && ("$CALLER_WAS_ACTIVE" == "1" || "$WLED_WAS_ACTIVE" == "1") ]]; then
   log "Starte Caller-Dienst nach Update …"
   systemctl start darts-caller.service
   service_stable darts-caller.service 8 || fail "Caller startet nach dem Update nicht stabil."
   wait_for_caller_api 35 || fail "Caller API ist nach dem Update nicht erreichbar."
-  if wait_for_caller_authenticated 20; then
-    CALLER_AUTHENTICATED=1
-  else
-    CALLER_AUTHENTICATED=0
-  fi
+  wait_for_caller_authenticated 20 || true
   sleep 4
 elif [[ "$WLED_WAS_ACTIVE" == "1" ]]; then
   # Caller wurde nicht aktualisiert, aber WLED wird neu gestartet.
   # Trotzdem kurz sicherstellen, dass der Data-Feeder erreichbar ist.
   wait_for_caller_api 20 || true
-  if wait_for_caller_authenticated 8; then
-    CALLER_AUTHENTICATED=1
-  else
-    CALLER_AUTHENTICATED=0
-  fi
+  wait_for_caller_authenticated 8 || true
   sleep 2
 fi
 
 if [[ "$WLED_WAS_ACTIVE" == "1" ]]; then
-  if [[ "$CALLER_AUTHENTICATED" == "1" ]]; then
-    log "Starte WLED-Dienst nach Update …"
-    systemctl enable darts-wled.service >/dev/null 2>&1 || true
-    systemctl enable --now autodarts-wled-reconnect-watchdog.timer >/dev/null 2>&1 || true
-    WLED_START_SINCE="$(date +'%F %T')"
-    systemctl start darts-wled.service
-    service_stable darts-wled.service 12 || fail "WLED startet nach dem Update nicht stabil."
-    wait_for_wled_process 20 || fail "WLED-Prozess läuft nach dem Update nicht."
-    wait_for_wled_ready_log "$WLED_START_SINCE" 45 || true
-  else
-    log "Caller/WLED Anmeldung ist nicht aktiv. Update bleibt erfolgreich; WLED wird vorerst nicht gestartet."
-    systemctl disable --now darts-wled.service >/dev/null 2>&1 || true
-    systemctl disable --now autodarts-wled-reconnect-watchdog.timer >/dev/null 2>&1 || true
-    systemctl reset-failed darts-wled.service >/dev/null 2>&1 || true
-  fi
+  log "Starte WLED-Dienst nach Update …"
+  WLED_START_SINCE="$(date +'%F %T')"
+  systemctl start darts-wled.service
+  service_stable darts-wled.service 12 || fail "WLED startet nach dem Update nicht stabil."
+  wait_for_wled_process 20 || fail "WLED-Prozess läuft nach dem Update nicht."
+  wait_for_wled_ready_log "$WLED_START_SINCE" 45 || true
 fi
 
 update_flag \

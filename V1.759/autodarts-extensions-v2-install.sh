@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# BUILD: CALLER-WLED-V2-SERVICEHOOK-JSONFIX-WLEDWATCH-UNITFIX-PENDINGOK-20260826-12
+# BUILD: CALLER-WLED-V2-SERVICEHOOK-JSONFIX-WLEDWATCH-UNITFIX-20260806-11
 set -Eeuo pipefail
 
 CALLER_REPO="Peschi90/darts-caller"
@@ -661,7 +661,7 @@ flock -n 9 || fail "Installation läuft bereits."
 
 write_state "running" "Neue Caller-/WLED-Version wird installiert."
 log "===== V2-Migration START ====="
-log "Build: CALLER-WLED-V2-SERVICEHOOK-JSONFIX-WLEDWATCH-UNITFIX-PENDINGOK-20260826-12"
+log "Build: CALLER-WLED-V2-SERVICEHOOK-JSONFIX-WLEDWATCH-UNITFIX-20260806-11"
 
 mapfile -t CALLER_VALUES < <(read_caller_values)
 BOARD_ID="${CALLER_VALUES[0]:-}"
@@ -790,43 +790,25 @@ fix_wled_service_startlimit_location
 
 systemctl daemon-reload
 systemctl reset-failed darts-caller.service darts-wled.service >/dev/null 2>&1 || true
-systemctl enable darts-caller.service >/dev/null 2>&1 || true
-
-# WLED wird erst aktiviert/gestartet, wenn die Caller/WLED-Anmeldung wirklich aktiv ist.
-# Bei frischer Migration ist auth_state=pending normal und darf KEIN Rollback auslösen.
-CALLER_AUTHENTICATED=0
+systemctl enable darts-caller.service darts-wled.service >/dev/null 2>&1 || true
 
 log "Starte Caller-Dienst …"
 systemctl start darts-caller.service
 service_stable darts-caller.service 8 || fail "Neuer Caller-Dienst startet nicht stabil."
 
 wait_for_caller_api 35 || fail "Caller API auf https://127.0.0.1:8079/api/auth/status ist nicht erreichbar."
-if wait_for_caller_authenticated 20; then
-  CALLER_AUTHENTICATED=1
-else
-  CALLER_AUTHENTICATED=0
-fi
+wait_for_caller_authenticated 20 || true
 
-if [[ "$CALLER_AUTHENTICATED" == "1" ]]; then
-  # Kleine Beruhigungszeit, damit der Caller seinen internen Event-/WebSocket-Feed
-  # vollständig initialisieren kann, bevor WLED verbindet.
-  sleep 4
+# Kleine Beruhigungszeit, damit der Caller seinen internen Event-/WebSocket-Feed
+# vollständig initialisieren kann, bevor WLED verbindet.
+sleep 4
 
-  log "Starte WLED-Dienst …"
-  systemctl enable darts-wled.service >/dev/null 2>&1 || true
-  systemctl enable --now autodarts-wled-reconnect-watchdog.timer >/dev/null 2>&1 || true
-  WLED_START_SINCE="$(date +'%F %T')"
-  systemctl start darts-wled.service
-  service_stable darts-wled.service 12 || fail "Neuer WLED-Dienst startet nicht stabil."
-  wait_for_wled_process 20 || fail "WLED-Prozess läuft nicht."
-  wait_for_wled_ready_log "$WLED_START_SINCE" 45 || true
-else
-  log "Caller/WLED Anmeldung ist noch nicht aktiv. Installation bleibt erfolgreich; WLED wird vorerst nicht gestartet."
-  log "Nach der Anmeldung kann WLED über das Webpanel oder per Service-Start aktiviert werden."
-  systemctl disable --now darts-wled.service >/dev/null 2>&1 || true
-  systemctl disable --now autodarts-wled-reconnect-watchdog.timer >/dev/null 2>&1 || true
-  systemctl reset-failed darts-wled.service >/dev/null 2>&1 || true
-fi
+log "Starte WLED-Dienst …"
+WLED_START_SINCE="$(date +'%F %T')"
+systemctl start darts-wled.service
+service_stable darts-wled.service 12 || fail "Neuer WLED-Dienst startet nicht stabil."
+wait_for_wled_process 20 || fail "WLED-Prozess läuft nicht."
+wait_for_wled_ready_log "$WLED_START_SINCE" 45 || true
 
 python3 - "$FLAG" "$CALLER_VERSION" "$WLED_VERSION" "$BACKUP" <<'PY'
 import datetime, json, os, sys
@@ -845,11 +827,7 @@ os.chmod(path, 0o777)
 PY
 
 SUCCESS=1
-if [[ "${CALLER_AUTHENTICATED:-0}" == "1" ]]; then
-  write_state "success" "Neue Caller-/WLED-Version wurde erfolgreich installiert. Raspberry Pi wird neu gestartet."
-else
-  write_state "success" "Neue Caller-/WLED-Version wurde erfolgreich installiert. Caller/WLED Anmeldung ist noch ausständig; WLED wurde vorerst nicht gestartet."
-fi
+write_state "success" "Neue Caller-/WLED-Version wurde erfolgreich installiert. Raspberry Pi wird neu gestartet."
 log "Caller installiert: $CALLER_VERSION"
 log "WLED installiert: $WLED_VERSION"
 log "WLED-Manifest installiert: $WLED_MANIFEST"
