@@ -558,12 +558,18 @@ Provided "as is", without warranty.
             <div class="hint" style="margin:0; display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
               <span><span data-key="caller_wled.login_label">Caller/WLED Anmeldung:</span> <strong id="callerWledAuthBadge">—</strong></span>
               <span><span data-key="caller_wled.key_label">Verbindungsschlüssel:</span> <strong id="callerWledKeyBadge">—</strong></span>
+              <span><span data-key="caller_wled.caller_service_label">Caller Dienst:</span> <strong id="callerServiceBadge">—</strong></span>
               <span><span data-key="caller_wled.wled_service_label">WLED Dienst:</span> <strong id="callerWledWledServiceBadge">—</strong></span>
             </div>
           </div>
-          <button type="button" class="btn btn-primary {% if not wled_installed %}btn-disabled{% endif %}" id="callerWledLedRestartBtn" {% if not wled_installed %}disabled{% endif %}>
-            <span data-key="caller_wled.led_restart_btn">LED neustarten</span>
-          </button>
+          <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+            <button type="button" class="btn {% if not caller_service_exists %}btn-disabled{% endif %}" id="callerToggleBtn" {% if not caller_service_exists %}disabled{% endif %}>
+              <span data-key="{% if caller_enabled %}caller.disable_btn{% else %}caller.enable_btn{% endif %}">{% if caller_enabled %}Caller deaktivieren{% else %}Caller aktivieren{% endif %}</span>
+            </button>
+            <button type="button" class="btn btn-primary {% if not wled_installed or not caller_enabled %}btn-disabled{% endif %}" id="callerWledLedRestartBtn" {% if not wled_installed or not caller_enabled %}disabled{% endif %}>
+              <span data-key="caller_wled.led_restart_btn">LED neustarten</span>
+            </button>
+          </div>
         </div>
         <div id="callerWledRestartMsg" class="hint" style="margin-top:8px;"></div>
       </div>
@@ -571,8 +577,8 @@ Provided "as is", without warranty.
       <div style="display:flex; gap:10px; flex-wrap:wrap; margin:10px 0 16px;">
         <a href="{{ url_for('wled_presets') }}"
            id="openPresetsBtn"
-           class="btn btn-primary {% if not wled_installed %}btn-disabled{% endif %}"
-           {% if not wled_installed %}aria-disabled="true" onclick="return false;"{% endif %}>
+           class="btn btn-primary {% if not wled_installed or not caller_enabled %}btn-disabled{% endif %}"
+           {% if not wled_installed or not caller_enabled %}aria-disabled="true" onclick="return false;"{% endif %}>
           <span data-key="led.presets_btn">PRESETS Einstellung</span>
         </a>
       </div>
@@ -581,12 +587,16 @@ Provided "as is", without warranty.
         <p class="info-msg"><span data-key="led.not_installed">Die LED-Steuerung ist auf diesem Mini PC nicht installiert.</span></p>
       {% endif %}
 
+      {% if not caller_enabled %}
+        <p class="msg-bad"><span data-key="caller.disabled_notice">Caller ist deaktiviert. WLED/LED bleibt ebenfalls aus, bis der Caller wieder aktiviert wird.</span></p>
+      {% endif %}
+
       {% if not wled_master_enabled %}
         <p class="msg-bad"><span data-key="led.master_disabled">WLED ist global deaktiviert (Master-Schalter AUS). Bitte im Admin-Bereich wieder aktivieren.</span></p>
       {% endif %}
 
       <form id="wledForm">
-        <fieldset {% if not wled_master_enabled %}disabled style="opacity:0.55"{% endif %}>
+        <fieldset {% if not wled_master_enabled or not caller_enabled %}disabled style="opacity:0.55"{% endif %}>
           {% for b in wled_bands %}
             <div style="border:1px solid #333; border-radius:12px; padding:12px 14px; margin:10px 0;">
               <input type="hidden" id="wled_host_{{ b.slot }}" value="{% if b.slot == 1 %}{{ wled_hosts[0] }}{% elif b.slot == 2 %}{{ wled_hosts[1] }}{% elif b.slot == 3 %}{{ wled_hosts[2] }}{% endif %}">
@@ -597,7 +607,7 @@ Provided "as is", without warranty.
                   <label style="display:flex; align-items:center; gap:8px; margin:0;">
                     <input type="checkbox" name="wled_enabled_{{ b.slot }}" value="1"
                            {% if b.enabled %}checked{% endif %}
-                           {% if not wled_installed %}disabled{% endif %}>
+                           {% if not wled_installed or not caller_enabled %}disabled{% endif %}>
                     <span data-key="led.toggle_label">Ein / Aus</span>
                   </label>
 
@@ -611,8 +621,8 @@ Provided "as is", without warranty.
 
                   <a href="{{ url_for('wled_open_slot', slot=b.slot) }}" target="_blank"
                      id="wled_cfgbtn_{{ b.slot }}"
-                     class="btn btn-small {% if not wled_installed or not b.enabled %}btn-disabled{% endif %}"
-                     {% if not wled_installed or not b.enabled %}aria-disabled="true"{% endif %}>
+                     class="btn btn-small {% if not wled_installed or not caller_enabled or not b.enabled %}btn-disabled{% endif %}"
+                     {% if not wled_installed or not caller_enabled or not b.enabled %}aria-disabled="true"{% endif %}>
                     <span data-key="led.configure_btn">LED konfigurieren</span>
                   </a>
                 </div>
@@ -1287,6 +1297,7 @@ cp /var/log/pi_monitor_test_README.txt ~/
     window.app_urls = {
       api_wled_status: "{{ url_for('api_wled_status') }}",
       api_caller_wled_led_restart: "{{ url_for('api_caller_wled_led_restart') }}",
+      api_caller_toggle: "{{ url_for('api_caller_toggle') }}",
       api_wifi_signal: "{{ url_for('api_wifi_signal') }}",
       api_langs: "/api/langs",
       api_lang_default: "/api/lang/default",
@@ -1370,7 +1381,7 @@ Wenn Autodarts größere Änderungen am Layout oder an CSS-Klassen macht, müsse
     } | tojson }};
   </script>
 
-  <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/main.js') }}?v=20260902_callertoggle01"></script>
   <script src="{{ url_for('static', filename='js/autodarts_themes.js') }}?v=20260405"></script>
   <script src="{{ url_for('static', filename='js/autodarts_display_modes.js') }}"></script>
   <script src="{{ url_for('static', filename='js/autodarts_tools_platforms.js') }}?v=20260406"></script>
