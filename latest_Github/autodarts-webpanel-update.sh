@@ -180,6 +180,30 @@ run_optional_desktop_migration_if_downloaded() {
   return 0
 }
 
+install_caller_boot_stabilize() {
+  local drop_in_dir="/etc/systemd/system/darts-caller.service.d"
+  local conf_file="${drop_in_dir}/boot-stabilize.conf"
+
+  if ! systemctl cat darts-caller.service >/dev/null 2>&1; then
+    log "INFO: darts-caller.service nicht vorhanden -> boot-stabilize Drop-in skip"
+    return 0
+  fi
+
+  mkdir -p "$drop_in_dir"
+  cat > "$conf_file" <<'DROPIN'
+[Unit]
+Wants=network-online.target autodarts.service
+After=network-online.target autodarts.service
+
+[Service]
+ExecStartPre=/bin/sleep 12
+RestartSec=8
+DROPIN
+  chmod 644 "$conf_file" 2>/dev/null || true
+  systemctl daemon-reload 2>/dev/null || true
+  log "OK: darts-caller boot-stabilize Drop-in installiert: ${conf_file}"
+}
+
 run_ap_internet_fix_if_present() {
   local fix_script="${BIN_DIR}/autodarts-ap-internet-fix.sh"
   if [[ ! -f "$fix_script" ]]; then
@@ -737,6 +761,7 @@ chmod 777 "${BIN_DIR}" "${DATA_DIR}" "${STATE_DIR}" 2>/dev/null || true
 run_optional_desktop_migration_if_downloaded
 install_autodarts_update_fallback
 run_extensions_service_repair_if_present
+install_caller_boot_stabilize
 
 if [[ "${UPDATED_ANY}" != "1" ]]; then
   log "Kein Updatepaket installiert."

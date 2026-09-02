@@ -1,5 +1,5 @@
 # Projekt-Audit: Autodarts Webinterface Installation
-**Stand:** 2026-09-02 · **Reviewer:** Claude Sonnet 4.6  
+**Stand:** 2026-09-03 · **Reviewer:** Claude Sonnet 4.6  
 **Build-Tag:** WEBPANEL-CALLERTOGGLE-CALLERWATCH-UPDATEFALLBACK-20260902-01
 
 ---
@@ -208,6 +208,27 @@ Das gesamte `autodarts-safe-updater.sh` ist als heredoc eingebettet (~100 Zeilen
 **Problem:** Web-App-Dateien (`autodarts-web.py`, `templates/`, `static/`) liegen in `/usr/local/bin`. Dieser Ordner ist für ausführbare Binaries gedacht, nicht für Web-Apps.  
 **Empfehlung:** Besser: `/opt/autodarts-webpanel/` oder `/var/lib/autodarts-webpanel/`.
 
+### B-07 · `darts-caller.service` startet zu früh beim Booten
+**Datei:** `autodarts-webpanel-update.sh`, neue Funktion `install_caller_boot_stabilize`  
+Nach einem Kaltstart oder Reboot startet `darts-caller.service` bevor Netzwerk und `autodarts.service` bereit sind → Verbindungsfehler, die erst nach manuellem Neustart verschwinden.
+
+**Fix (zwei Stellen):**
+
+1. **`autodarts-extensions-v2-install.sh`** – Service-Definition direkt angepasst (Zeile 920–938). Die Boot-Stabilize-Settings sind jetzt direkt im Service baked-in:
+```ini
+[Unit]
+Wants=network-online.target autodarts.service
+After=network-online.target autodarts.service
+
+[Service]
+ExecStartPre=/bin/sleep 12
+RestartSec=8
+```
+
+2. **`autodarts-webpanel-update.sh`** – Funktion `install_caller_boot_stabilize` schreibt denselben Inhalt als Drop-in `/etc/systemd/system/darts-caller.service.d/boot-stabilize.conf` bei jedem Webpanel-Update (Sicherheitsnetz für Systeme ohne Reinstall). Prüft ob `darts-caller.service` existiert (skip wenn nicht). Ist idempotent.
+
+> **Wichtig:** `autodarts-extensions-v2-install.sh` Zeile 963 löscht `$CALLER_OVERRIDE_DIR` bei jedem (Re)install — deshalb sind die Settings direkt im Service (Punkt 1) die primäre Lösung, der Drop-in (Punkt 2) ist das Fallback.
+
 ---
 
 ## 5. Fehlende Infra / Nice-to-have
@@ -218,6 +239,7 @@ Das gesamte `autodarts-safe-updater.sh` ist als heredoc eingebettet (~100 Zeilen
 | I-02 | Tests (unit/integration) | Hoch |
 | I-03 | `.gitignore` | Mittel |
 | I-04 | Systemd-Service-Files im Repo | Mittel |
+| I-09 | `darts-caller.service` Boot-Stabilize Drop-in | Hoch |
 | I-05 | Rate-Limiting auf Admin-Login (Brute-Force-Schutz) | Mittel |
 | I-06 | Proper 404/500-Fehlerseiten in Flask | Niedrig |
 | I-07 | Log-Rotation für `/var/log/autodarts_*.log` (logrotate-Konfig) | Niedrig |
@@ -248,16 +270,18 @@ Das gesamte `autodarts-safe-updater.sh` ist als heredoc eingebettet (~100 Zeilen
 - [ ] **S-02** Admin-Passwort-Ersteinrichtung erzwingen (oder zufällig generieren)
 
 ### Sprint 2 – Bugs
-- [ ] **B-01** Lokale `tr`-Funktion in `initApClientInternetUi` entfernen
-- [ ] **B-03** Timeout in `autodarts-button-led.py` `is_autodarts_active()` hinzufügen
+- [x] **B-01** Lokale `tr`-Funktion in `initApClientInternetUi` entfernen *(erledigt 2026-09-02)*
+- [x] **B-02** Kommentar `// hinzufügen` in main.js entfernen *(erledigt 2026-09-02)*
+- [x] **B-03** Timeout in `autodarts-button-led.py` `is_autodarts_active()` hinzufügen *(erledigt 2026-09-02)*
 - [ ] **B-04** `threading.Lock()` für Button-LED globale Variablen
 - [ ] **B-05** `logf`-Handle nach `Popen` schließen
 - [ ] **Q-05** `save_cam_config` atomar machen
 
 ### Sprint 3 – Code-Qualität
+- [x] **Lang-Duplikate** `themes.sync_hint` + `themes.install_hint` doppelt in lang_en.json + lang_de.json → alte Einträge entfernt *(erledigt 2026-09-03)*
+- [x] **I-09** `darts-caller.service` Boot-Stabilize Drop-in in Update-Script integriert (`install_caller_boot_stabilize` Funktion) *(erledigt 2026-09-03)*
 - [ ] **Q-02** Hardcoded "peter" überall durch `AUTODARTS_USER`-Variable ersetzen
 - [ ] **Q-03** `WEBPANEL_HARDCODED_VERSION` entfernen, nur `version.txt` nutzen
-- [ ] **B-02** Kommentar `// hinzufügen` in main.js entfernen
 - [ ] **I-01** `requirements.txt` erstellen
 
 ### Sprint 4 – Performance / UX

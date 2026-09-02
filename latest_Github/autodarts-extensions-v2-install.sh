@@ -920,8 +920,8 @@ convert_wled_config
 cat >"$CALLER_SERVICE" <<'EOF'
 [Unit]
 Description=Autodarts Extension - Darts Caller
-Wants=network-online.target
-After=network-online.target
+Wants=network-online.target autodarts.service
+After=network-online.target autodarts.service
 StartLimitIntervalSec=0
 StartLimitBurst=0
 
@@ -929,8 +929,9 @@ StartLimitBurst=0
 Type=simple
 WorkingDirectory=/var/lib/autodarts/extensions/darts-caller
 ExecStart=/var/lib/autodarts/extensions/darts-caller/start-custom.sh
+ExecStartPre=/bin/sleep 12
 Restart=always
-RestartSec=2
+RestartSec=8
 
 [Install]
 WantedBy=multi-user.target
