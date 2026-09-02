@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
-# BUILD: CALLER-AUTH-RESET-CALLERTOGGLE-20260902-01
+# BUILD: CALLER-AUTH-RESET-20260806-01
 set -Eeuo pipefail
 
 LOG="/var/log/autodarts_caller_auth_reset.log"
 STATE_FILE="/var/lib/autodarts/caller-auth-reset-last.json"
-CALLER_ENABLED_FLAG="/var/lib/autodarts/caller-enabled.json"
-WLED_TARGETS_JSON="/var/lib/autodarts/wled-targets.json"
 TS="$(date +'%Y%m%d-%H%M%S')"
 
 mkdir -p "$(dirname "$LOG")" "$(dirname "$STATE_FILE")"
@@ -66,45 +64,6 @@ os.chmod(path, 0o777)
 PY
 }
 
-caller_enabled() {
-  python3 - "$CALLER_ENABLED_FLAG" <<'PY'
-import json, os, sys
-path = sys.argv[1]
-try:
-    if os.path.exists(path):
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f) or {}
-        enabled = bool(data.get("enabled", True))
-    else:
-        enabled = True
-except Exception:
-    enabled = True
-raise SystemExit(0 if enabled else 1)
-PY
-}
-
-wled_enabled() {
-  python3 - "$WLED_TARGETS_JSON" <<'PY'
-import json, os, sys
-path = sys.argv[1]
-try:
-    if not os.path.exists(path):
-        raise SystemExit(0)
-    with open(path, encoding="utf-8") as f:
-        data = json.load(f) or {}
-    if not bool(data.get("master_enabled", True)):
-        raise SystemExit(1)
-    for t in data.get("targets") or []:
-        if isinstance(t, dict) and bool(t.get("enabled")) and str(t.get("host") or "").strip():
-            raise SystemExit(0)
-    raise SystemExit(1)
-except SystemExit:
-    raise
-except Exception:
-    raise SystemExit(0)
-PY
-}
-
 schedule_wled_after_auth() {
   # WLED nach erfolgreicher Caller-Anmeldung automatisch starten.
   # Der Login-Code läuft typischerweise nach kurzer Zeit ab; deshalb max. 10 Minuten warten.
@@ -114,42 +73,12 @@ for i in $(seq 1 300); do
   if echo "$raw" | grep -q "\"state\":\"authenticated\""; then
     sleep 4
     systemctl reset-failed darts-wled.service 2>/dev/null || true
-    if [[ -f /var/lib/autodarts/caller-enabled.json ]] && ! python3 - /var/lib/autodarts/caller-enabled.json <<'PY'
-import json, sys
-try:
-    data=json.load(open(sys.argv[1], encoding="utf-8"))
-    raise SystemExit(0 if bool(data.get("enabled", True)) else 1)
-except SystemExit:
-    raise
-except Exception:
-    raise SystemExit(0)
-PY
-    then
-      exit 0
-    fi
-    if [[ -f /var/lib/autodarts/wled-targets.json ]] && ! python3 - /var/lib/autodarts/wled-targets.json <<'PY'
-import json, sys
-try:
-    data=json.load(open(sys.argv[1], encoding="utf-8"))
-    if not bool(data.get("master_enabled", True)):
-        raise SystemExit(1)
-    for t in data.get("targets") or []:
-        if isinstance(t, dict) and bool(t.get("enabled")) and str(t.get("host") or "").strip():
-            raise SystemExit(0)
-    raise SystemExit(1)
-except SystemExit:
-    raise
-except Exception:
-    raise SystemExit(0)
-PY
-    then
-      exit 0
-    fi
     systemctl restart darts-wled.service 2>/dev/null || systemctl start darts-wled.service 2>/dev/null || true
     exit 0
   fi
   sleep 2
 done
+systemctl start darts-wled.service 2>/dev/null || true
 exit 0
 '
   if command -v systemd-run >/dev/null 2>&1; then
@@ -162,15 +91,6 @@ exit 0
 if [[ "$(id -u)" -ne 0 ]]; then
   echo "Dieses Script muss als root laufen." >&2
   exit 1
-fi
-
-if ! caller_enabled; then
-  systemctl stop darts-wled.service 2>/dev/null || true
-  systemctl stop darts-caller.service 2>/dev/null || true
-  write_state "disabled" "Caller ist im Webpanel deaktiviert. Es wurde kein Auth-Reset gestartet." "{}"
-  log "SKIP: Caller ist per Webpanel deaktiviert."
-  echo "DISABLED"
-  exit 0
 fi
 
 USER_NAME="$(service_user)"

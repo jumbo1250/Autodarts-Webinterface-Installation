@@ -1,0 +1,205 @@
+<!doctype html>
+<!--
+Copyright (c) 2026 Peter Rottmann
+All rights reserved.
+Proprietary and not open source.
+No use, modification, distribution, publication, sublicensing,
+or commercial use without prior express written permission.
+Applies only to parts created by Peter Rottmann.
+Third-party components remain under their respective licenses.
+Provided "as is", without warranty.
+-->
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title data-key="wled_presets.page_title">WLED Preset Editor Vorschau</title>
+    <!-- favicon -->
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon/favicon-96x96.png') }}" sizes="96x96" />
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon/favicon.svg') }}" />
+    <link rel="shortcut icon" href="{{ url_for('static', filename='favicon/favicon.ico') }}" />
+    <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='favicon/apple-touch-icon.png') }}" />
+    <link rel="manifest" href="{{ url_for('static', filename='favicon/site.webmanifest') }}" />
+    <!-- favicon ende -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/wled_presets.css') }}">
+    <script src="{{ url_for('static', filename='js/i18n.js') }}"></script>
+  <script>
+    window.WLED_PRESETS_CONFIG = {
+      apiLoadUrl: {{ url_for('api_wled_presets_load')|tojson }},
+      apiSaveUrl: {{ url_for('api_wled_presets_save')|tojson }},
+      apiSendUrl: {{ url_for('api_wled_presets_send')|tojson }},
+      apiDeleteUrl: {{ url_for('api_wled_presets_delete')|tojson }}
+    };
+  </script>
+  <script src="{{ url_for('static', filename='js/wled_presets.js') }}"></script>
+</head>
+<body>
+  <div class="wrap">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+      <div>
+        <h1 data-key="wled_presets.title">WLED Preset-Editor</h1>
+        <p class="sub"><span data-key="wled_presets.subtitle.prefix">Editor für die Preset-Reihenfolge in</span> <code>/var/lib/autodarts/config/darts-wled/start-custom.sh</code>. <span data-key="wled_presets.subtitle.suffix">Aktuelle Werte werden beim Öffnen automatisch geladen.</span></p>
+      </div>
+      <div>
+        <a href="{{ url_for('index') }}" data-key="wled_presets.back_to_overview" style="display:inline-flex;align-items:center;gap:8px;text-decoration:none;border-radius:12px;border:1px solid var(--line);background:#1b2740;color:var(--text);padding:10px 14px;font-weight:600;">← Zurück zur Übersicht</a>
+      </div>
+    </div>
+
+    <div class="grid preview-hidden" id="mainGrid">
+      <section class="card">
+        <div class="hd"><strong data-key="wled_presets.compose_title">Preset-Zeilen zusammenstellen</strong></div>
+        <div class="bd">
+
+          <div class="targets-wrap targets-top">
+            <div class="info">
+              <div class="targets-toolbar">
+                <div style="font-weight:700" data-key="wled_presets.targets_title">WLED-Controller auswählen</div>
+                <div class="targets-actions">
+                  <button type="button" id="targetsAllBtn" class="tiny-btn" data-key="wled_presets.targets_all">Alle</button>
+                  <button type="button" id="targetsNoneBtn" class="tiny-btn" data-key="wled_presets.targets_none">Keine</button>
+                </div>
+              </div>
+              <select id="targetsSelect" class="targets-select" multiple size="4"></select>
+              <div id="targetsCards" class="targets-grid"></div>
+              <div id="targetsHint" class="hint" style="margin-top:8px" data-key="wled_presets.targets_hint">Die Liste wird von der Hauptseite übernommen.</div>
+            </div>
+          </div>
+
+          <div class="visual-wled-ui" id="visualWledUi">
+            <div class="visual-board-card">
+              <div class="visual-selection-bar">
+                <div class="visual-selection-display">
+                  <div class="visual-selection-title" data-key="wled_presets.visual.selection_title">Dartfeld-Auswahl · max. 3 Darts</div>
+                  <div class="visual-selection-value" id="visualDartComboValue">-</div>
+                </div>
+                <button class="visual-led-define" id="visualLedDefineBtn" type="button">
+                  <span class="visual-led-icon" aria-hidden="true">💡</span>
+                  <span data-key="wled_presets.visual.led_define">LED definieren</span>
+                </button>
+              </div>
+              <div id="visualDartboard" class="visual-dartboard"></div>
+              <div class="visual-bulk-row">
+                <button class="visual-bulk" data-dmu-key="1" data-key-label="Alle Singles" type="button" data-key="wled_presets.visual.all_singles">Alle Singles</button>
+                <button class="visual-bulk" data-dmu-key="2" data-key-label="Alle Doppel" type="button" data-key="wled_presets.visual.all_doubles">Alle Doppel</button>
+                <button class="visual-bulk" data-dmu-key="3" data-key-label="Alle Triple" type="button" data-key="wled_presets.visual.all_triples">Alle Triple</button>
+              </div>
+            </div>
+
+            <div class="visual-side-card">
+              <h2 data-key="wled_presets.visual.players">Spieler</h2>
+              <div class="visual-icon-grid players" id="visualPlayers"></div>
+              <h2 data-key="wled_presets.visual.events">Ereignisse</h2>
+              <div class="visual-icon-grid events" id="visualEvents"></div>
+              <h2 data-key="wled_presets.visual.system">System</h2>
+              <div class="visual-icon-grid system" id="visualSystem"></div>
+              <h2 data-key="wled_presets.visual.score_presets">Gesamtsummen</h2>
+              <div class="visual-score-list" id="visualScoreList"></div>
+              <button class="secondary visual-range-note" type="button" id="visualRangeHintBtn" data-key="wled_presets.visual.range_hint_btn">Bereich von–bis festlegen</button>
+              <button class="secondary visual-range-note" type="button" id="visualLegacyToggleBtn" data-key="wled_presets.visual.legacy_show">Erweiterte Liste anzeigen</button>
+            </div>
+          </div>
+
+          <div class="legacy-toolbar">
+            <select id="typeSelect" class="wide"></select>
+            <button id="typeInfoBtn" class="secondary" type="button" title="Info" aria-label="Info">ⓘ</button>
+            <button id="addBtn" class="primary" data-key="wled_presets.add">＋ Hinzufügen</button>
+            <button id="loadBtn" class="secondary" data-key="wled_presets.load_current">Aktuelle Einstellungen laden</button>
+            <button id="expertBtn" class="secondary" type="button" data-key="wled_presets.expert_show">Spezialargumente anzeigen</button>
+            <button id="debugBtn" class="secondary" data-key="wled_presets.show_debug">🐞 Debug anzeigen</button>
+            <button id="clearBtn" class="warn" style="display:none" data-key="wled_presets.clear_all">Alles leeren</button>
+          </div>
+
+          <div style="height:14px"></div>
+          <div id="message"></div>
+
+
+
+          <div class="table-wrap" style="margin-top:14px">
+            <table>
+              <thead>
+                <tr>
+                  <th data-key="wled_presets.table.preset">Preset</th>
+                  <th data-key="wled_presets.table.argument">Argument</th>
+                  <th data-key="wled_presets.table.seconds">Zeit in Sekunden</th>
+                  <th data-key="wled_presets.table.extra">Zusatz</th>
+                  <th style="text-align:right" data-key="wled_presets.table.actions">Aktionen</th>
+                </tr>
+              </thead>
+              <tbody id="rows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="card preview-card" id="previewCard">
+        <div class="hd"><strong data-key="wled_presets.preview_title">Debug / Live-Vorschau für start-custom.sh</strong></div>
+        <div class="bd">
+          <div class="warn-box" style="margin-bottom:14px">
+            <span data-key="wled_presets.warn.prefix">Später sollte dein Python-Code</span> <strong data-key="wled_presets.warn.strong">nur den Block unter <code>-WEPS</code></strong> <span data-key="wled_presets.warn.suffix">ersetzen und die Datei nicht neu anlegen.</span>
+          </div>
+          <div class="info" style="margin-bottom:12px" data-key="wled_presets.info.locked_preset">Preset-Spalte ist gesperrt und wird automatisch aus der Reihenfolge erzeugt.</div>
+          <div class="info" style="margin-bottom:14px"><span data-key="wled_presets.info.last_line_prefix">Die letzte generierte Zeile bekommt</span> <strong data-key="wled_presets.info.last_line_no">kein</strong> <code>\</code> <span data-key="wled_presets.info.last_line_suffix">am Ende.</span></div>
+          <textarea id="preview" spellcheck="false"></textarea>
+          <p class="hint" style="margin-top:12px"><span data-key="wled_presets.preview_hint.prefix">Hier sieht man die spätere Ausgabe. Bereichs-Slots werden separat als</span> <code>-A1</code>, <code>-A2</code>, <code>-A3</code> <span data-key="wled_presets.preview_hint.middle">... gezählt. Exakte Scores werden als</span> <code>-S0</code> <span data-key="wled_presets.preview_hint.to">bis</span> <code>-S180</code> <span data-key="wled_presets.preview_hint.suffix">erzeugt.</span></p>
+        </div>
+      </section>
+    </div>
+  </div>
+
+
+  <div id="visualConfigModal" class="modal-backdrop" hidden>
+    <div class="modal-card visual-config-card" role="dialog" aria-modal="true" aria-labelledby="visualConfigTitle">
+      <div class="modal-head">
+        <strong id="visualConfigTitle" data-key="wled_presets.visual.led_define">LED definieren</strong>
+        <button id="visualConfigClose" class="secondary" type="button" aria-label="Close">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="visual-config-summary" id="visualConfigSummary"></div>
+        <div class="visual-config-grid">
+          <label>
+            <span data-key="wled_presets.visual.preset_number">Presetnummer</span>
+            <input id="visualConfigPreset" type="number" min="1" max="999" step="1">
+          </label>
+          <label id="visualConfigSecondsWrap">
+            <span data-key="wled_presets.visual.seconds">Sekunden</span>
+            <input id="visualConfigSeconds" type="number" min="0" step="1">
+          </label>
+          <label id="visualConfigValueWrap" hidden>
+            <span data-key="wled_presets.visual.value">Wert</span>
+            <select id="visualConfigValue">
+              <option value="1" data-key="wled_presets.visual.option_active">aktiv / 1</option>
+              <option value="0" data-key="wled_presets.visual.option_off">aus / 0</option>
+            </select>
+          </label>
+          <div id="visualConfigRangeWrap" class="visual-range-config" hidden>
+            <label>
+              <span data-key="wled_presets.visual.range_from">Von</span>
+              <input id="visualConfigRangeFrom" type="number" min="0" max="180" step="1">
+            </label>
+            <label>
+              <span data-key="wled_presets.visual.range_to">Bis</span>
+              <input id="visualConfigRangeTo" type="number" min="0" max="180" step="1">
+            </label>
+          </div>
+        </div>
+        <div class="visual-config-actions">
+          <button class="secondary" id="visualConfigSave" type="button" data-key="wled_presets.save_entry">Speichern</button>
+          <button class="primary" id="visualConfigSend" type="button" data-key="wled_presets.save_wled_preset">Speichern/Senden</button>
+          <button class="danger" id="visualConfigDelete" type="button" data-key="wled_presets.delete">Löschen</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="wledInfoModal" class="modal-backdrop" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="wledInfoTitle">
+      <div class="modal-head">
+        <strong id="wledInfoTitle" data-key="wled_presets.info_modal_title">Argument-Info</strong>
+        <button id="wledInfoClose" class="secondary" type="button" aria-label="Close">×</button>
+      </div>
+      <div id="wledInfoBody" class="modal-body"></div>
+    </div>
+  </div>
+
+</body>
+</html>

@@ -1,0 +1,862 @@
+/* Autor: Peter Rottmann */
+/* Spielmodus: X01,Cricket,Gotcha,Bermuda... all included */
+/* Bildschirmauflösung: 1920x1080 */
+
+:root {
+  /* Abstände & Layout - bleiben unverändert */
+  --spacing-player: 24px;
+  --player-box-width: 350px;
+  --top-offset: 95px;
+  
+  /* Scolia-Farbpalette - DUNKLERE VERSION (MEHR KONTRAST) */
+  --scolia-bg-primary: #0a0a0a !important;     /* war #2a2d35 - jetzt fast schwarz */
+  --scolia-bg-secondary: #111111 !important;   /* war #363940 - jetzt dunkler */
+  --scolia-bg-dark: #000000 !important;        /* war #1e2126 - jetzt reines Schwarz */
+  --scolia-card-bg: #0d0d0d !important;        /* war #363940 - jetzt deutlich dunkler */
+  --scolia-card-hover: #1a1a1a !important;     /* war #3f444d - jetzt dunkler */
+  --scolia-accent-green: #6B3A1E;  /* bleibt grün */
+  --scolia-accent-green-dark: #ffff;
+  --scolia-accent-red: #ef4444;
+  --scolia-text-primary: #d3d3d3 !important;   /* war #e5e7eb - jetzt reines Weiß */
+  --scolia-text-secondary: #cccccc !important; /* war #9ca3af - heller für besseren Kontrast */
+  --scolia-text-light: #ffffff;
+  --scolia-border: #333333 !important;         /* war #4b5563 - jetzt dunkler */
+  --scolia-border-active: #4ade80;
+  
+  /* Schatten - bleiben unverändert */
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.6);
+  --shadow-glow-green: 0 0 24px rgba(74, 222, 128, 0.4);
+}
+
+/* ========================================= */
+/* GLOBALER CONTAINER                        */
+/* ========================================= */
+
+:root:not(:has(.css-rc3vw3)) .css-tkevr6 {
+  position: relative;
+  width: 100%;
+  height: 95%;
+  box-sizing: border-box;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', sans-serif;
+}
+
+/* ========================================= */
+/* SPIELERBOXEN - DUNKLERE VERSION            */
+/* ========================================= */
+
+:root:not(:has(.css-rc3vw3)) #ad-ext-player-display > div {
+  position: absolute;
+  width: var(--player-box-width);
+  background: rgba(10, 10, 10, 0.7) !important;  
+  border: 2px solid var(--scolia-border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-md);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+  backdrop-filter: blur(20px);
+}
+
+/* Hervorhebung des aktiven Spielers - ebenfalls dunkler */
+:root:not(:has(.css-rc3vw3)):root:has(.css-1cdcn26) .css-rtn29s {
+  border: 2px solid var(--scolia-accent-green);
+  background: #111111 !important;  /* WAS: gradient - NU DONKER ZWART */
+  box-shadow: var(--shadow-glow-green), var(--shadow-lg);
+  transform: scale(1.02);
+}
+
+/* ========================================= */
+/* SPIELER-LAYOUT - 1-2 SPIELER               */
+/* ========================================= */
+
+:root:not(:has(.css-rc3vw3)) #ad-ext-player-display > div:nth-child(1):only-child {
+  top: var(--top-offset);
+  left: 60px;
+  height: calc(100% - 100px);
+}
+
+:root:not(:has(.css-rc3vw3)) #ad-ext-player-display > div:nth-child(1):nth-last-child(2) {
+  top: var(--top-offset);
+  left: 60px;
+  height: calc(100% - 100px);
+}
+
+:root:not(:has(.css-rc3vw3)) #ad-ext-player-display > div:nth-child(2):nth-last-child(1) {
+  top: var(--top-offset);
+  right: 60px;
+  height: calc(100% - 100px);
+}
+
+/* Position des Spielernamens - 1-2 Spieler */
+:root:not(:has(.css-rc3vw3)) #ad-ext-player-display:has(> div:nth-child(2):nth-last-child(1)) .css-y3hfdd,
+:root:not(:has(.css-rc3vw3)) #ad-ext-player-display:has(> div:only-child) .css-y3hfdd {
+  position: absolute;
+  top: 14em;
+  font-weight: 600;
+  color: var(--scolia-text-primary);
+}
+
+/* ========================================= */
+/* SPIELER-LAYOUT - 3-4 SPIELER               */
+/* ========================================= */
+
+:root {
+  --row-height-2: calc((105% - 100px) / 2 - var(--spacing-player));
+}
+
+:root:not(:has(.css-rc3vw3)) #ad-ext-player-display > div:nth-child(1):nth-last-child(3),
+:root:not(:has(.css-rc3vw3)) #ad-ext-player-display > div:nth-child(1):nth-last-child(4) {
+  top: var(--top-offset);
+  left: 60px;
+  height: var(--row-height-2);
+}
+
+:root:not(:has(.css-rc3vw3)) #ad-ext-player-display > div:nth-child(2):nth-last-child(2),
+:root:not(:has(.css-rc3vw3)) #ad-ext-player-display > div:nth-child(2):nth-last-child(3) {
+  top: var(--top-offset);
+  right: 60px;
+  height: var(--row-height-2);
+}
+
+:root:not(:has(.css-rc3vw3)) #ad-ext-player-display > div:nth-child(3):nth-last-child(1),
+:root:not(:has(.css-rc3vw3)) #ad-ext-player-display > div:nth-child(3):nth-last-child(2) {
+  top: calc(var(--top-offset) + var(--row-height-2) + var(--spacing-player));
+  left: 60px;
+  height: var(--row-height-2);
+}
+
+:root:not(:has(.css-rc3vw3)) #ad-ext-player-display > div:nth-child(4):last-child {
+  top: calc(var(--top-offset) + var(--row-height-2) + var(--spacing-player));
+  right: 60px;
+  height: var(--row-height-2);
+}
+
+/* Position des Spielernamens - 3-4 Spieler */
+:root:not(:has(.css-rc3vw3)) #ad-ext-player-display:has(> div:nth-child(3):nth-last-child(2)) .css-y3hfdd,
+:root:not(:has(.css-rc3vw3)) #ad-ext-player-display:has(> div:nth-child(4):last-child) .css-y3hfdd {
+  position: absolute;
+  top: 7em;
+  font-weight: 600;
+  color: var(--scolia-text-primary);
+}
+
+/* ========================================= */
+/* SPIELER-LAYOUT - 5-6 SPIELER               */
+/* ========================================= */
+
+:root {
+  --row-height-3: calc((108% - 100px) / 3 - var(--spacing-player));
+}
+
+:root:not(:has(.css-rc3vw3)) #ad-ext-player-display > div:nth-child(1):nth-last-child(5),
+:root:not(:has(.css-rc3vw3)) #ad-ext-player-display > div:nth-child(1):nth-last-child(6) {
+  top: var(--top-offset);
+  left: 60px;
+  height: var(--row-height-3);
+}
+
+:root:not(:has(.css-rc3vw3)) #ad-ext-player-display > div:nth-child(2):nth-last-child(4),
+:root:not(:has(.css-rc3vw3)) #ad-ext-player-display > div:nth-child(2):nth-last-child(5) {
+  top: var(--top-offset);
+  right: 60px;
+  height: var(--row-height-3);
+}
+
+:root:not(:has(.css-rc3vw3)) #ad-ext-player-display > div:nth-child(3):nth-last-child(3),
+:root:not(:has(.css-rc3vw3)) #ad-ext-player-display > div:nth-child(3):nth-last-child(4) {
+  top: calc(var(--top-offset) + var(--row-height-3) + var(--spacing-player));
+  left: 60px;
+  height: var(--row-height-3);
+}
+
+:root:not(:has(.css-rc3vw3)) #ad-ext-player-display > div:nth-child(4):nth-last-child(2),
+:root:not(:has(.css-rc3vw3)) #ad-ext-player-display > div:nth-child(4):nth-last-child(3) {
+  top: calc(var(--top-offset) + var(--row-height-3) + var(--spacing-player));
+  right: 60px;
+  height: var(--row-height-3);
+}
+
+:root:not(:has(.css-rc3vw3)) #ad-ext-player-display > div:nth-child(5):nth-last-child(1),
+:root:not(:has(.css-rc3vw3)) #ad-ext-player-display > div:nth-child(5):nth-last-child(2) {
+  top: calc(var(--top-offset) + 2 * (var(--row-height-3) + var(--spacing-player)));
+  left: 60px;
+  height: var(--row-height-3);
+}
+
+:root:not(:has(.css-rc3vw3)) #ad-ext-player-display > div:nth-child(6):last-child {
+  top: calc(var(--top-offset) + 2 * (var(--row-height-3) + var(--spacing-player)));
+  right: 60px;
+  height: var(--row-height-3);
+}
+
+/* Position des Spielernamens - 5-6 Spieler */
+:root:not(:has(.css-rc3vw3)) #ad-ext-player-display:has(> div:nth-child(5):nth-last-child(1)) .css-y3hfdd,
+:root:not(:has(.css-rc3vw3)) #ad-ext-player-display:has(> div:nth-child(6):last-child) .css-y3hfdd {
+  position: absolute;
+  top: 2em;
+  font-weight: 600;
+  color: var(--scolia-text-primary);
+}
+
+/* ========================================= */
+/* PUNKTEANZEIGE & DARTWÜRFE                  */
+/* ========================================= */
+
+/* Punkte-Container */
+:root:not(:has(.css-rc3vw3)) .css-1omnor5,
+:root:not(:has(.css-rc3vw3)) .css-ul22ge {
+  width: 900px;
+}
+
+/* Wurfboxen & Punkteanzeigen */
+:root:not(:has(.css-rc3vw3)) .css-1dkgpmk,
+:root:not(:has(.css-rc3vw3)) .css-1wlduvp,
+:root:not(:has(.css-rc3vw3)) .css-sm8wdq,
+:root:not(:has(.css-rc3vw3)) .css-881tme,
+:root:not(:has(.css-rc3vw3)) #ad-ext-turn .css-rrf7rv,
+:root:not(:has(.css-rc3vw3)) #ad-ext-turn .score.css-156dsds,
+:root:not(:has(.css-rc3vw3)) #ad-ext-turn .ad-ext-turn-throw.css-1p5spmi {
+  height: 90px;
+  background: var(--scolia-card-bg);
+  border: 2px solid var(--scolia-border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-sm);
+  transition: all 0.25s ease;
+  color: var(--scolia-text-primary);
+  font-weight: 600;
+  font-size: 1.15em;
+}
+
+/* Hover-Effekte */
+:root:not(:has(.css-rc3vw3)) #ad-ext-turn .css-rrf7rv:hover,
+:root:not(:has(.css-rc3vw3)) #ad-ext-turn .score.css-156dsds:hover,
+:root:not(:has(.css-rc3vw3)) #ad-ext-turn .ad-ext-turn-throw.css-1p5spmi:hover {
+  background-color: var(--scolia-card-hover);
+  border-color: var(--scolia-border-active);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+  cursor: pointer;
+}
+
+/* Anzeige des aktiven Darts - Scolia-Grün */
+:root:not(:has(.css-rc3vw3)):root:has(.css-1cdcn26) .css-156dsds {
+  border: 2px solid var(--scolia-accent-green);
+  background: linear-gradient(135deg, 
+    var(--scolia-card-bg) 0%, 
+    rgba(74, 222, 128, 0.10) 100%
+  );
+  box-shadow: var(--shadow-glow-green);
+}
+
+/* Punkteanzeige */
+:root:not(:has(.css-rc3vw3)):root:has(.css-1cdcn26) .css-1p5spmi {
+  color: var(--scolia-text-primary);
+  background-color: var(--scolia-card-bg);
+  font-size: 1.05em;
+  font-weight: 700;
+}
+
+/* Rundung der Punkteanzeige */
+:root:not(:has(.css-rc3vw3)) .css-1dkgpmk,
+:root:not(:has(.css-rc3vw3)) .css-1wlduvp,
+:root:not(:has(.css-rc3vw3)) .css-sm8wdq,
+:root:not(:has(.css-rc3vw3)) .css-881tme,
+:root:not(:has(.css-rc3vw3)) .css-1tv7rud,
+:root:not(:has(.css-rc3vw3)) #ad-ext-turn .css-rrf7rv,
+:root:not(:has(.css-rc3vw3)) #ad-ext-turn .score.css-156dsds,
+:root:not(:has(.css-rc3vw3)) #ad-ext-turn .ad-ext-turn-throw.css-1p5spmi {
+  border-radius: 12px;
+}
+
+/* Position von Punkteanzeige & Dartboard */
+:root:not(:has(.css-rc3vw3)):root:not(:has(.css-7lnr9n)):root:not(:has(.css-15suq9)) .css-1emway5,
+:root:not(:has(.css-rc3vw3)):root:not(:has(.css-15suq9)) .css-jbngkd,
+:root:not(:has(.css-rc3vw3)) .css-1cdcn26 {
+  position: relative;
+  top: 0.5em;
+}
+
+/* ========================================= */
+/* STEUERUNG & SCHALTFLÄCHEN                  */
+/* ========================================= */
+
+/* Menüleiste */
+:root:not(:has(.css-rc3vw3)) .css-19lo6pj {
+  width: 150%;
+}
+
+/* Steuerschaltflächen - Scolia-Grün-Stil */
+:root:not(:has(.css-rc3vw3)):root:has(.css-1cdcn26) .css-58e0cq,
+:root:not(:has(.css-rc3vw3)):root:has(.css-1cdcn26) .css-1b1zesg,
+:root:not(:has(.css-rc3vw3)):root:has(.css-1cdcn26) .css-ol79nz,
+:root:not(:has(.css-rc3vw3)):root:has(.css-1cdcn26) .css-1b26ovh {
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--scolia-accent-green) 0%, var(--scolia-accent-green-dark) 100%);
+  border: 2px solid rgba(74, 222, 128, 0.3);
+  box-shadow: var(--shadow-sm);
+  transition: all 0.25s ease;
+  color: var(--scolia-bg-dark);
+  font-weight: 600;
+}
+
+:root:not(:has(.css-rc3vw3)):root:has(.css-1cdcn26) .css-58e0cq:hover,
+:root:not(:has(.css-rc3vw3)):root:has(.css-1cdcn26) .css-1b1zesg:hover,
+:root:not(:has(.css-rc3vw3)):root:has(.css-1cdcn26) .css-ol79nz:hover,
+:root:not(:has(.css-rc3vw3)):root:has(.css-1cdcn26) .css-1b26ovh:hover {
+  background: linear-gradient(135deg, var(--scolia-accent-green-dark) 0%, #16a34a 100%);
+  border-color: var(--scolia-accent-green);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+/* Abbruch- & Aufgeben-Schaltflächen */
+:root:not(:has(.css-rc3vw3)):root:has(.css-1cdcn26) .css-1bztn9a {
+  color: var(--scolia-text-light);
+  background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+  border: 2px solid rgba(231, 76, 60, 0.3);
+  border-radius: 12px;
+  font-weight: 600;
+  transition: all 0.25s ease;
+  box-shadow: var(--shadow-sm);
+}
+
+:root:not(:has(.css-rc3vw3)):root:has(.css-1cdcn26) .css-1bztn9a:hover {
+  background: linear-gradient(135deg, #c0392b 0%, #a93226 100%);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px rgba(231, 76, 60, 0.4);
+}
+
+/* ========================================= */
+/* AVATAR                                    */
+/* ========================================= */
+
+:root:not(:has(.css-rc3vw3)):root:has(.css-1cdcn26):root:not(:has(#ad-ext-player-display > div:nth-child(3))) div.chakra-stack.css-1psdi5l {
+  position: absolute;
+  top: -180px;
+  left: 50%;
+  transform: translate(-3%, -50%);
+  scale: 7;
+  filter: drop-shadow(var(--shadow-lg));
+}
+
+:root:not(:has(.css-rc3vw3)):root:has(.css-1cdcn26):root:not(:has(#ad-ext-player-display > div:nth-child(3))) img.chakra-image.css-6t0bzd {
+  scale: 0.5;
+  border-radius: 50%;
+  border: 3px solid var(--scolia-accent-green);
+}
+
+/* ========================================= */
+/* SCORE-TABELLE                              */
+/* ========================================= */
+
+:root:has(.css-1u90hiz) .css-1u90hiz {
+  position: relative !important;
+  top: 230px !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+
+  left: -90px !important;
+  right: 0 !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+
+  background-color: var(--scolia-card-bg);
+  border: 2px solid var(--scolia-border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-md);
+}
+
+:root:has(.css-1u90hiz) tbody tr td {
+  font-size: 35px;
+  width: 52%;
+  font-weight: 600;
+  color: var(--scolia-text-primary);
+  padding: 8px;
+}
+
+/* ========================================= */
+/* HINTERGRÜNDE                               */
+/* ========================================= */
+
+/* Spiel-Hintergrund - Bild-URL unten eintragen */
+:root:has(.css-1cdcn26) body {
+  background-image: url(https://rottmanninfo.at/autodarts/Bilder/Game_oldstyle.webp);
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: center;
+  background-attachment: fixed;
+  position: relative;
+  /* Ersatz-Verlauf, falls das Bild nicht geladen wird */
+  background-color: #2a2d35;
+}
+
+/* Hauptmenü-Hintergrund - Bild-URL unten eintragen */
+:root:not(:has(.css-1cdcn26)) body {
+  background-image: url(https://rottmanninfo.at/autodarts/Bilder/Menue_oldstyle.webp);
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: center;
+  background-attachment: fixed;
+  position: relative;
+  /* Ersatz-Verlauf, falls das Bild nicht geladen wird */
+  background-color: #363940;
+}
+
+/* Ersatz-Hintergrundfarbe */
+body {
+  background-color: var(--scolia-bg-primary);
+}
+
+/* Optional: Add dark overlay to images for better contrast */
+:root:has(.css-1cdcn26) body::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.3); /* Deckkraft hier einstellen (0.0 bis 1.0) */
+  pointer-events: none;
+  z-index: -1;
+}
+
+/* ========================================= */
+/* DARTBOARD-RING-ÜBERLAGERUNG                */
+/* ========================================= */
+
+/* Dartboard-Umrandungs-/Ringbild - Bild-URL unten eintragen */
+:root:has(.css-1cdcn26) .css-1cdcn26::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 850px;
+  height: 850px;
+  /*background-image: url(https://rottmanninfo.at/autodarts/Bilder/Scolia_3.webp);*/
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  z-index: -1;
+  pointer-events: none;
+  
+  /* Optional: Remove the line below if you don't want a green glow with your image */
+  filter: drop-shadow(0 0 20px rgba(74, 222, 128, 0.3));
+}
+
+/* Sicherstellen, dass das Dartboard im Vordergrund bleibt */
+:root:has(.css-1cdcn26) .css-1cdcn26 > * {
+  position: relative;
+  z-index: 2;
+}
+
+/* ========================================= */
+/* SICHTBARKEIT IM HAUPTMENÜ                  */
+/* ========================================= */
+
+/* Dunkle Vollbild-Überlagerung hinter allen Elementen */
+:root:not(:has(.css-1cdcn26)) .css-rc3vw3,
+:root:not(:has(.css-1cdcn26)) [class*="modal"],
+:root:not(:has(.css-1cdcn26)) [class*="drawer"] {
+  background-color: rgba(5, 7, 10, 0.94) !important;
+  backdrop-filter: blur(20px);
+}
+
+/* Hauptinhaltsbereich - deutlich dunklerer Hintergrund */
+.css-1x72bls,
+.css-1ql1d9c,
+[role="dialog"] {
+  background-color: rgba(10, 12, 15, 0.96) !important;
+  border: 2px solid rgba(74, 222, 128, 0.3);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(20px);
+  border-radius: 12px;
+}
+
+/* Statistik- und Profilseiten - deutlich dunklerer Hintergrund (nur Menü) */
+:root:not(:has(.css-1cdcn26)) .css-tkevr6,
+:root:not(:has(.css-1cdcn26)) [class*="settings"],
+:root:not(:has(.css-1cdcn26)) [class*="game-setup"],
+:root:not(:has(.css-1cdcn26)) [class*="stats"],
+:root:not(:has(.css-1cdcn26)) [class*="statistics"],
+:root:not(:has(.css-1cdcn26)) [class*="profile"] {
+  background-color: rgba(8, 10, 13, 0.96) !important;
+  backdrop-filter: blur(20px);
+  border-radius: 12px;
+  padding: 20px;
+}
+
+/* Menüelemente - dunklere Hintergründe */
+nav [class*="css-"],
+.css-1ps6pg7,
+[class*="sidebar"] a,
+[class*="nav-item"] {
+  background-color: rgba(30, 33, 38, 0.95) !important;
+  border: 1px solid var(--scolia-border);
+  border-radius: 8px;
+  transition: all 0.2s ease;
+  color: var(--scolia-text-primary);
+}
+
+nav [class*="css-"]:hover,
+.css-1ps6pg7:hover,
+[class*="sidebar"] a:hover,
+[class*="nav-item"]:hover {
+  background-color: rgba(63, 68, 77, 0.95) !important;
+  border-color: var(--scolia-accent-green);
+  color: var(--scolia-accent-green);
+}
+
+/* Schaltflächen-Hintergründe in den Einstellungen - dunkler für bessere Sichtbarkeit */
+button[class*="css-"],
+.chakra-button {
+  background: linear-gradient(135deg, rgba(30, 33, 38, 0.25) 0%, rgba(20, 22, 26, 0.95) 100%) !important;
+  border: 2px solid var(--scolia-accent-green);
+  border-radius: 8px;
+  color: #ffffff !important; 
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+button[class*="css-"]:hover,
+.chakra-button:hover {
+  background: linear-gradient(135deg, var(--scolia-accent-green) 0%, var(--scolia-accent-green-dark) 100%) !important;
+  border-color: var(--scolia-accent-green);
+  color: var(--scolia-bg-dark);
+  transform: translateY(-1px);
+}
+
+/* Aktive/ausgewählte Schaltflächen */
+button[class*="css-"][data-active],
+button[class*="css-"][aria-selected="true"],
+.chakra-button[data-active] {
+  background: linear-gradient(135deg, var(--scolia-accent-green) 0%, var(--scolia-accent-green-dark) 100%) !important;
+  color: var(--scolia-bg-dark);
+}
+
+/* Eingabefelder - dunkler für bessere Sichtbarkeit */
+input[class*="css-"],
+select[class*="css-"],
+.chakra-input,
+.chakra-select {
+  background-color: rgba(20, 22, 26, 0.95) !important;
+  border: 2px solid var(--scolia-border);
+  border-radius: 8px;
+  color: var(--scolia-text-primary);
+  transition: all 0.2s ease;
+}
+
+input[class*="css-"]:focus,
+select[class*="css-"]:focus,
+.chakra-input:focus,
+.chakra-select:focus {
+  border-color: var(--scolia-accent-green);
+  box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.2);
+  background-color: rgba(30, 33, 38, 0.95) !important;
+}
+
+/* Textsichtbarkeit - heller Text auf dunklem Hintergrund */
+.css-rc3vw3 *,
+[role="dialog"] *,
+nav * {
+  color: var(--scolia-text-primary) !important;
+}
+
+/* Verbesserte Lesbarkeit im dunklen Design */
+label,
+span,
+p,
+h1, h2, h3, h4, h5, h6 {
+  text-shadow: none;
+  color: var(--scolia-text-primary);
+}
+
+/* Korrektur für Spielmodus-Kacheln - grüne Textfarbe sicherstellen */
+:root:not(:has(.css-1cdcn26)) [class*="game"],
+:root:not(:has(.css-1cdcn26)) [class*="mode"],
+:root:not(:has(.css-1cdcn26)) .css-tkevr6 h1,
+:root:not(:has(.css-1cdcn26)) .css-tkevr6 h2,
+:root:not(:has(.css-1cdcn26)) .css-tkevr6 h3 {
+  color: var(--scolia-accent-green) !important;
+}
+
+/* ========================================= */
+/* FEINSCHLIFF & VERBESSERUNGEN               */
+/* ========================================= */
+
+/* Dezente Scrollleiste für die Score-Tabelle - dunkles Design */
+:root:has(.css-1u90hiz) .css-1u90hiz::-webkit-scrollbar {
+  width: 8px;
+}
+
+:root:has(.css-1u90hiz) .css-1u90hiz::-webkit-scrollbar-track {
+  background: var(--scolia-bg-dark);
+  border-radius: 4px;
+}
+
+:root:has(.css-1u90hiz) .css-1u90hiz::-webkit-scrollbar-thumb {
+  background: var(--scolia-border);
+  border-radius: 4px;
+  transition: background 0.2s ease;
+}
+
+:root:has(.css-1u90hiz) .css-1u90hiz::-webkit-scrollbar-thumb:hover {
+  background: var(--scolia-accent-green);
+}
+
+/* Verbesserungen der Typografie */
+* {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Fokusdarstellung für bessere Bedienbarkeit */
+*:focus-visible {
+  outline: 2px solid var(--scolia-accent-green);
+  outline-offset: 2px;
+}
+
+/* Dezente Animationen für bessere Bedienung */
+@keyframes scolia-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+:root:not(:has(.css-rc3vw3)) #ad-ext-player-display > div {
+  animation: scolia-fade-in 0.4s ease-out;
+}
+
+/* ========================================= */
+/* ZUSÄTZLICHE SCOLIA-INSPIRIERTE DETAILS     */
+/* ========================================= */
+
+/* Dezenten Verlauf zu aktiven Elementen hinzufügen */
+:root:not(:has(.css-rc3vw3)):root:has(.css-1cdcn26) .css-rtn29s::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(
+    135deg,
+    rgba(74, 222, 128, 0.05) 0%,
+    transparent 50%
+  );
+  pointer-events: none;
+  border-radius: 12px;
+}
+
+/* Hervorhebungseffekt für den Punktestand */
+:root:not(:has(.css-rc3vw3)):root:has(.css-1cdcn26) .css-156dsds::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(74, 222, 128, 0.08) 50%,
+    transparent 100%
+  );
+  animation: score-pulse 2s ease-in-out infinite;
+  border-radius: 12px;
+  pointer-events: none;
+}
+
+@keyframes score-pulse {
+  0%, 100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* Saubere Ladezustände */
+.loading-indicator {
+  background: linear-gradient(
+    90deg,
+    var(--scolia-bg-dark) 0%,
+    var(--scolia-card-hover) 50%,
+    var(--scolia-bg-dark) 100%
+  );
+  background-size: 200% 100%;
+  animation: loading-shimmer 1.5s ease-in-out infinite;
+}
+
+@keyframes loading-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+/* ========================================= */
+/* DUNKLE HINTERGRÜNDE NUR AUF MENÜSEITEN ERZWINGEN */
+/* ========================================= */
+
+/* Nur bestimmte Menü-/Einstellungs-Container ansprechen - NICHT im Spiel */
+:root:not(:has(.css-1cdcn26)) .css-tkevr6,
+:root:not(:has(.css-1cdcn26)) .chakra-container,
+:root:not(:has(.css-1cdcn26)) main:not(:has(.css-1cdcn26)),
+:root:not(:has(.css-1cdcn26)) section:not(:has(.css-1cdcn26)) {
+  background-color: rgba(8, 10, 13, 0.96) !important;
+  backdrop-filter: blur(20px) !important;
+}
+
+svg g rect {
+  font-size: 10px;
+  
+}
+
+/* ========================================= */
+/* VIRTUELLES BOARD - unverändert lassen      */
+/* ========================================= */
+
+:root:has(.css-1cdcn26):has(.css-7lnr9n) .css-1cdcn26 {
+  position: relative;
+  width: 
+  700px !important;
+  height: 700px !important;
+  margin: 0 auto;
+}
+
+:root:has(.css-1cdcn26):has(.css-7lnr9n) .css-1cdcn26::before {
+  width: 800px !important;
+  height: 800px !important;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+
+/* ========================================= */
+/* AKTIVER SPIELER - NUR FARBEN & LEUCHTEFFEKT */
+/* MIT SANFTEREM SCORE UND PULSIERENDEM AVATAR-RING */
+/* ========================================= */
+
+#ad-ext-player-display > div.ad-ext-player-active {
+  border: 4px solid #32d74b !important;
+  box-shadow: 
+    0 0 40px #32d74b,
+    0 0 80px rgba(74, 222, 128, 0.8) !important;
+  z-index: 999 !important;
+  outline: 2px solid rgba(74, 222, 128, 0.3) !important;
+  outline-offset: 2px !important;
+}
+
+.ad-ext-player-active {
+  position: relative !important;
+
+  /* Bisherigen echten Rahmen transparent lassen */
+  border: 4px solid transparent !important;
+
+  z-index: 999 !important;
+}
+
+/* Blinkender grüner Rahmen */
+.ad-ext-player-active::before {
+  content: "" !important;
+  position: absolute !important;
+
+  top: -4px !important;
+  left: -4px !important;
+  right: -4px !important;
+  bottom: -4px !important;
+
+  border: 4px solid #22c55e !important;
+  border-radius: inherit !important;
+
+  pointer-events: none !important;
+
+  animation: playerBorderBlink 1.3s ease-in-out infinite !important;
+}
+
+@keyframes playerBorderBlink {
+  0%, 100% {
+    opacity: 0.25;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+/* NUR Textfarbe, keine Größenanpassungen */
+.ad-ext-player-active .css-y3hfdd {
+  color: #4ade80 !important;
+  text-shadow: 0 0 15px #4ade80 !important;
+  background: linear-gradient(90deg, rgba(74,222,128,0.4), transparent) !important;
+}
+
+/* AVATAR - dünnerer Ring (2px) mit Pulsanimation */
+.ad-ext-player-active .chakra-avatar {
+  box-shadow: 0 0 30px #4ade80 !important;
+  border: 2px solid #4ade80 !important;  /* War 4px, jetzt 2px */
+  animation: avatarPulse 2s ease-in-out infinite;
+}
+
+@keyframes avatarPulse {
+  0% {
+    box-shadow: 0 0 20px rgba(74, 222, 128, 0.6);
+    border-color: rgba(, 222, 128, 0.8);
+  }
+  50% {
+    box-shadow: 0 0 40px rgba(74, 222, 128, 1);
+    border-color: #4ade80;
+  }
+  100% {
+    box-shadow: 0 0 20px rgba(74, 222, 128, 0.6);
+    border-color: rgba(74, 222, 128, 0.8);
+  }
+}
+
+/* SCORE - sanftere grüne Farbe */
+.ad-ext-player-active .ad-ext-player-score {
+  color: #86efac !important;  /* Helleres, sanfteres Grün */
+  text-shadow: 0 0 15px rgba(74, 222, 128, 0.5) !important;
+}
+
+
+/* ========================================= */
+/* TEXT MIT SCHATTEN - IMMER GUT LESBAR       */
+/* ========================================= */
+
+:root:not(:has(.css-1cdcn26)) td,
+:root:not(:has(.css-1cdcn26)) th,
+:root:not(:has(.css-1cdcn26)) p,
+:root:not(:has(.css-1cdcn26)) span,
+:root:not(:has(.css-1cdcn26)) label,
+:root:not(:has(.css-1cdcn26)) div:not([class*="button"]),
+:root:has(.css-1u90hiz) td,
+:root:has(.css-1u90hiz) th,
+:root:has(.css-1u90hiz) p,
+:root:has(.css-1u90hiz) span {
+  color: #ffffff !important;  /* Weißer Text */
+  text-shadow: 
+    1px 1px 2px #000000,
+    -1px -1px 2px #000000,
+    0 0 4px rgba(0,0,0,0.8) !important;  /* Schwarzer Schatten rundherum */
+  font-weight: 600 !important;
+  background: rgba(0, 0, 0, 0.05) !important;
+}
+
+a.css-15iki5k {
+  opacity: 0.25;
+}
+
+a.css-or32x1 {
+  opacity: 0.25;
+}

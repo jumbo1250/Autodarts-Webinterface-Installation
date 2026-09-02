@@ -100,8 +100,7 @@ def is_autodarts_active() -> bool:
     result = subprocess.run(
         ["systemctl", "is-active", SERVICE_NAME],
         capture_output=True,
-        text=True,
-        timeout=2,
+        text=True
     )
     return result.stdout.strip() == "active"
 

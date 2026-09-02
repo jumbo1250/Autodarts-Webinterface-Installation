@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# BUILD: CALLER-WLED-BINARY-UPDATER-SERVICEHOOK-CALLERTOGGLE-WATCHER-20260902-01
+# BUILD: CALLER-WLED-BINARY-UPDATER-SERVICEHOOK-REPAIRMODE-JSONFIX-WLEDWATCH-UNITFIX-PENDINGOK-20260826-10
 set -Eeuo pipefail
 
 CALLER_REPO="Peschi90/darts-caller"
@@ -285,16 +285,12 @@ EOF
 
   cat >"$WLED_WATCHDOG_SCRIPT" <<'EOF'
 #!/usr/bin/env bash
-# BUILD: EXTENSIONS-HEALTH-WATCHDOG-CALLERTOGGLE-CALLER-WLED-20260902-01
+# BUILD: WLED-RECONNECT-WATCHDOG-20260806-01
 set -Eeuo pipefail
 
 LOCK="/run/autodarts-wled-reconnect-watchdog.lock"
 LOG="/var/log/autodarts_wled_watchdog.log"
-CALLER_SERVICE="darts-caller.service"
-WLED_SERVICE="darts-wled.service"
 CALLER_URL="https://127.0.0.1:8079/api/auth/status"
-CALLER_ENABLED_FLAG="/var/lib/autodarts/caller-enabled.json"
-WLED_TARGETS_JSON="/var/lib/autodarts/wled-targets.json"
 WLED_CONFIG="/var/lib/autodarts/config/darts-wled/start-custom.sh"
 
 mkdir -p "$(dirname "$LOG")"
@@ -302,134 +298,6 @@ exec 9>"$LOCK"
 flock -n 9 || exit 0
 
 log() { echo "[$(date +'%F %T')] $*" >>"$LOG"; }
-
-json_state() {
-  python3 -c '
-import json, sys
-raw = sys.stdin.read()
-try:
-    data = json.loads(raw) if raw.strip() else {}
-except Exception:
-    print("")
-    raise SystemExit(0)
-print(data.get("state") or "")
-' 2>/dev/null || true
-}
-
-caller_enabled() {
-  python3 - "$CALLER_ENABLED_FLAG" <<'PY'
-import json, os, sys
-path = sys.argv[1]
-try:
-    if os.path.exists(path):
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f) or {}
-        enabled = bool(data.get("enabled", True))
-    else:
-        enabled = True
-except Exception:
-    enabled = True
-raise SystemExit(0 if enabled else 1)
-PY
-}
-
-wled_enabled() {
-  python3 - "$WLED_TARGETS_JSON" <<'PY'
-import json, os, sys
-path = sys.argv[1]
-try:
-    if not os.path.exists(path):
-        # Alte/ungepflegte Systeme: bestehendes Verhalten beibehalten.
-        raise SystemExit(0)
-    with open(path, encoding="utf-8") as f:
-        data = json.load(f) or {}
-    if not bool(data.get("master_enabled", True)):
-        raise SystemExit(1)
-    targets = data.get("targets") or []
-    for t in targets:
-        if isinstance(t, dict) and bool(t.get("enabled")) and str(t.get("host") or "").strip():
-            raise SystemExit(0)
-    raise SystemExit(1)
-except SystemExit:
-    raise
-except Exception:
-    # Bei kaputter Config lieber nichts zerstören: altes Verhalten beibehalten.
-    raise SystemExit(0)
-PY
-}
-
-caller_auth_json() {
-  curl -sk --max-time 3 "$CALLER_URL" 2>/dev/null || true
-}
-
-CALLER_RESTARTED=0
-restart_caller() {
-  local reason="${1:-unknown}"
-  CALLER_RESTARTED=1
-  log "Caller wirkt nicht gesund (${reason}) -> restart ${CALLER_SERVICE}"
-  systemctl reset-failed "$CALLER_SERVICE" 2>/dev/null || true
-  systemctl restart "$CALLER_SERVICE" >/dev/null 2>&1 || systemctl start "$CALLER_SERVICE" >/dev/null 2>&1 || true
-  sleep 8
-}
-
-ensure_caller_healthy() {
-  local raw state
-
-  if ! caller_enabled; then
-    log "Caller ist per Webpanel deaktiviert -> stop Caller/WLED und exit"
-    systemctl stop "$WLED_SERVICE" >/dev/null 2>&1 || true
-    systemctl stop "$CALLER_SERVICE" >/dev/null 2>&1 || true
-    return 2
-  fi
-
-  if ! systemctl status "$CALLER_SERVICE" >/dev/null 2>&1; then
-    log "Caller-Service existiert nicht -> skip"
-    return 2
-  fi
-
-  if ! systemctl is-active --quiet "$CALLER_SERVICE"; then
-    restart_caller "service inactive/failed"
-  fi
-
-  raw="$(caller_auth_json)"
-  if [[ -z "$raw" ]]; then
-    restart_caller "API antwortet nicht"
-    raw="$(caller_auth_json)"
-  fi
-
-  if [[ -z "$raw" ]]; then
-    log "Caller API nach Restart weiterhin ohne Antwort -> WLED-Prüfung übersprungen"
-    return 2
-  fi
-
-  state="$(printf '%s' "$raw" | json_state)"
-  case "$state" in
-    authenticated)
-      return 0
-      ;;
-    pending|unauthenticated|not_authenticated)
-      # Kein Fehler: nach Token-Reset/frischer Installation normal. Nicht durch Neustarts nervös machen.
-      log "Caller API erreichbar, aber nicht authenticated (state=${state}) -> kein Restart"
-      return 2
-      ;;
-    "")
-      restart_caller "API liefert kein gültiges state-Feld"
-      raw="$(caller_auth_json)"
-      state="$(printf '%s' "$raw" | json_state)"
-      [[ "$state" == "authenticated" ]] && return 0
-      log "Caller nach Restart nicht authenticated/ungueltig (state=${state:-empty})"
-      return 2
-      ;;
-    *)
-      restart_caller "unerwarteter auth_state=${state}"
-      raw="$(caller_auth_json)"
-      state="$(printf '%s' "$raw" | json_state)"
-      [[ "$state" == "authenticated" ]] && return 0
-      log "Caller nach Restart nicht authenticated (state=${state:-empty})"
-      return 2
-      ;;
-  esac
-}
 
 read_wled_endpoint() {
   python3 - "$WLED_CONFIG" <<'PY'
@@ -451,47 +319,26 @@ for i, part in enumerate(parts):
 PY
 }
 
-# 1) Caller leichtgewichtig pruefen und nur bei echter Funktionsstoerung neu starten.
-if ! ensure_caller_healthy; then
-  exit 0
-fi
-
-# 2) WLED nur anfassen, wenn WLED im Webpanel wirklich aktiv ist.
-if ! wled_enabled; then
-  if systemctl is-active --quiet "$WLED_SERVICE"; then
-    log "WLED ist im Webpanel deaktiviert/kein Target aktiv -> stop ${WLED_SERVICE}"
-    systemctl stop "$WLED_SERVICE" >/dev/null 2>&1 || true
-  fi
-  exit 0
-fi
-
-# 3) Wenn Caller neu gestartet wurde, WLED danach einmal sauber neu verbinden.
-if [[ "$CALLER_RESTARTED" == "1" ]] && systemctl status "$WLED_SERVICE" >/dev/null 2>&1; then
-  if systemctl is-active --quiet "$WLED_SERVICE"; then
-    log "Caller wurde neu gestartet -> restart ${WLED_SERVICE} fuer saubere Neuverbindung"
-    systemctl reset-failed "$WLED_SERVICE" 2>/dev/null || true
-    systemctl restart "$WLED_SERVICE" >/dev/null 2>&1 || true
-    exit 0
-  fi
-fi
-
-# 4) Bestehende WLED-Pruefung: nur wenn Caller authenticated ist und WLED aktiv sein soll.
 EP="${AUTODARTS_WLED_ENDPOINT:-$(read_wled_endpoint)}"
 [[ -n "$EP" ]] || exit 0
+
+AUTH="$(curl -sk --max-time 2 "$CALLER_URL" 2>/dev/null || true)"
+echo "$AUTH" | grep -q '"state":"authenticated"' || exit 0
 
 if ! curl -fsS --max-time 2 "http://${EP}/json/info" >/dev/null 2>&1; then
   exit 0
 fi
 
-if ! systemctl is-active --quiet "$WLED_SERVICE"; then
+if ! systemctl is-active --quiet darts-wled.service; then
   log "darts-wled ist nicht active, ESP ${EP} ist erreichbar -> start"
-  systemctl start "$WLED_SERVICE" >/dev/null 2>&1 || true
+  systemctl start darts-wled.service >/dev/null 2>&1 || true
   exit 0
 fi
 
-if journalctl -u "$WLED_SERVICE" --since "3 minutes ago" --no-pager -o cat 2>/dev/null   | grep -Eiq 'WLED not available|Name or service not known|WLED Controller connection lost|Connection lost: WLED|failed to resolve'; then
+if journalctl -u darts-wled.service --since "3 minutes ago" --no-pager -o cat 2>/dev/null \
+  | grep -Eiq 'WLED not available|Name or service not known|WLED Controller connection lost|Connection lost: WLED|failed to resolve'; then
   log "WLED-Fehler erkannt und ESP ${EP} wieder erreichbar -> restart darts-wled"
-  systemctl restart "$WLED_SERVICE" >/dev/null 2>&1 || true
+  systemctl restart darts-wled.service >/dev/null 2>&1 || true
 fi
 EOF
   chmod 777 "$WLED_WATCHDOG_SCRIPT"
@@ -523,32 +370,8 @@ WantedBy=timers.target
 EOF
   chmod 777 "$WLED_WATCHDOG_TIMER"
 
-  caller_enabled_for_timer() {
-    python3 - "/var/lib/autodarts/caller-enabled.json" <<'PY'
-import json, os, sys
-path = sys.argv[1]
-try:
-    if os.path.exists(path):
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f) or {}
-        enabled = bool(data.get("enabled", True))
-    else:
-        enabled = True
-except Exception:
-    enabled = True
-raise SystemExit(0 if enabled else 1)
-PY
-  }
-
-  if caller_enabled_for_timer; then
-    systemctl enable autodarts-wled-reconnect-watchdog.timer >/dev/null 2>&1 || true
-    systemctl start autodarts-wled-reconnect-watchdog.timer >/dev/null 2>&1 || true
-  else
-    systemctl disable --now autodarts-wled-reconnect-watchdog.timer >/dev/null 2>&1 || true
-    systemctl stop darts-wled.service >/dev/null 2>&1 || true
-    systemctl stop darts-caller.service >/dev/null 2>&1 || true
-    log "Caller ist per Webpanel deaktiviert -> Watcher/Caller/WLED bleiben aus."
-  fi
+  systemctl enable autodarts-wled-reconnect-watchdog.timer >/dev/null 2>&1 || true
+  systemctl start autodarts-wled-reconnect-watchdog.timer >/dev/null 2>&1 || true
 }
 
 fix_wled_service_startlimit_location() {
@@ -850,93 +673,44 @@ fi
 # Pending ist z.B. nach Token-Reset oder frischer Installation ein normaler Zustand.
 CALLER_AUTHENTICATED=0
 
-caller_enabled_for_main() {
-  python3 - "/var/lib/autodarts/caller-enabled.json" <<'PY'
-import json, os, sys
-path = sys.argv[1]
-try:
-    if os.path.exists(path):
-        with open(path, encoding="utf-8") as f:
-            data=json.load(f) or {}
-        enabled=bool(data.get("enabled", True))
-    else:
-        enabled=True
-except Exception:
-    enabled=True
-raise SystemExit(0 if enabled else 1)
-PY
-}
-
-wled_enabled_for_main() {
-  python3 - "/var/lib/autodarts/wled-targets.json" <<'PY'
-import json, os, sys
-path = sys.argv[1]
-try:
-    if not os.path.exists(path):
-        raise SystemExit(0)
-    with open(path, encoding="utf-8") as f:
-        data=json.load(f) or {}
-    if not bool(data.get("master_enabled", True)):
-        raise SystemExit(1)
-    for t in data.get("targets") or []:
-        if isinstance(t, dict) and bool(t.get("enabled")) and str(t.get("host") or "").strip():
-            raise SystemExit(0)
-    raise SystemExit(1)
-except SystemExit:
-    raise
-except Exception:
-    raise SystemExit(0)
-PY
-}
-
-if ! caller_enabled_for_main; then
-  log "Caller ist per Webpanel deaktiviert. Update-Dateien wurden aktualisiert; Caller/WLED/Watcher bleiben aus."
-  systemctl disable --now darts-wled.service >/dev/null 2>&1 || true
-  systemctl disable --now darts-caller.service >/dev/null 2>&1 || true
-  systemctl disable --now autodarts-wled-reconnect-watchdog.timer >/dev/null 2>&1 || true
-  systemctl reset-failed darts-caller.service darts-wled.service >/dev/null 2>&1 || true
-else
-  if [[ "$NEED_CALLER" == "1" && ("$CALLER_WAS_ACTIVE" == "1" || "$WLED_WAS_ACTIVE" == "1") ]]; then
-    log "Starte Caller-Dienst nach Update …"
-    systemctl start darts-caller.service
-    service_stable darts-caller.service 8 || fail "Caller startet nach dem Update nicht stabil."
-    wait_for_caller_api 35 || fail "Caller API ist nach dem Update nicht erreichbar."
-    if wait_for_caller_authenticated 20; then
-      CALLER_AUTHENTICATED=1
-    else
-      CALLER_AUTHENTICATED=0
-    fi
-    sleep 4
-  elif [[ "$WLED_WAS_ACTIVE" == "1" ]]; then
-    # Caller wurde nicht aktualisiert, aber WLED wird neu gestartet.
-    # Trotzdem kurz sicherstellen, dass der Data-Feeder erreichbar ist.
-    wait_for_caller_api 20 || true
-    if wait_for_caller_authenticated 8; then
-      CALLER_AUTHENTICATED=1
-    else
-      CALLER_AUTHENTICATED=0
-    fi
-    sleep 2
+if [[ "$NEED_CALLER" == "1" && ("$CALLER_WAS_ACTIVE" == "1" || "$WLED_WAS_ACTIVE" == "1") ]]; then
+  log "Starte Caller-Dienst nach Update …"
+  systemctl start darts-caller.service
+  service_stable darts-caller.service 8 || fail "Caller startet nach dem Update nicht stabil."
+  wait_for_caller_api 35 || fail "Caller API ist nach dem Update nicht erreichbar."
+  if wait_for_caller_authenticated 20; then
+    CALLER_AUTHENTICATED=1
+  else
+    CALLER_AUTHENTICATED=0
   fi
+  sleep 4
+elif [[ "$WLED_WAS_ACTIVE" == "1" ]]; then
+  # Caller wurde nicht aktualisiert, aber WLED wird neu gestartet.
+  # Trotzdem kurz sicherstellen, dass der Data-Feeder erreichbar ist.
+  wait_for_caller_api 20 || true
+  if wait_for_caller_authenticated 8; then
+    CALLER_AUTHENTICATED=1
+  else
+    CALLER_AUTHENTICATED=0
+  fi
+  sleep 2
+fi
 
-  # Der Timer ist jetzt ein gemeinsamer Caller/WLED-Watcher. Wenn Caller aktiv ist,
-  # soll er laufen, auch wenn WLED aus ist.
-  systemctl enable --now autodarts-wled-reconnect-watchdog.timer >/dev/null 2>&1 || true
-
-  if [[ "$WLED_WAS_ACTIVE" == "1" ]]; then
-    if [[ "$CALLER_AUTHENTICATED" == "1" ]] && wled_enabled_for_main; then
-      log "Starte WLED-Dienst nach Update …"
-      systemctl enable darts-wled.service >/dev/null 2>&1 || true
-      WLED_START_SINCE="$(date +'%F %T')"
-      systemctl start darts-wled.service
-      service_stable darts-wled.service 12 || fail "WLED startet nach dem Update nicht stabil."
-      wait_for_wled_process 20 || fail "WLED-Prozess läuft nach dem Update nicht."
-      wait_for_wled_ready_log "$WLED_START_SINCE" 45 || true
-    else
-      log "Caller nicht authenticated oder WLED deaktiviert/kein Target aktiv. WLED bleibt aus; Caller-Watcher bleibt aktiv."
-      systemctl disable --now darts-wled.service >/dev/null 2>&1 || true
-      systemctl reset-failed darts-wled.service >/dev/null 2>&1 || true
-    fi
+if [[ "$WLED_WAS_ACTIVE" == "1" ]]; then
+  if [[ "$CALLER_AUTHENTICATED" == "1" ]]; then
+    log "Starte WLED-Dienst nach Update …"
+    systemctl enable darts-wled.service >/dev/null 2>&1 || true
+    systemctl enable --now autodarts-wled-reconnect-watchdog.timer >/dev/null 2>&1 || true
+    WLED_START_SINCE="$(date +'%F %T')"
+    systemctl start darts-wled.service
+    service_stable darts-wled.service 12 || fail "WLED startet nach dem Update nicht stabil."
+    wait_for_wled_process 20 || fail "WLED-Prozess läuft nach dem Update nicht."
+    wait_for_wled_ready_log "$WLED_START_SINCE" 45 || true
+  else
+    log "Caller/WLED Anmeldung ist nicht aktiv. Update bleibt erfolgreich; WLED wird vorerst nicht gestartet."
+    systemctl disable --now darts-wled.service >/dev/null 2>&1 || true
+    systemctl disable --now autodarts-wled-reconnect-watchdog.timer >/dev/null 2>&1 || true
+    systemctl reset-failed darts-wled.service >/dev/null 2>&1 || true
   fi
 fi
 
