@@ -231,6 +231,148 @@ RestartSec=8
 
 ---
 
+## Feature-Analyse: Theme-Synchronisation
+
+### Überblick
+Der "Alle Themes mit Browser synchronisieren"-Button überträgt alle lokal am Pi gespeicherten CSS-Theme-Dateien in den Browser des Users. Danach kann die Browser-Extension das Theme direkt auf `play.autodarts.io/.com` umschalten — auch wenn der Raspberry-AP nicht mehr erreichbar ist.
+
+---
+
+### Vollständiger Ablauf
+
+#### 1. Auslöser (Frontend)
+**Datei:** `templates/index.html`, Button `#autodartsThemeSyncBtn`  
+User klickt den Button. Das Klick-Event ist in `static/js/autodarts_themes.js` registriert (DOMContentLoaded, Zeile 299–301).
+
+---
+
+#### 2. JS-Funktion `syncThemesToBrowser()` — `static/js/autodarts_themes.js:59`
+```
+Button wird deaktiviert
+Status-Text → "Themes werden synchronisiert…"
+↓
+bridgeRequest('sync-library', {}, 15000)
+  → window.postMessage senden:
+      { source: 'autodarts-theme-webpanel',
+        action: 'sync-library',
+        requestId: 'theme-<timestamp>-<random>' }
+  → 15s-Timeout-Listener auf window.message hören
+      (wartet auf source: 'autodarts-theme-extension', gleiche requestId)
+```
+
+Mögliche Ergebnisse:
+- **Kein Response in 15s** → "Keine kompatible Theme-Extension erkannt"
+- **Response `ok: false`** → Fehlermeldung aus `result.error`
+- **Response `ok: true`** → "{count} Themes wurden im Browser gespeichert"
+
+---
+
+#### 3. Browser-Extension (separates Projekt, nicht im Repo)
+Die Content-Script der Extension lauscht auf `window.postMessage`:
+```
+Empfängt: { source: 'autodarts-theme-webpanel', action: 'sync-library' }
+↓
+fetch(window.app_urls.api_autodarts_theme_sync)   ← URL aus Jinja-Template
+  = GET /api/autodarts-theme/sync
+↓
+Empfängt JSON-Bundle mit allen Themes + CSS-Text
+↓
+Speichert alles in chrome.storage.local (oder ähnlich)
+↓
+Antwortet via window.postMessage:
+  { source: 'autodarts-theme-extension',
+    action: 'sync-library',
+    requestId: <same>,
+    response: { ok: true, count: N } }
+```
+
+> Die Extension-URL für den API-Aufruf wird vom Jinja-Template injiziert:  
+> `templates/index.html:1306` → `window.app_urls.api_autodarts_theme_sync = "{{ url_for('api_autodarts_theme_sync') }}"`
+
+---
+
+#### 4. Backend-API `GET /api/autodarts-theme/sync` — `autodarts-web.py:7102`
+```python
+list_autodarts_themes()
+  → liest AUTODARTS_THEME_DIR = /usr/local/bin/theme/
+  → findet alle *.css (alphabetisch sortiert)
+  → pro CSS-Datei:
+      - CSS-Text lesen
+      - parse_autodarts_theme_metadata(css_text)
+          liest erste 30 Zeilen des CSS
+          sucht: /* Autor: ... */ oder Author: ...
+                 Spielmodus/Spielmodi/Game modes
+                 Auflösung/Resolution (+ Fallback-Regex)
+      - autodarts_theme_preview_path_for_css(path)
+          sucht: theme.png / .jpg / .jpeg / .webp / .gif
+```
+
+**Response:**
+```json
+{
+  "ok": true,
+  "schema": 1,
+  "selected": "aktives-theme.css",
+  "themes": [
+    { "name": "Default", "filename": "default", "author": "", "modes": "", "resolution": "", "css": "" },
+    { "name": "MeinTheme", "filename": "mein-theme.css", "author": "Peter", "modes": "X01", "resolution": "1920 × 1080", "css": "/* ganzer CSS-Code */" },
+    ...
+  ]
+}
+```
+Response ist `no-cache` (`_json_nocache`).
+
+---
+
+#### 5. Theme-Auswahl (separater Pfad, kein Sync)
+Wenn User im Dropdown ein Theme auswählt und "Theme aktivieren" klickt:
+```
+applyThemeSelection()
+  → POST /api/autodarts-theme/select  { selected: "filename.css" }
+  → Backend: save_autodarts_theme_state()
+      schreibt AUTODARTS_THEME_STATE_PATH (JSON-Datei: { "selected": "..." })
+  → Frontend: notifyExtensionLegacySelection(filename)
+      → bridgeRequest('legacy-select', ...) mit 1,8s-Timeout
+         (Best-effort für ältere Extensions, keine Fehlerbehandlung)
+```
+
+---
+
+#### 6. State-Persistenz
+| Was | Wo |
+|---|---|
+| Welches Theme aktiv ist | `AUTODARTS_THEME_STATE_PATH` (JSON-Datei am Pi) |
+| Theme-CSS-Dateien | `/usr/local/bin/theme/*.css` (oder `$AUTODARTS_THEME_DIR`) |
+| Vorschaubilder | `/usr/local/bin/theme/<name>.{png,jpg,jpeg,webp,gif}` |
+| Themes im Browser | `chrome.storage.local` in der Extension (nach Sync) |
+
+---
+
+#### 7. Legacy-CSS-Endpoint (Rückwärtskompatibilität)
+`GET /api/autodarts-theme.css` — gibt nur den CSS-Text des aktiven Themes zurück.  
+Ältere Extension-Versionen ohne Sync-Unterstützung verwenden diesen Endpoint direkt.
+
+---
+
+### CSS-Metadaten-Format (in den Theme-Dateien)
+Die ersten 30 Zeilen einer `*.css`-Datei werden nach folgenden Labels durchsucht (DE + EN):
+```css
+/* Autor: Peter Rottmann */
+/* Spielmodus: X01, Cricket */
+/* Auflösung: 1920 × 1080 */
+```
+Alternativ auch als Plain-Text-Kommentar ohne `/*`-Wrapper. Regex unterstützt beide Varianten.
+
+---
+
+### Architektur-Besonderheiten
+- **Kein Server-Push nötig:** Die gesamte Kommunikation läuft über `window.postMessage` im Browser. Das Webpanel sendet, die Extension antwortet — ohne WebSocket oder SSE.
+- **Extension-Detection:** Wenn innerhalb von 15s keine Antwort kommt, gilt die Extension als nicht vorhanden.
+- **Keine Authentifizierung am Sync-Endpoint:** `/api/autodarts-theme/sync` ist ohne Login aufrufbar — gibt aber nur CSS-Code (kein Systemzugriff) zurück.
+- **`schema: 1`** im Response — vorbereitet für spätere API-Versionen.
+
+---
+
 ## 5. Fehlende Infra / Nice-to-have
 
 | # | Was fehlt | Priorität |

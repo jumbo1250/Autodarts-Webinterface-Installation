@@ -6484,6 +6484,82 @@ def autodarts_theme_preview_path_for_css(path: Path) -> Path | None:
     return None
 
 
+def _theme_dir_fingerprint(dir_path: Path) -> str:
+    import hashlib
+    h = hashlib.sha256()
+    try:
+        css_files = sorted(dir_path.glob("*.css"), key=lambda p: p.name.lower())
+        for f in css_files:
+            h.update(f.name.encode())
+            h.update(f.read_bytes())
+    except Exception:
+        pass
+    return h.hexdigest()
+
+
+def fetch_themes_from_release_zip() -> dict:
+    zip_url = WEBPANEL_RAW_BASE + "/webpanel.zip"
+    result_base = {"updated": False, "theme_count": 0, "backup_path": "", "offline": False, "error": ""}
+
+    with tempfile.TemporaryDirectory() as tmp_str:
+        tmp = Path(tmp_str)
+        zip_file = tmp / "webpanel.zip"
+
+        try:
+            req = urllib.request.Request(zip_url, headers={"User-Agent": "autodarts-webpanel/theme-fetch"})
+            ctx = ssl.create_default_context()
+            with urllib.request.urlopen(req, context=ctx, timeout=30) as resp:
+                zip_file.write_bytes(resp.read())
+        except Exception as e:
+            return {**result_base, "offline": True, "error": str(e)}
+
+        extract_dir = tmp / "extracted"
+        extract_dir.mkdir()
+        try:
+            with zipfile.ZipFile(zip_file) as zf:
+                theme_entries = [n for n in zf.namelist() if re.match(r"theme/[^/]+$", n) and not n.endswith("/")]
+                if not theme_entries:
+                    return {**result_base, "error": "Kein theme/-Ordner in webpanel.zip"}
+                for name in theme_entries:
+                    zf.extract(name, extract_dir)
+        except Exception as e:
+            return {**result_base, "error": str(e)}
+
+        zip_theme_dir = extract_dir / "theme"
+
+        local_fp = _theme_dir_fingerprint(AUTODARTS_THEME_DIR)
+        remote_fp = _theme_dir_fingerprint(zip_theme_dir)
+
+        local_count = len(list(AUTODARTS_THEME_DIR.glob("*.css"))) if AUTODARTS_THEME_DIR.exists() else 0
+        if local_fp == remote_fp:
+            return {**result_base, "theme_count": local_count}
+
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_path = ""
+        if AUTODARTS_THEME_DIR.exists():
+            backup_dir = AUTODARTS_THEME_DIR.parent / f"theme.bak.{ts}"
+            try:
+                shutil.copytree(str(AUTODARTS_THEME_DIR), str(backup_dir))
+                backup_path = str(backup_dir)
+                shutil.rmtree(str(AUTODARTS_THEME_DIR))
+            except Exception as e:
+                return {**result_base, "error": f"Backup fehlgeschlagen: {e}"}
+
+        try:
+            shutil.copytree(str(zip_theme_dir), str(AUTODARTS_THEME_DIR))
+            try:
+                AUTODARTS_THEME_DIR.chmod(0o777)
+                for f in AUTODARTS_THEME_DIR.iterdir():
+                    f.chmod(0o777)
+            except Exception:
+                pass
+        except Exception as e:
+            return {**result_base, "backup_path": backup_path, "error": f"Kopieren fehlgeschlagen: {e}"}
+
+        new_count = len(list(AUTODARTS_THEME_DIR.glob("*.css")))
+        return {**result_base, "updated": True, "theme_count": new_count, "backup_path": backup_path}
+
+
 def list_autodarts_themes() -> list[dict]:
     try:
         AUTODARTS_THEME_DIR.mkdir(parents=True, exist_ok=True)
@@ -7134,6 +7210,21 @@ def api_autodarts_theme_sync():
         "schema": 1,
         "selected": get_selected_autodarts_theme_name(),
         "themes": bundle,
+    })
+
+
+@app.route("/api/autodarts-theme/fetch-from-zip", methods=["POST"])
+def api_autodarts_theme_fetch_from_zip():
+    if not bool(session.get("admin_unlocked", False)):
+        return jsonify({"ok": False, "error": "Not authorized"}), 403
+    result = fetch_themes_from_release_zip()
+    return _json_nocache({
+        "ok": True,
+        "updated": result.get("updated", False),
+        "theme_count": result.get("theme_count", 0),
+        "backup_path": result.get("backup_path", ""),
+        "offline": result.get("offline", False),
+        "error": result.get("error", ""),
     })
 
 

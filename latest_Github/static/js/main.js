@@ -1187,6 +1187,9 @@ function initApConnectionNotice() {
   const okBtn = document.getElementById('apConnectionNoticeOk');
   if (!notice || !okBtn) return;
 
+  const hostname = window.location.hostname;
+  if (hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '::1') return;
+
   const storageKey = 'autodarts_ap_connection_notice_ok_v2';
 
   try {

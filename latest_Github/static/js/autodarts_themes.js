@@ -63,8 +63,26 @@
     const oldDisabled = button ? button.disabled : false;
 
     if (button) button.disabled = true;
-    if (statusEl) statusEl.textContent = texts.syncRunning || 'Themes werden mit der Browser-Extension synchronisiert…';
 
+    // Schritt 1: Theme-Ordner am Pi aus webpanel.zip aktualisieren
+    if (statusEl) statusEl.textContent = texts.fetchChecking || 'Prüfe auf neue Themes…';
+    try {
+      const fetchUrl = window.app_urls && window.app_urls.api_autodarts_theme_fetch_from_zip;
+      if (fetchUrl) {
+        const fetchResp = await fetch(fetchUrl, { method: 'POST' });
+        const fetchData = await fetchResp.json();
+        if (fetchData && fetchData.updated) {
+          const tpl = texts.fetchUpdated || 'Theme-Ordner aktualisiert ({count} Themes).';
+          if (statusEl) statusEl.textContent = String(tpl).replace('{count}', String(fetchData.theme_count || 0));
+          await new Promise(r => setTimeout(r, 1200));
+        }
+      }
+    } catch (_) {
+      // Offline oder Fehler → lokale Themes verwenden, weiter mit Schritt 2
+    }
+
+    // Schritt 2: Browser-Extension mit (ggf. aktualisierten) lokalen Themes befüllen
+    if (statusEl) statusEl.textContent = texts.syncRunning || 'Themes werden mit der Browser-Extension synchronisiert…';
     try {
       const result = await bridgeRequest('sync-library', {}, 15000);
       if (!result) {
