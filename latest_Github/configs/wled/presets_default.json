@@ -1,0 +1,152 @@
+{
+  "0": {},
+  "1": {
+    "n": "Spieler 1",
+    "mainseg": 0,
+    "seg": [
+      {"id":0,"start":0,"stop":9999,"grp":1,"spc":0,"of":0,"on":true,"frz":false,"bri":255,"cct":127,"set":0,"n":"","col":[[43,255,0],[0,0,0],[0,0,0]],"fx":0,"sx":128,"ix":128,"pal":0,"c1":128,"c2":128,"c3":16,"sel":true,"rev":false,"mi":false,"o1":false,"o2":false,"o3":false,"si":0,"m12":0},
+      {"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0}
+    ]
+  },
+  "2": {
+    "n": "Spieler 2",
+    "mainseg": 0,
+    "seg": [
+      {"id":0,"start":0,"stop":9999,"grp":1,"spc":0,"of":0,"on":true,"frz":false,"bri":255,"cct":127,"set":0,"n":"","col":[[0,150,255],[0,0,0],[0,0,0]],"fx":0,"sx":128,"ix":128,"pal":0,"c1":128,"c2":128,"c3":16,"sel":true,"rev":false,"mi":false,"o1":false,"o2":false,"o3":false,"si":0,"m12":0},
+      {"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0}
+    ]
+  },
+  "3": {
+    "n": "Spieler 3",
+    "mainseg": 0,
+    "seg": [
+      {"id":0,"start":0,"stop":9999,"grp":1,"spc":0,"of":0,"on":true,"frz":false,"bri":255,"cct":127,"set":0,"n":"","col":[[0,255,150],[0,0,0],[0,0,0]],"fx":0,"sx":128,"ix":128,"pal":0,"c1":128,"c2":128,"c3":16,"sel":true,"rev":false,"mi":false,"o1":false,"o2":false,"o3":false,"si":0,"m12":0},
+      {"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0}
+    ]
+  },
+  "4": {
+    "n": "Spieler 4",
+    "mainseg": 0,
+    "seg": [
+      {"id":0,"start":0,"stop":9999,"grp":1,"spc":0,"of":0,"on":true,"frz":false,"bri":255,"cct":127,"set":0,"n":"","col":[[180,0,255],[0,0,0],[0,0,0]],"fx":0,"sx":128,"ix":128,"pal":0,"c1":128,"c2":128,"c3":16,"sel":true,"rev":false,"mi":false,"o1":false,"o2":false,"o3":false,"si":0,"m12":0},
+      {"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0}
+    ]
+  },
+  "5": {
+    "n": "Spieler 5",
+    "mainseg": 0,
+    "seg": [
+      {"id":0,"start":0,"stop":9999,"grp":1,"spc":0,"of":0,"on":true,"frz":false,"bri":255,"cct":127,"set":0,"n":"","col":[[255,0,150],[0,0,0],[0,0,0]],"fx":0,"sx":128,"ix":128,"pal":0,"c1":128,"c2":128,"c3":16,"sel":true,"rev":false,"mi":false,"o1":false,"o2":false,"o3":false,"si":0,"m12":0},
+      {"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0}
+    ]
+  },
+  "6": {
+    "n": "Spieler 6",
+    "mainseg": 0,
+    "seg": [
+      {"id":0,"start":0,"stop":9999,"grp":1,"spc":0,"of":0,"on":true,"frz":false,"bri":255,"cct":127,"set":0,"n":"","col":[[255,200,0],[0,0,0],[0,0,0]],"fx":0,"sx":128,"ix":128,"pal":0,"c1":128,"c2":128,"c3":16,"sel":true,"rev":false,"mi":false,"o1":false,"o2":false,"o3":false,"si":0,"m12":0},
+      {"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0}
+    ]
+  },
+  "7": {
+    "n": "Leg gewonnen",
+    "mainseg": 0,
+    "seg": [
+      {"id":0,"start":0,"stop":9999,"grp":1,"spc":0,"of":0,"on":true,"frz":false,"bri":255,"cct":127,"set":0,"n":"","col":[[43,255,0],[0,0,0],[0,0,0]],"fx":9,"sx":255,"ix":128,"pal":0,"c1":128,"c2":128,"c3":16,"sel":true,"rev":false,"mi":false,"o1":false,"o2":false,"o3":false,"si":0,"m12":0},
+      {"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0}
+    ]
+  },
+  "8": {
+    "n": "Match gewonnen",
+    "mainseg": 0,
+    "seg": [
+      {"id":0,"start":0,"stop":9999,"grp":1,"spc":1,"of":0,"on":true,"frz":false,"bri":255,"cct":127,"set":0,"n":"","col":[[43,255,0],[0,0,0],[0,0,0]],"fx":9,"sx":255,"ix":99,"pal":11,"c1":128,"c2":128,"c3":16,"sel":true,"rev":false,"mi":false,"o1":false,"o2":false,"o3":false,"si":0,"m12":0},
+      {"id":1,"start":0,"stop":9999,"grp":1,"spc":1,"of":1,"on":true,"frz":false,"bri":255,"cct":127,"set":0,"n":"","col":[[255,170,0],[0,0,0],[0,0,0]],"fx":23,"sx":235,"ix":128,"pal":11,"c1":128,"c2":128,"c3":16,"sel":true,"rev":false,"mi":false,"o1":false,"o2":false,"o3":false,"si":0,"m12":0},
+      {"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0}
+    ]
+  },
+  "9": {
+    "n": "Busted",
+    "mainseg": 0,
+    "seg": [
+      {"id":0,"start":0,"stop":9999,"grp":1,"spc":0,"of":0,"on":true,"frz":false,"bri":255,"cct":127,"set":0,"lc":1,"n":"","col":[[255,38,0],[255,21,0],[251,255,0]],"fx":113,"sx":249,"ix":196,"pal":8,"c1":128,"c2":128,"c3":16,"sel":true,"rev":false,"mi":false,"o1":false,"o2":false,"o3":false,"si":0,"m12":0,"bm":0},
+      {"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0}
+    ]
+  },
+  "10": {
+    "on": true,
+    "bri": 255,
+    "transition": 7,
+    "n": "180!",
+    "mainseg": 1,
+    "seg": [
+      {"id":0,"start":0,"stop":9999,"grp":1,"spc":0,"of":0,"on":true,"frz":false,"bri":255,"cct":127,"set":0,"n":"","col":[[43,255,0],[0,0,0],[0,0,0]],"fx":89,"sx":127,"ix":194,"pal":54,"c1":128,"c2":128,"c3":16,"sel":false,"rev":false,"mi":true,"o1":false,"o2":false,"o3":false,"si":0,"m12":0},
+      {"id":1,"start":0,"stop":9999,"grp":1,"spc":1,"of":1,"on":true,"frz":false,"bri":255,"cct":127,"set":0,"n":"","col":[[255,170,0],[0,0,0],[0,0,0]],"fx":89,"sx":162,"ix":214,"pal":43,"c1":128,"c2":128,"c3":16,"sel":true,"rev":true,"mi":false,"o1":false,"o2":false,"o3":false,"si":0,"m12":0},
+      {"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0}
+    ]
+  },
+  "11": {
+    "n": "Spieler beigetreten",
+    "mainseg": 0,
+    "seg": [
+      {"id":0,"start":0,"stop":9999,"grp":1,"spc":0,"of":0,"on":true,"frz":false,"bri":255,"cct":127,"set":0,"lc":1,"n":"","col":[[43,255,0],[0,255,200],[0,0,0]],"fx":100,"sx":46,"ix":119,"pal":0,"c1":128,"c2":128,"c3":16,"sel":true,"rev":false,"mi":false,"o1":false,"o2":false,"o3":false,"si":0,"m12":1,"bm":0},
+      {"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0}
+    ]
+  },
+  "12": {
+    "n": "Spieler verlassen",
+    "mainseg": 0,
+    "seg": [
+      {"id":0,"start":0,"stop":9999,"grp":1,"spc":0,"of":0,"on":true,"frz":false,"bri":255,"cct":127,"set":0,"lc":1,"n":"","col":[[255,0,0],[255,145,0],[0,0,0]],"fx":100,"sx":43,"ix":248,"pal":2,"c1":128,"c2":128,"c3":16,"sel":true,"rev":false,"mi":false,"o1":false,"o2":false,"o3":false,"si":0,"m12":1,"bm":0},
+      {"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0}
+    ]
+  },
+  "13": {
+    "n": "Board gestoppt",
+    "mainseg": 0,
+    "seg": [
+      {"id":0,"start":0,"stop":9999,"grp":1,"spc":0,"of":0,"on":true,"frz":false,"bri":255,"cct":127,"set":0,"n":"","col":[[255,0,0],[0,0,0],[0,0,0]],"fx":0,"sx":128,"ix":128,"pal":0,"c1":128,"c2":128,"c3":16,"sel":true,"rev":false,"mi":false,"o1":false,"o2":false,"o3":false,"si":0,"m12":0},
+      {"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0}
+    ]
+  },
+  "14": {
+    "n": "Kalibrierung",
+    "mainseg": 0,
+    "seg": [
+      {"id":0,"start":0,"stop":9999,"grp":1,"spc":0,"of":0,"on":true,"frz":false,"bri":255,"cct":127,"set":0,"n":"","col":[[150,0,255],[0,0,0],[0,0,0]],"fx":0,"sx":128,"ix":128,"pal":0,"c1":128,"c2":128,"c3":16,"sel":true,"rev":false,"mi":false,"o1":false,"o2":false,"o3":false,"si":0,"m12":0},
+      {"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0}
+    ]
+  },
+  "15": {
+    "n": "Checkout",
+    "mainseg": 0,
+    "seg": [
+      {"id":0,"start":0,"stop":9999,"grp":1,"spc":0,"of":0,"on":true,"frz":false,"bri":255,"cct":127,"set":0,"n":"","col":[[255,220,0],[0,0,0],[0,0,0]],"fx":0,"sx":128,"ix":128,"pal":0,"c1":128,"c2":128,"c3":16,"sel":true,"rev":false,"mi":false,"o1":false,"o2":false,"o3":false,"si":0,"m12":0},
+      {"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0}
+    ]
+  },
+  "16": {
+    "n": "High Finish",
+    "mainseg": 0,
+    "seg": [
+      {"id":0,"start":0,"stop":9999,"grp":1,"spc":0,"of":0,"on":true,"frz":false,"bri":255,"cct":127,"set":0,"n":"","col":[[255,165,0],[255,80,0],[0,0,0]],"fx":23,"sx":200,"ix":200,"pal":0,"c1":128,"c2":128,"c3":16,"sel":true,"rev":false,"mi":false,"o1":false,"o2":false,"o3":false,"si":0,"m12":0},
+      {"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0}
+    ]
+  },
+  "17": {
+    "n": "Bull",
+    "mainseg": 0,
+    "seg": [
+      {"id":0,"start":0,"stop":9999,"grp":1,"spc":0,"of":0,"on":true,"frz":false,"bri":255,"cct":127,"set":0,"n":"","col":[[255,255,255],[255,200,0],[0,0,0]],"fx":28,"sx":255,"ix":255,"pal":0,"c1":128,"c2":128,"c3":16,"sel":true,"rev":false,"mi":false,"o1":false,"o2":false,"o3":false,"si":0,"m12":0},
+      {"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0}
+    ]
+  },
+  "18": {
+    "n": "Sleep",
+    "mainseg": 0,
+    "seg": [
+      {"id":0,"start":0,"stop":9999,"grp":1,"spc":0,"of":0,"on":true,"frz":false,"bri":80,"cct":127,"set":0,"n":"","col":[[0,50,150],[0,0,0],[0,0,0]],"fx":2,"sx":30,"ix":100,"pal":0,"c1":128,"c2":128,"c3":16,"sel":true,"rev":false,"mi":false,"o1":false,"o2":false,"o3":false,"si":0,"m12":0},
+      {"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0},{"stop":0}
+    ]
+  }
+}

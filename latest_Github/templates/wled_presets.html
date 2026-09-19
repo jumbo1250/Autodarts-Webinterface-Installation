@@ -28,7 +28,8 @@ Provided "as is", without warranty.
       apiLoadUrl: {{ url_for('api_wled_presets_load')|tojson }},
       apiSaveUrl: {{ url_for('api_wled_presets_save')|tojson }},
       apiSendUrl: {{ url_for('api_wled_presets_send')|tojson }},
-      apiDeleteUrl: {{ url_for('api_wled_presets_delete')|tojson }}
+      apiDeleteUrl: {{ url_for('api_wled_presets_delete')|tojson }},
+      apiUploadDefaultsUrl: {{ url_for('api_wled_presets_upload_defaults')|tojson }}
     };
   </script>
   <script src="{{ url_for('static', filename='js/wled_presets.js') }}"></script>
@@ -104,6 +105,7 @@ Provided "as is", without warranty.
             <button id="typeInfoBtn" class="secondary" type="button" title="Info" aria-label="Info">ⓘ</button>
             <button id="addBtn" class="primary" data-key="wled_presets.add">＋ Hinzufügen</button>
             <button id="loadBtn" class="secondary" data-key="wled_presets.load_current">Aktuelle Einstellungen laden</button>
+            <button id="loadDefaultsBtn" class="secondary" data-key="wled_presets.load_defaults">⚡ Standard laden</button>
             <button id="expertBtn" class="secondary" type="button" data-key="wled_presets.expert_show">Spezialargumente anzeigen</button>
             <button id="debugBtn" class="secondary" data-key="wled_presets.show_debug">🐞 Debug anzeigen</button>
             <button id="clearBtn" class="warn" style="display:none" data-key="wled_presets.clear_all">Alles leeren</button>
@@ -186,6 +188,45 @@ Provided "as is", without warranty.
           <button class="secondary" id="visualConfigSave" type="button" data-key="wled_presets.save_entry">Speichern</button>
           <button class="primary" id="visualConfigSend" type="button" data-key="wled_presets.save_wled_preset">Speichern/Senden</button>
           <button class="danger" id="visualConfigDelete" type="button" data-key="wled_presets.delete">Löschen</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="wledDefaultsModal" class="modal-backdrop" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="wledDefaultsTitle" style="max-width:480px">
+      <div class="modal-head">
+        <strong id="wledDefaultsTitle" data-key="wled_presets.defaults_modal.title">Standard-Presets laden</strong>
+        <button id="wledDefaultsClose" class="secondary" type="button" aria-label="Close">×</button>
+      </div>
+      <div class="modal-body">
+        <p data-key="wled_presets.defaults_modal.desc">Lädt 18 fertige Standard-Presets direkt auf den WLED-Controller und trägt die passenden Argumente in die start-custom.sh ein. Der WLED startet danach automatisch neu.</p>
+        <div class="info" style="margin:12px 0" data-key="wled_presets.defaults_modal.info">Bestehende Presets auf WLED werden überschrieben. Du kannst die Farben danach jederzeit direkt im WLED-Interface anpassen.</div>
+        <table style="width:100%;font-size:0.85em;margin-bottom:14px;border-collapse:collapse">
+          <tbody>
+            <tr><td style="padding:2px 6px;opacity:.7">1–6</td><td style="padding:2px 6px">Spieler 1–6 (statische Farben)</td></tr>
+            <tr><td style="padding:2px 6px;opacity:.7">7</td><td style="padding:2px 6px">Leg gewonnen – grüner Sweep</td></tr>
+            <tr><td style="padding:2px 6px;opacity:.7">8</td><td style="padding:2px 6px">Match gewonnen – zweifarbig</td></tr>
+            <tr><td style="padding:2px 6px;opacity:.7">9</td><td style="padding:2px 6px">Busted – Feuer-Effekt</td></tr>
+            <tr><td style="padding:2px 6px;opacity:.7">10</td><td style="padding:2px 6px">180! – Doppelanimation</td></tr>
+            <tr><td style="padding:2px 6px;opacity:.7">11–12</td><td style="padding:2px 6px">Spieler beigetreten / verlassen</td></tr>
+            <tr><td style="padding:2px 6px;opacity:.7">13–15</td><td style="padding:2px 6px">Board stop / Kalibrierung / Checkout</td></tr>
+            <tr><td style="padding:2px 6px;opacity:.7">16</td><td style="padding:2px 6px">High Finish – Gold Running Lights</td></tr>
+            <tr><td style="padding:2px 6px;opacity:.7">17</td><td style="padding:2px 6px">Bull – weißes Sparkle</td></tr>
+            <tr><td style="padding:2px 6px;opacity:.7">18</td><td style="padding:2px 6px">Sleep – dim blaues Breathe</td></tr>
+          </tbody>
+        </table>
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px">
+          <label style="display:flex;align-items:center;gap:8px;font-weight:600">
+            <span data-key="wled_presets.defaults_modal.led_count">Anzahl LEDs:</span>
+            <input id="wledDefaultsLedCount" type="number" min="1" max="9000" step="1" value="145" style="width:90px;padding:6px 10px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--text)">
+          </label>
+          <span style="opacity:.6;font-size:.85em" data-key="wled_presets.defaults_modal.led_hint">Steht in WLED unter Config → LED Preferences</span>
+        </div>
+        <div id="wledDefaultsMsg" style="display:none;margin-bottom:12px"></div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <button id="wledDefaultsConfirm" class="primary" type="button" data-key="wled_presets.defaults_modal.confirm">⚡ Jetzt laden</button>
+          <button id="wledDefaultsCancel" class="secondary" type="button" data-key="wled_presets.defaults_modal.cancel">Abbrechen</button>
         </div>
       </div>
     </div>

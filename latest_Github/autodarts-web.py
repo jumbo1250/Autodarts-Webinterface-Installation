@@ -7978,6 +7978,102 @@ def api_wled_presets_save():
     }), status
 
 
+_WLED_DEFAULT_PRESET_ROWS = [
+    {"kind": "fixed",       "arg": "-IDE",    "typeId": "player1",          "label": "Spieler 1 / Player 1",                 "duration": False, "preset": 1,  "seconds": ""},
+    {"kind": "fixed",       "arg": "-IDE2",   "typeId": "player2",          "label": "Spieler 2 / Player 2",                 "duration": False, "preset": 2,  "seconds": ""},
+    {"kind": "fixed",       "arg": "-IDE3",   "typeId": "player3",          "label": "Spieler 3 / Player 3",                 "duration": False, "preset": 3,  "seconds": ""},
+    {"kind": "fixed",       "arg": "-IDE4",   "typeId": "player4",          "label": "Spieler 4 / Player 4",                 "duration": False, "preset": 4,  "seconds": ""},
+    {"kind": "fixed",       "arg": "-IDE5",   "typeId": "player5",          "label": "Spieler 5 / Player 5",                 "duration": False, "preset": 5,  "seconds": ""},
+    {"kind": "fixed",       "arg": "-IDE6",   "typeId": "player6",          "label": "Spieler 6 / Player 6",                 "duration": False, "preset": 6,  "seconds": ""},
+    {"kind": "fixed",       "arg": "-G",      "typeId": "leg",              "label": "Leg gewonnen / Game won",              "duration": True,  "preset": 7,  "seconds": "4"},
+    {"kind": "fixed",       "arg": "-M",      "typeId": "match",            "label": "Match gewonnen / Match won",           "duration": True,  "preset": 8,  "seconds": "5"},
+    {"kind": "fixed",       "arg": "-B",      "typeId": "busted",           "label": "Busted / Überworfen",                  "duration": True,  "preset": 9,  "seconds": "3"},
+    {"kind": "score_exact", "typeId": "score_exact", "label": "180! / Score 180", "score": 180,                              "duration": True,  "preset": 10, "seconds": "5"},
+    {"kind": "fixed",       "arg": "-PJ",     "typeId": "player_joined",    "label": "Spieler beigetreten / Player joined",  "duration": True,  "preset": 11, "seconds": "3"},
+    {"kind": "fixed",       "arg": "-PL",     "typeId": "player_left",      "label": "Spieler verlassen / Player left",      "duration": True,  "preset": 12, "seconds": "3"},
+    {"kind": "fixed",       "arg": "-BSE",    "typeId": "board_stop_effect","label": "Board gestoppt / Board stopped",       "duration": True,  "preset": 13, "seconds": ""},
+    {"kind": "fixed",       "arg": "-CE",     "typeId": "calibration",      "label": "Kalibrierung / Calibration",           "duration": True,  "preset": 14, "seconds": ""},
+    {"kind": "fixed",       "arg": "-TOE",    "typeId": "checkout",         "label": "Checkout / Takeout",                   "duration": True,  "preset": 15, "seconds": "3"},
+    {"kind": "fixed",       "arg": "-HF",     "typeId": "high_finish",      "label": "High Finish",                          "duration": True,  "preset": 16, "seconds": "4"},
+    {"kind": "fixed",       "arg": "-DSBULL", "typeId": "bull",             "label": "Bull / Bullseye",                      "duration": True,  "preset": 17, "seconds": "3"},
+    {"kind": "fixed",       "arg": "-SLE",    "typeId": "sleep_effect",     "label": "Sleep-Effekt / Sleep effect",          "duration": True,  "preset": 18, "seconds": ""},
+    {"kind": "option_bool", "arg": "-OFF",    "typeId": "wled_off",         "label": "Nach Match-Ende ausschalten",          "value": "1"},
+    {"kind": "option_bool", "arg": "-SOFF",   "typeId": "wled_off_at_start","label": "Beim Verbinden ausschalten",           "value": "1"},
+    {"kind": "option_int",  "arg": "-BRI",    "typeId": "brightness",       "label": "Effekt-Helligkeit",                    "value": "200"},
+    {"kind": "option_int",  "arg": "-HFO",    "typeId": "high_finish_on",   "label": "High-Finish ab Score",                 "value": "100"},
+]
+
+_WLED_DEFAULT_PRESETS_TEMPLATE = Path(__file__).parent / "configs" / "wled" / "presets_default.json"
+
+
+def _wled_replace_led_count(obj, led_count: int):
+    if isinstance(obj, dict):
+        return {k: (led_count if k == "stop" and v == 9999 else _wled_replace_led_count(v, led_count)) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_wled_replace_led_count(item, led_count) for item in obj]
+    return obj
+
+
+@app.route("/api/wled-presets/upload-defaults", methods=["POST"])
+def api_wled_presets_upload_defaults():
+    data = request.get_json(silent=True) or {}
+    try:
+        led_count = max(1, min(int(data.get("led_count") or 145), 9000))
+    except Exception:
+        led_count = 145
+    try:
+        slot = int(data.get("slot") or 0)
+    except Exception:
+        slot = 0
+    host_fallback = str(data.get("host") or "").strip()
+
+    ip, host, err = _resolve_wled_target_for_slot_or_host(slot, host_fallback)
+    if err:
+        return jsonify({"ok": False, "msg": err}), 400
+
+    if not _WLED_DEFAULT_PRESETS_TEMPLATE.exists():
+        return jsonify({"ok": False, "msg": "presets_default.json nicht gefunden."}), 500
+
+    try:
+        raw = _WLED_DEFAULT_PRESETS_TEMPLATE.read_text(encoding="utf-8")
+        preset_data = json.loads(raw)
+        preset_data = _wled_replace_led_count(preset_data, led_count)
+        preset_json = json.dumps(preset_data, separators=(",", ":"))
+    except Exception as e:
+        return jsonify({"ok": False, "msg": f"Template-Fehler: {e}"}), 500
+
+    try:
+        import requests as _req
+        upload_url = f"http://{ip}/upload"
+        files = {"file": ("/presets.json", preset_json.encode("utf-8"), "application/json")}
+        resp = _req.post(upload_url, files=files, timeout=12)
+        if not resp.ok:
+            return jsonify({"ok": False, "msg": f"Upload fehlgeschlagen (HTTP {resp.status_code}): {resp.text[:200]}"}), 500
+    except Exception as e:
+        return jsonify({"ok": False, "msg": f"Upload-Fehler: {e}"}), 500
+
+    try:
+        _wled_json_post(ip, {"rb": True}, "/json", timeout_s=3.0)
+    except Exception:
+        pass  # Reboot trennt Verbindung – das ist erwartet
+
+    sh_ok, sh_msg, saved_rows, weps_text = save_wled_presets_state(_WLED_DEFAULT_PRESET_ROWS)
+
+    return jsonify({
+        "ok": True,
+        "msg": t("wled.defaults_uploaded",
+                 "18 Standard-Presets auf {host} geladen ({led} LEDs). WLED startet neu.",
+                 host=host, led=led_count),
+        "led_count": led_count,
+        "host": host,
+        "ip": ip,
+        "sh_ok": sh_ok,
+        "sh_msg": sh_msg,
+        "rows": saved_rows,
+        "wepsText": weps_text,
+    })
+
+
 @app.route("/wled-open", methods=["GET"])
 def wled_open():
     # Slot 1 öffnen

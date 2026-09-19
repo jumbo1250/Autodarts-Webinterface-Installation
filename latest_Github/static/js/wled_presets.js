@@ -1443,6 +1443,91 @@ function initWledPresets(){
   targetsAllBtn.addEventListener('click', () => setAllTargets(true));
   targetsNoneBtn.addEventListener('click', () => setAllTargets(false));
 
+  // --- Standard-Presets laden ---
+  const loadDefaultsBtn = document.getElementById('loadDefaultsBtn');
+  const defaultsModal   = document.getElementById('wledDefaultsModal');
+  const defaultsClose   = document.getElementById('wledDefaultsClose');
+  const defaultsCancel  = document.getElementById('wledDefaultsCancel');
+  const defaultsConfirm = document.getElementById('wledDefaultsConfirm');
+  const defaultsLedCount= document.getElementById('wledDefaultsLedCount');
+  const defaultsMsg     = document.getElementById('wledDefaultsMsg');
+
+  function openDefaultsModal(){
+    if(defaultsMsg){ defaultsMsg.style.display = 'none'; defaultsMsg.textContent = ''; }
+    if(defaultsModal) defaultsModal.hidden = false;
+  }
+  function closeDefaultsModal(){
+    if(defaultsModal) defaultsModal.hidden = true;
+  }
+  function showDefaultsMsg(text, type){
+    if(!defaultsMsg) return;
+    defaultsMsg.textContent = text;
+    defaultsMsg.className = type === 'ok' ? 'ok' : (type === 'err' ? 'error' : 'warn');
+    defaultsMsg.style.display = 'block';
+  }
+
+  if(loadDefaultsBtn) loadDefaultsBtn.addEventListener('click', openDefaultsModal);
+  if(defaultsClose)   defaultsClose.addEventListener('click', closeDefaultsModal);
+  if(defaultsCancel)  defaultsCancel.addEventListener('click', closeDefaultsModal);
+  if(defaultsModal)   defaultsModal.addEventListener('click', (e) => { if(e.target === defaultsModal) closeDefaultsModal(); });
+
+  if(defaultsConfirm) defaultsConfirm.addEventListener('click', async () => {
+    const ledCount = parseInt((defaultsLedCount && defaultsLedCount.value) || '145', 10);
+    if(!ledCount || ledCount < 1 || ledCount > 9000){
+      showDefaultsMsg(t('wled_presets.defaults_modal.led_invalid', 'Ungültige LED-Anzahl (1–9000).'), 'err');
+      return;
+    }
+
+    const selectedTargets = getSelectedTargets();
+    if(!selectedTargets.length){
+      showDefaultsMsg(t('wled_presets.defaults_modal.no_target', 'Kein WLED-Controller ausgewählt.'), 'err');
+      return;
+    }
+
+    defaultsConfirm.disabled = true;
+    defaultsConfirm.textContent = t('wled_presets.defaults_modal.loading', '⏳ Wird geladen …');
+    showDefaultsMsg('', '');
+
+    let lastRows = null;
+    let lastWepsText = null;
+    const results = [];
+
+    for(const target of selectedTargets){
+      try {
+        const resp = await fetch(window.WLED_PRESETS_CONFIG.apiUploadDefaultsUrl, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ led_count: ledCount, host: target.host, slot: target.slot || 0 })
+        });
+        const json = await resp.json();
+        results.push({ host: target.host, ok: json.ok, msg: json.msg });
+        if(json.ok){
+          if(json.rows) lastRows = json.rows;
+          if(json.wepsText) lastWepsText = json.wepsText;
+        }
+      } catch(e) {
+        results.push({ host, ok: false, msg: String(e) });
+      }
+    }
+
+    defaultsConfirm.disabled = false;
+    defaultsConfirm.textContent = t('wled_presets.defaults_modal.confirm', '⚡ Jetzt laden');
+
+    const allOk = results.every(r => r.ok);
+    const msgLines = results.map(r => `${r.host}: ${r.msg}`).join('\n');
+
+    if(allOk){
+      if(lastRows){ state.rows = lastRows; }
+      if(lastWepsText){ state.wepsText = lastWepsText; }
+      render();
+      previewEl.value = buildPreview();
+      showDefaultsMsg(t('wled_presets.defaults_modal.success', '✓ Fertig! WLED startet neu. Tabelle wurde aktualisiert.'), 'ok');
+      setTimeout(closeDefaultsModal, 2200);
+    } else {
+      showDefaultsMsg(msgLines, 'err');
+    }
+  });
+
   populateTypeSelect();
   visualInit();
   setDebugOpen(false);
