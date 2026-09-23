@@ -8001,6 +8001,7 @@ _WLED_DEFAULT_PRESET_ROWS = [
     {"kind": "option_bool", "arg": "-SOFF",   "typeId": "wled_off_at_start","label": "Beim Verbinden ausschalten",           "value": "1"},
     {"kind": "option_int",  "arg": "-BRI",    "typeId": "brightness",       "label": "Effekt-Helligkeit",                    "value": "200"},
     {"kind": "option_int",  "arg": "-HFO",    "typeId": "high_finish_on",   "label": "High-Finish ab Score",                 "value": "100"},
+    {"kind": "option_int",  "arg": "-SLET",   "typeId": "sleep_timeout",    "label": "Sleep nach Sekunden",                  "value": "10"},
 ]
 
 _WLED_DEFAULT_PRESETS_TEMPLATE = Path(__file__).parent / "configs" / "wled" / "presets_default.json"

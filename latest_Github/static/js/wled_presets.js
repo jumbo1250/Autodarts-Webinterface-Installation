@@ -26,13 +26,13 @@ function initWledPresets(){
     {id:'busted', label:t('wled_presets.type.busted', 'Busted / Überworfen'), kind:'fixed', arg:'-B', duration:true, info:t('wled_presets.info.busted', 'Wird abgespielt, wenn ein Spieler überwirft.')},
     {id:'player_joined', label:t('wled_presets.type.player_joined', 'Spieler beigetreten / Player joined'), kind:'fixed', arg:'-PJ', duration:true, info:t('wled_presets.info.player_joined', 'Wird abgespielt, wenn ein Spieler beitritt.')},
     {id:'player_left', label:t('wled_presets.type.player_left', 'Spieler verlassen / Player left'), kind:'fixed', arg:'-PL', duration:true, info:t('wled_presets.info.player_left', 'Wird abgespielt, wenn ein Spieler die Lobby/das Match verlässt.')},
-    {id:'board_stop_effect', label:t('wled_presets.type.board_stop_effect', 'Board gestoppt / Board stopped'), kind:'fixed', arg:'-BSE', duration:true, info:t('wled_presets.info.board_stop_effect', 'Effekt, wenn das Board während des Spiels gestoppt wird.')},
-    {id:'calibration', label:t('wled_presets.type.calibration', 'Kalibrierung / Calibration'), kind:'fixed', arg:'-CE', duration:true, info:t('wled_presets.info.calibration', 'Effekt bei Kalibrierung.')},
+    {id:'board_stop_effect', label:t('wled_presets.type.board_stop_effect', 'Board gestoppt / Board stopped'), kind:'fixed', arg:'-BSE', duration:false, info:t('wled_presets.info.board_stop_effect', 'Effekt, wenn das Board während des Spiels gestoppt wird. Bleibt aktiv bis das Board wieder startet.')},
+    {id:'calibration', label:t('wled_presets.type.calibration', 'Kalibrierung / Calibration'), kind:'fixed', arg:'-CE', duration:false, info:t('wled_presets.info.calibration', 'Effekt bei Kalibrierung. Bleibt aktiv bis die Kalibrierung abgeschlossen ist.')},
     {id:'high_finish', label:t('wled_presets.type.high_finish', 'High Finish'), kind:'fixed', arg:'-HF', duration:true, info:t('wled_presets.info.high_finish', 'High-Finish-Effekt. Sinnvoll zusammen mit -HFO, z. B. High Finish ab 100.')},
     {id:'checkout', label:t('wled_presets.type.checkout', 'Checkout / Takeout'), kind:'fixed', arg:'-TOE', duration:true, info:t('wled_presets.info.checkout', 'Effekt, wenn Takeout/Checkout erkannt oder ausgelöst wird.')},
     {id:'bull', label:t('wled_presets.type.bull', 'Bull / Bullseye'), kind:'fixed', arg:'-DSBULL', duration:true, info:t('wled_presets.info.bull', 'Einzeldart-Effekt für Bull oder Bullseye. Benötigt Single-Dart-Events vom Caller.')},
     {id:'score0', label:t('wled_presets.type.score0', 'Score 0 / Score 0'), kind:'fixed', arg:'-S0', duration:true, info:t('wled_presets.info.score0', 'Effekt für Gesamtscore 0.')},
-    {id:'sleep_effect', label:t('wled_presets.type.sleep_effect', 'Sleep-Effekt / Sleep effect'), kind:'fixed', arg:'-SLE', duration:true, info:t('wled_presets.info.sleep_effect', 'Effekt nach Inaktivität. Timeout wird mit -SLET eingestellt.')},
+    {id:'sleep_effect', label:t('wled_presets.type.sleep_effect', 'Sleep-Effekt / Sleep effect'), kind:'fixed', arg:'-SLE', duration:false, info:t('wled_presets.info.sleep_effect', 'Effekt nach Inaktivität. Timeout wird mit -SLET eingestellt.')},
 
     {id:'score_exact', label:t('wled_presets.type.score_exact', 'Exakter Score / Exact score'), kind:'score_exact', duration:true, info:t('wled_presets.info.score_exact', 'Effekt für einen exakten Gesamtscore von 0 bis 180.')},
     {id:'score_range', label:t('wled_presets.type.score_range', 'Score-Bereich / Score range'), kind:'score_range', duration:true, info:t('wled_presets.info.score_range', 'Effekt für einen Gesamtscore-Bereich. Das Argument wird automatisch als -A1 bis -A12 vergeben.')},
@@ -1109,6 +1109,9 @@ function initWledPresets(){
     const sendBtn = document.getElementById('visualConfigSend');
     const saveBtn = document.getElementById('visualConfigSave');
     const deleteBtn = document.getElementById('visualConfigDelete');
+    const sletWrap = document.getElementById('visualConfigSletWrap');
+    const sletInput = document.getElementById('visualConfigSlet');
+    const isSleep = ctx.typeId === 'sleep_effect';
     const isOption = String(ctx.kind || '').startsWith('option_');
     const isRange = ctx.kind === 'score_range';
     const needsSeconds = visualContextNeedsSeconds(ctx, row);
@@ -1122,6 +1125,11 @@ function initWledPresets(){
     setVisualHidden(secondsWrap, !needsSeconds);
     setVisualHidden(valueWrap, !isOption);
     setVisualHidden(rangeWrap, !isRange);
+    setVisualHidden(sletWrap, !isSleep);
+    if(isSleep && sletInput){
+      const sletRow = state.rows.find(r => r.arg === '-SLET');
+      sletInput.value = sletRow ? String(sletRow.value || '300') : '300';
+    }
     if(isOption){
       const type = findType(ctx.typeId);
       valueInput.value = row ? String(row.value || '1') : String(type?.value || '1');
@@ -1169,6 +1177,15 @@ function initWledPresets(){
       const needsSeconds = visualContextNeedsSeconds(ctx, row);
       row.duration = !!needsSeconds;
       row.seconds = needsSeconds ? String(document.getElementById('visualConfigSeconds').value || '').trim() : '';
+      if(ctx.typeId === 'sleep_effect'){
+        const sletVal = String(document.getElementById('visualConfigSlet')?.value || '300').trim();
+        let sletRow = state.rows.find(r => r.arg === '-SLET');
+        if(sletRow){
+          sletRow.value = sletVal;
+        } else {
+          state.rows.push(normalizeRow({id: uid(), kind:'option_int', typeId:'sleep_timeout', label:'Sleep nach Sekunden', arg:'-SLET', value: sletVal}));
+        }
+      }
     }
     const trigger = send ? document.getElementById('visualConfigSend') : document.getElementById('visualConfigSave');
     const saved = await saveCurrentSettings({silent:true, triggerButton:trigger});
