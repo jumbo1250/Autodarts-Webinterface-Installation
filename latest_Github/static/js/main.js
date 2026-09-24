@@ -1188,13 +1188,35 @@ function initApConnectionNotice() {
   if (!notice || !okBtn) return;
 
   const hostname = window.location.hostname;
-  if (hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '::1') return;
+  const isLocalhost = hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '::1';
 
-  const storageKey = 'autodarts_ap_connection_notice_ok_v2';
+  const apStorageKey     = 'autodarts_ap_connection_notice_ok_v2';
+  const updateStorageKey = 'autodarts_wp_update_notice_session';
+  const updateAvailable  = notice.dataset.updateAvailable === 'true';
+  const updateVersion    = (notice.dataset.updateVersion  || '').trim();
+  const updateInstalled  = (notice.dataset.updateInstalled || '').trim();
 
-  try {
-    if (window.sessionStorage.getItem(storageKey) === '1') return;
-  } catch (e) {}
+  const showAp     = !isLocalhost && (() => { try { return window.sessionStorage.getItem(apStorageKey) !== '1'; } catch(e){ return true; } })();
+  const showUpdate = updateAvailable && (() => { try { return window.sessionStorage.getItem(updateStorageKey) !== '1'; } catch(e){ return true; } })();
+
+  if (!showAp && !showUpdate) return;
+
+  if (showAp) {
+    const sec = document.getElementById('apNoticeSection');
+    if (sec) sec.hidden = false;
+  }
+  if (showUpdate) {
+    const sec = document.getElementById('apUpdateSection');
+    const body = document.getElementById('apUpdateBody');
+    if (sec) sec.hidden = false;
+    if (body) {
+      const installed = updateInstalled || '?';
+      const latest    = updateVersion;
+      body.textContent = `Dein Webpanel (${installed}) kann auf Version ${latest} aktualisiert werden. Bitte update das Webpanel bei Gelegenheit über den Admin-Bereich.`;
+    }
+  }
+
+  const storageKey = apStorageKey;
 
   let lockedScrollY = 0;
 
@@ -1219,7 +1241,8 @@ function initApConnectionNotice() {
   }
 
   function closeNotice() {
-    try { window.sessionStorage.setItem(storageKey, '1'); } catch (e) {}
+    try { window.sessionStorage.setItem(apStorageKey, '1'); } catch (e) {}
+    if (showUpdate) { try { window.sessionStorage.setItem(updateStorageKey, '1'); } catch (e) {} }
     notice.classList.remove('is-visible');
     notice.hidden = true;
     notice.setAttribute('aria-hidden', 'true');

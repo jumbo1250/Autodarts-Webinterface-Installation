@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Autodarts Webpanel</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #111827;
+      color: #f3f4f6;
+      width: 280px;
+      padding: 16px;
+    }
+    h2 {
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      color: #9ca3af;
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+    .status-box {
+      background: #1f2937;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+      min-height: 48px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .dot.green  { background: #22c55e; }
+    .dot.yellow { background: #facc15; animation: pulse 1s infinite; }
+    .dot.red    { background: #ef4444; }
+    .dot.grey   { background: #6b7280; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+    .status-text { font-size: 13px; color: #d1d5db; line-height: 1.4; }
+    .url-text { font-size: 11px; color: #6b7280; word-break: break-all; margin-top: 2px; }
+
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 9px;
+      border: none;
+      border-radius: 7px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      transition: opacity 0.15s;
+    }
+    .btn:hover { opacity: 0.85; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-primary  { background: #2563eb; color: #fff; }
+    .btn-success  { background: #16a34a; color: #fff; }
+    .btn-ghost    { background: #374151; color: #d1d5db; }
+
+    .divider { border: none; border-top: 1px solid #374151; margin: 12px 0; }
+
+    label { font-size: 12px; color: #9ca3af; display: block; margin-bottom: 4px; }
+    .input-row { display: flex; gap: 6px; }
+    input[type=text] {
+      flex: 1;
+      background: #1f2937;
+      border: 1px solid #374151;
+      border-radius: 6px;
+      color: #f3f4f6;
+      font-size: 12px;
+      padding: 7px 8px;
+      outline: none;
+    }
+    input[type=text]:focus { border-color: #2563eb; }
+    .btn-sm {
+      padding: 7px 10px;
+      border: none;
+      border-radius: 6px;
+      background: #374151;
+      color: #d1d5db;
+      font-size: 12px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .btn-sm:hover { background: #4b5563; }
+    .hint { font-size: 11px; color: #6b7280; margin-top: 6px; }
+  </style>
+</head>
+<body>
+  <h2>Autodarts Webpanel</h2>
+
+  <div class="status-box">
+    <div class="dot grey" id="statusDot"></div>
+    <div>
+      <div class="status-text" id="statusText">Bereit</div>
+      <div class="url-text" id="statusUrl"></div>
+    </div>
+  </div>
+
+  <button class="btn btn-primary" id="btnSearch">🔍 Webpanel suchen &amp; öffnen</button>
+  <button class="btn btn-success" id="btnOpen" disabled>↗ Letzte URL öffnen</button>
+  <button class="btn btn-ghost" id="btnClear">🗑 Cache leeren &amp; neu suchen</button>
+
+  <hr class="divider">
+
+  <label>Manuelle IP / URL (Fallback)</label>
+  <div class="input-row">
+    <input type="text" id="manualUrl" placeholder="z.B. 192.168.1.50 oder http://...">
+    <button class="btn-sm" id="btnManual">Speichern</button>
+  </div>
+  <p class="hint">Wird gespeichert und beim nächsten Suchen zuerst versucht.</p>
+
+  <script src="popup.js"></script>
+</body>
+</html>
