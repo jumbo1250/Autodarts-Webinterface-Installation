@@ -775,9 +775,9 @@ systemctl restart "${WEB_SERVICE}" || {
   exit 1
 }
 
-if systemctl is-active --quiet autodarts-button-led.service 2>/dev/null; then
-  log "Restart autodarts-button-led.service"
-  systemctl restart autodarts-button-led.service || log "WARN: restart autodarts-button-led.service fehlgeschlagen"
+if systemctl is-active --quiet gpio-autodarts-button.service 2>/dev/null; then
+  log "Restart gpio-autodarts-button.service"
+  systemctl restart gpio-autodarts-button.service || log "WARN: restart gpio-autodarts-button.service fehlgeschlagen"
 fi
 
 

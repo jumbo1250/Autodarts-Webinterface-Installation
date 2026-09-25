@@ -106,11 +106,11 @@ def is_autodarts_active() -> bool:
     return result.stdout.strip() == "active"
 
 
-def is_boardmanager_reachable() -> bool:
-    """Prüfen ob der lokale Autodarts-Port 3180 antwortet."""
+def is_internet_reachable() -> bool:
+    """Internet-Zugang prüfen via Socket-Connect zu 8.8.8.8:53."""
     import socket
     try:
-        socket.create_connection(("127.0.0.1", 3180), timeout=1.5).close()
+        socket.create_connection(("8.8.8.8", 53), timeout=1.5).close()
         return True
     except OSError:
         return False
@@ -370,7 +370,7 @@ def led_manager():
         now = time.monotonic()
         if now - last_status_check >= STATUS_REFRESH_SECONDS:
             cached_server_ok = is_autodarts_active()
-            cached_net_ok = is_boardmanager_reachable()
+            cached_net_ok = is_internet_reachable()
             last_status_check = now
 
         server_ok = cached_server_ok

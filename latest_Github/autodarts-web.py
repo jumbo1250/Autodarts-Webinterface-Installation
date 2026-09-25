@@ -363,7 +363,7 @@ WEBPANEL_VERSION_FILE = os.environ.get("WEBPANEL_VERSION_FILE", "/var/lib/autoda
 
 # Wenn du die Version lieber direkt im Script pflegen willst: hier eintragen.
 # Leer lassen ("") um wieder die Version aus WEBPANEL_VERSION_FILE / version.txt zu lesen.
-WEBPANEL_HARDCODED_VERSION = "1.802"
+WEBPANEL_HARDCODED_VERSION = "1.803"
 
 
 # Remote (GitHub Raw) – kann per ENV überschrieben werden
@@ -1218,10 +1218,10 @@ def is_autodarts_active() -> bool:
 
 
 def is_boardmanager_reachable() -> bool:
-    """Prüfen ob der lokale Autodarts-Port 3180 antwortet."""
+    """Internet-Zugang prüfen via Socket-Connect zu 8.8.8.8:53."""
     import socket
     try:
-        socket.create_connection(("127.0.0.1", 3180), timeout=1.5).close()
+        socket.create_connection(("8.8.8.8", 53), timeout=1.5).close()
         return True
     except OSError:
         return False
