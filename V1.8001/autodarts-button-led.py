@@ -106,14 +106,27 @@ def is_autodarts_active() -> bool:
     return result.stdout.strip() == "active"
 
 
-def is_boardmanager_reachable() -> bool:
-    """Prüfen ob der lokale Autodarts-Port 3180 antwortet."""
-    import socket
-    try:
-        socket.create_connection(("127.0.0.1", 3180), timeout=1.5).close()
-        return True
-    except OSError:
+def is_network_connected() -> bool:
+    """
+    Prüfen, ob irgendein Netzwerk-Interface (WLAN oder LAN)
+    als 'connected' gemeldet wird.
+    """
+    result = subprocess.run(
+        ["nmcli", "-t", "-f", "DEVICE,STATE,TYPE", "device"],
+        capture_output=True,
+        text=True
+    )
+    if result.returncode != 0:
         return False
+
+    for line in result.stdout.splitlines():
+        parts = line.split(":")
+        if len(parts) < 3:
+            continue
+        dev, state, devtype = parts[0], parts[1], parts[2]
+        if devtype in ("wifi", "ethernet") and state == "connected":
+            return True
+    return False
 
 
 def get_main_pid() -> int:
@@ -370,14 +383,13 @@ def led_manager():
         now = time.monotonic()
         if now - last_status_check >= STATUS_REFRESH_SECONDS:
             cached_server_ok = is_autodarts_active()
-            cached_net_ok = is_boardmanager_reachable()
+            cached_net_ok = is_network_connected()
             last_status_check = now
 
         server_ok = cached_server_ok
         net_ok = cached_net_ok
 
-        if server_ok and net_ok:
-            # Service läuft + Port 3180 antwortet → alles OK
+        if server_ok:
             led.on()
             time.sleep(LED_ON_SLEEP)
         else:
@@ -387,14 +399,9 @@ def led_manager():
             else:
                 led.off()
 
-            if server_ok and not net_ok:
-                # Service läuft, Port 3180 antwortet nicht → langsam blinken
-                time.sleep(LED_BLINK_NO_NET)
-            elif net_ok:
-                # Port OK, aber Service aus → mittel blinken
+            if net_ok:
                 time.sleep(LED_BLINK_NO_SERVER)
             else:
-                # Service aus + Port nicht erreichbar → langsam blinken
                 time.sleep(LED_BLINK_NO_NET)
 
 

@@ -106,14 +106,18 @@
   <button class="btn btn-success" id="btnOpen" disabled>↗ Letzte URL öffnen</button>
   <button class="btn btn-ghost" id="btnClear">🗑 Cache leeren &amp; neu suchen</button>
 
+  <div id="debugBox" style="display:none;background:#0f172a;border:1px solid #1e3a5f;border-radius:6px;padding:8px 10px;margin-bottom:8px;font-size:11px;color:#64748b;line-height:1.6;">
+    <span id="debugText"></span>
+  </div>
+
   <hr class="divider">
 
-  <label>Manuelle IP / URL (Fallback)</label>
+  <label>Pi-IP manuell eintragen (einmalig)</label>
   <div class="input-row">
-    <input type="text" id="manualUrl" placeholder="z.B. 192.168.1.50 oder http://...">
+    <input type="text" id="manualUrl" placeholder="z.B. 192.168.1.50">
     <button class="btn-sm" id="btnManual">Speichern</button>
   </div>
-  <p class="hint">Wird gespeichert und beim nächsten Suchen zuerst versucht.</p>
+  <p class="hint">IP einmal speichern → nächstes Mal sofort gefunden.</p>
 
   <script src="popup.js"></script>
 </body>
