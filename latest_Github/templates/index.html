@@ -647,11 +647,10 @@ Provided "as is", without warranty.
 
 
 <div class="card" id="autodartsThemesCard">
-  <h2><span data-key="themes.title">5. Autodarts Themen</span></h2>
-  <p class="hint"><strong><span data-key="themes.browser_support_label">Wichtig:</span></strong> <span data-key="themes.browser_support_text">Diese Theme-Funktion ist nur mit Google Chrome und Chromium verwendbar.</span></p>
+  <h2><span data-key="themes.title">5. Autodarts Layout/Theme</span></h2>
 
   {% if autodarts_display_info.show_in_theme_card %}
-  <div id="autodartsDisplayBox" style="margin:14px 0 16px; padding:14px; border:1px solid #333; border-radius:12px; background:rgba(255,255,255,0.02);" hidden>
+  <div id="autodartsDisplayBox" style="margin:14px 0 16px; padding:14px; border:1px solid #333; border-radius:12px; background:rgba(255,255,255,0.02);">
     <div style="font-weight:700; margin-bottom:6px;"><span data-key="themes.display_section_title">Bildschirm-Auflösung am Raspberry</span></div>
     <p class="hint" style="margin-top:0;"><span data-key="themes.display_section_hint">Nur für den direkt am Raspberry angeschlossenen Monitor oder Fernseher. Die Auflösung wird passend zum aktuell laufenden TV-Modus gesetzt.</span></p>
 
@@ -691,61 +690,14 @@ Provided "as is", without warranty.
   </div>
   {% endif %}
 
-  <label for="autodartsThemeSelect" hidden><span data-key="themes.select_label">Theme auswählen</span></label>
-  <select id="autodartsThemeSelect" style="width:100%; margin-bottom:10px;" hidden>
-    <option value="default" data-author="" data-modes="" data-resolution="" data-preview-url="" {% if autodarts_theme_selected == 'default' %}selected{% endif %}>{{ t('themes.default_option', 'Default (aus)') }}</option>
-    {% for theme in autodarts_themes %}
-      <option value="{{ theme.filename }}"
-              data-author="{{ theme.author }}"
-              data-modes="{{ theme.modes }}"
-              data-resolution="{{ theme.resolution }}"
-              data-preview-url="{{ url_for('api_autodarts_theme_preview', filename=theme.preview_filename) if theme.has_preview else '' }}"
-              {% if autodarts_theme_selected == theme.filename %}selected{% endif %}>{{ theme.name }}</option>
-    {% endfor %}
-  </select>
-
-  {% set current_theme = (autodarts_themes | selectattr('filename', 'equalto', autodarts_theme_selected) | list | first) %}
-  <div style="margin-top:0; display:grid; grid-template-columns:auto 1fr; gap:6px 10px; align-items:start;" hidden>
-    <div class="hint"><span data-key="themes.current_author_label">Autor:</span></div>
-    <div class="hint"><strong id="autodartsThemeAuthor">{{ current_theme.author if current_theme and current_theme.author else t('themes.author_unknown', 'unbekannt') }}</strong></div>
-
-    <div class="hint"><span data-key="themes.current_modes_label">Spielmodi:</span></div>
-    <div class="hint"><strong id="autodartsThemeModes">{{ current_theme.modes if current_theme and current_theme.modes else t('themes.meta_unknown', 'nicht angegeben') }}</strong></div>
-
-    <div class="hint"><span data-key="themes.current_resolution_label">Auflösung:</span></div>
-    <div class="hint"><strong id="autodartsThemeResolution">{{ current_theme.resolution if current_theme and current_theme.resolution else t('themes.meta_unknown', 'nicht angegeben') }}</strong></div>
+  <div class="btn-row" style="margin-top:12px; gap:10px; flex-wrap:wrap;">
+    <a href="{{ autodarts_theme_store_url }}" target="_blank" rel="noopener noreferrer" class="btn btn-primary">
+      <span data-key="themes.install_chrome_btn">Layout Extension installieren Chrome/Edge/Chromium</span>
+    </a>
+    <a href="https://addons.mozilla.org/de/firefox/addon/autodarts-themes/" target="_blank" rel="noopener noreferrer" class="btn">
+      <span data-key="themes.install_firefox_btn">Layout Extension installieren Firefox</span>
+    </a>
   </div>
-
-  <div id="autodartsThemePreviewWrap" style="display:none;">
-    <div class="hint" style="margin-bottom:6px;"><span data-key="themes.preview_label">Vorschau:</span></div>
-    <img id="autodartsThemePreviewImg"
-         src="{{ url_for('api_autodarts_theme_preview', filename=current_theme.preview_filename) if current_theme and current_theme.has_preview else '' }}"
-         alt="Theme Vorschau"
-         style="display:block; width:100%; max-width:360px; border-radius:12px; border:1px solid #3a3a3a; box-shadow:0 10px 25px rgba(0,0,0,.25); cursor:{% if current_theme and current_theme.has_preview %}zoom-in{% else %}default{% endif %};">
-    <div class="hint" id="autodartsThemePreviewHint" style="margin-top:6px;"><span data-key="themes.preview_hint">Dateiname wie das Theme, z. B. theme.css und theme.png.</span></div>
-  </div>
-  <p class="hint" id="autodartsThemeNoPreview" style="display:none;"></p>
-
-  {% if not autodarts_themes %}
-    <p class="info-msg" hidden><span data-key="themes.no_themes">Im Theme-Ordner wurden noch keine .css-Dateien gefunden.</span></p>
-  {% endif %}
-
-  <div class="btn-row" style="margin-top:12px; flex-wrap:wrap;" hidden>
-    <button type="button" class="btn btn-primary" id="autodartsThemeSyncBtn"><span data-key="themes.sync_btn">Alle Themes mit Browser synchronisieren</span></button>
-    <button type="button" class="btn" id="autodartsThemeInfoBtn"><span data-key="themes.info_btn">Info</span></button>
-  </div>
-  <p class="hint" style="margin-top:8px;" hidden><span data-key="themes.sync_hint">Alle Themes einmal mit der Browser-Extension synchronisieren. Die Theme-Auswahl erfolgt danach direkt auf Autodarts über das Auge – auch wenn der Raspberry-AP nicht erreichbar ist.</span></p>
-
-  <div class="btn-row" style="margin-top:8px;">
-    {% if autodarts_theme_store_url %}
-      <a href="{{ autodarts_theme_store_url }}" target="_blank" rel="noopener noreferrer" class="btn btn-small"><span data-key="themes.install_extension_btn">Themen Extension installieren</span></a>
-    {% else %}
-      <button type="button" class="btn btn-small btn-disabled" id="autodartsThemeStoreInfoBtn"><span data-key="themes.install_extension_btn">Themen Extension installieren</span></button>
-    {% endif %}
-  </div>
-  <p class="hint" hidden><span data-key="themes.install_hint">Mit der aktuellen Erweiterung werden die synchronisierten Themes direkt auf play.autodarts.io sowie play.autodarts.com über das Auge ausgewählt.</span></p>
-  <p class="hint" style="display:none;" id="autodartsThemeStoreHint"><span data-key="themes.store_missing_hint">Der Chrome-Web-Store-Link ist noch nicht hinterlegt.</span></p>
-  <p class="hint" id="autodartsThemeStatus" hidden></p>
 </div>
 
 <div class="card" id="autodartsToolsCard">
@@ -836,21 +788,6 @@ Provided "as is", without warranty.
   </p>
 </div>
 
-<div id="autodartsThemeModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.72); z-index:2500; align-items:center; justify-content:center; padding:18px;">
-  <div style="background:#1c1c1c; color:#f4f4f4; border:1px solid #333; border-radius:16px; width:min(560px, 96vw); box-shadow:0 24px 60px rgba(0,0,0,.45); overflow:hidden;">
-    <div style="padding:16px 18px; border-bottom:1px solid #333; display:flex; align-items:center; justify-content:space-between; gap:12px;">
-      <strong id="autodartsThemeModalTitle" style="font-size:1.05rem;">Info</strong>
-      <button type="button" id="autodartsThemeModalCloseX" class="btn btn-small">×</button>
-    </div>
-    <div style="padding:18px;">
-      <div id="autodartsThemeModalBody" style="white-space:pre-line; line-height:1.5;"></div>
-      <img id="autodartsThemeModalImage" alt="Theme Vorschau groß" style="display:none; margin-top:14px; width:100%; border-radius:12px; border:1px solid #333;">
-    </div>
-    <div style="padding:0 18px 18px; display:flex; justify-content:flex-end;">
-      <button type="button" id="autodartsThemeModalCloseBtn" class="btn btn-primary"><span data-key="common.close_btn">Schließen</span></button>
-    </div>
-  </div>
-</div>
 
     <div id="admin"></div>
     <div class="card">

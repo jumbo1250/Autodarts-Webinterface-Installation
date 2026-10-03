@@ -2259,7 +2259,9 @@ def start_webpanel_update_background(mode: str = "update", allow_self_update: bo
             f"if curl -fsSL --retry 2 --connect-timeout 5 --max-time 30 {shlex.quote(remote_updater_url)} -o \"$tmp\"; then "
             "sed -i 's/\r$//' \"$tmp\" || true; "
             "sed -i '1s/^\xEF\xBB\xBF//' \"$tmp\" || true; "
+            "if bash -n \"$tmp\" 2>/dev/null; then "
             f"sudo -n install -m 755 \"$tmp\" {shlex.quote(WEBPANEL_UPDATE_SCRIPT)}; "
+            "fi; "
             "fi; "
             "rm -f \"$tmp\" || true; "
         )
@@ -2269,7 +2271,7 @@ def start_webpanel_update_background(mode: str = "update", allow_self_update: bo
         f"lock={shlex.quote(lock_path)}; "
         f"{self_update_cmd}"
         "rc=0; "
-        f"sudo -n {shlex.quote(WEBPANEL_UPDATE_SCRIPT)} {mode_arg} >> {shlex.quote(WEBPANEL_UPDATE_LOG)} 2>&1 || rc=$?; "
+        f"(exec sudo -n {shlex.quote(WEBPANEL_UPDATE_SCRIPT)} {mode_arg} >> {shlex.quote(WEBPANEL_UPDATE_LOG)} 2>&1) || rc=$?; "
         f"printf '%s\n' \"$rc\" > {shlex.quote(result_path)} || true; "
         'rm -f "$lock" || true; '
         "exit $rc"
@@ -2300,7 +2302,7 @@ def start_webpanel_update_background(mode: str = "update", allow_self_update: bo
             "nohup /bin/bash -lc "
             + shlex.quote(
                 f"{self_update_cmd}"
-                f"rc=0; sudo -n {WEBPANEL_UPDATE_SCRIPT} {mode_arg} >> {WEBPANEL_UPDATE_LOG} 2>&1 || rc=$?; "
+                f"rc=0; (exec sudo -n {WEBPANEL_UPDATE_SCRIPT} {mode_arg} >> {WEBPANEL_UPDATE_LOG} 2>&1) || rc=$?; "
                 f"printf '%s\n' \"$rc\" > {shlex.quote(result_path)} || true; "
                 f"rm -f {shlex.quote(lock_path)} || true; exit $rc"
             )
