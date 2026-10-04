@@ -270,13 +270,17 @@
       });
       const data = await response.json();
       const ok = !!(response.ok && data && data.ok);
+      const baseMsg = (data && data.message) || (ok ? '' : (texts.applyFailed || 'Die Auflösung konnte nicht gesetzt werden.'));
+      const fullMsg = ok
+        ? baseMsg + (baseMsg ? ' — ' : '') + (texts.rebootWarning || 'Gilt nur bis zum nächsten Neustart.')
+        : baseMsg;
       if (data && data.display_info) {
-        setInfo(data.display_info, data.message || '', !ok);
+        setInfo(data.display_info, fullMsg, !ok);
       } else {
-        setStatus((data && data.message) || texts.applyFailed || 'Die Auflösung konnte nicht gesetzt werden.', !ok);
+        setStatus(fullMsg, !ok);
       }
       if (!ok) {
-        throw new Error((data && data.message) || texts.applyFailed || 'Die Auflösung konnte nicht gesetzt werden.');
+        throw new Error(baseMsg);
       }
     } catch (error) {
       console.error(error);
@@ -284,6 +288,30 @@
       if (!String((statusEl && statusEl.textContent) || '').trim()) {
         setStatus((error && error.message) || texts.networkError || 'Keine Verbindung zum Webpanel möglich.', true);
       }
+    }
+  }
+
+  async function openDisplaySettings() {
+    const texts = getTexts();
+    const hostname = window.location.hostname;
+    const isLocal = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+
+    if (!isLocal) {
+      alert(texts.fixRemoteHint || 'Dauerhaft einstellen geht nur direkt am Pi. Öffne dort die Systemeinstellungen → Bildschirm.');
+      return;
+    }
+
+    setStatus(texts.fixOpening || 'Systemeinstellungen werden geöffnet…', false);
+    try {
+      const response = await fetch(window.app_urls.api_autodarts_open_display_settings, {
+        method: 'POST',
+        headers: { 'Accept': 'application/json' }
+      });
+      const data = await response.json();
+      setStatus((data && data.message) || (data && data.ok ? (texts.fixOpened || 'Systemeinstellungen wurden am Pi geöffnet.') : (texts.fixFailed || 'Systemeinstellungen konnten nicht geöffnet werden.')), !(data && data.ok));
+    } catch (error) {
+      console.error(error);
+      setStatus(texts.fixFailed || 'Systemeinstellungen konnten nicht geöffnet werden.', true);
     }
   }
 
@@ -321,6 +349,11 @@
 
     if (backendInfoBtn) {
       backendInfoBtn.addEventListener('click', showBackendInfo);
+    }
+
+    const fixBtn = byId('autodartsDisplayFixBtn');
+    if (fixBtn) {
+      fixBtn.addEventListener('click', openDisplaySettings);
     }
 
     refreshDisplayInfo(false);

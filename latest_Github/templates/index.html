@@ -683,6 +683,7 @@ Provided "as is", without warranty.
       <div class="btn-row" style="margin-top:12px;">
         <button type="button" class="btn btn-primary" id="autodartsDisplayApplyBtn"><span data-key="themes.display_apply_btn">Auflösung übernehmen</span></button>
         <button type="button" class="btn" id="autodartsDisplayRefreshBtn"><span data-key="themes.display_refresh_btn">Liste neu laden</span></button>
+        <button type="button" class="btn btn-small" id="autodartsDisplayFixBtn"><span data-key="themes.display_fix_btn">Fix einstellen</span></button>
       </div>
     </div>
 
@@ -1257,6 +1258,7 @@ cp /var/log/pi_monitor_test_README.txt ~/
       api_autodarts_display_info: "{{ url_for('api_autodarts_display_info') }}",
       api_autodarts_display_mode: "{{ url_for('api_autodarts_display_mode') }}",
       api_autodarts_display_backend: "{{ url_for('api_autodarts_display_backend') }}",
+      api_autodarts_open_display_settings: "{{ url_for('api_autodarts_open_display_settings') }}",
       api_ap_client_internet_status: "{{ url_for('api_ap_client_internet_status') }}",
       api_extensions_v2_status: "{{ url_for('api_extensions_v2_status') }}",
       api_extensions_v2_install: "{{ url_for('api_extensions_v2_install') }}",
@@ -1290,7 +1292,13 @@ cp /var/log/pi_monitor_test_README.txt ~/
       "backendInfoTitle": t("themes.display_backend_info_title", "Info TV-Modus"),
       "backendInfoBody": t("themes.display_backend_info_body", "Bevorzugt bitte immer den neuen TV Modus verwenden. Sollte das Bild schwarz bleiben, flackern oder ein alter Fernseher Probleme machen, bitte auf den alten TV Modus wechseln. Wichtig: Nach dem Umschalten ist ein Neustart notwendig."),
       "noOutputs": t("themes.display_no_outputs", "Keine aktiven Bildschirm-Ausgänge gefunden."),
-      "unavailable": t("themes.display_no_monitor", "Es wurde kein aktiver Monitor am Raspberry erkannt.")
+      "unavailable": t("themes.display_no_monitor", "Es wurde kein aktiver Monitor am Raspberry erkannt."),
+      "rebootWarning": t("themes.display_reboot_warning", "Gilt nur bis zum nächsten Neustart."),
+      "fixBtn": t("themes.display_fix_btn", "Fix einstellen"),
+      "fixRemoteHint": t("themes.display_fix_remote_hint", "Dauerhaft einstellen geht nur direkt am Pi. Öffne dort die Systemeinstellungen → Bildschirm."),
+      "fixOpening": t("themes.display_fix_opening", "Systemeinstellungen werden geöffnet…"),
+      "fixOpened": t("themes.display_fix_opened", "Systemeinstellungen wurden am Pi geöffnet."),
+      "fixFailed": t("themes.display_fix_failed", "Systemeinstellungen konnten nicht geöffnet werden.")
     } | tojson }};
 
     window.autodartsThemeTexts = {{ {

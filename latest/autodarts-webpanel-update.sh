@@ -204,6 +204,30 @@ DROPIN
   log "OK: darts-caller boot-stabilize Drop-in installiert: ${conf_file}"
 }
 
+ensure_display_tools() {
+  local pkgs=("lxrandr" "wdisplays")
+  local need_install=()
+
+  for pkg in "${pkgs[@]}"; do
+    if ! dpkg -l "$pkg" 2>/dev/null | grep -q "^ii"; then
+      need_install+=("$pkg")
+    fi
+  done
+
+  if [[ ${#need_install[@]} -eq 0 ]]; then
+    log "INFO: Display-Tools bereits vorhanden (lxrandr, wdisplays)"
+    return 0
+  fi
+
+  log "INFO: Installiere fehlende Display-Tools: ${need_install[*]}"
+  if apt-get install -y "${need_install[@]}" >>"${LOG_FILE}" 2>&1; then
+    log "OK: Display-Tools installiert: ${need_install[*]}"
+  else
+    log "WARN: Display-Tools konnten nicht installiert werden -> Update läuft weiter"
+  fi
+  return 0
+}
+
 run_ap_internet_fix_if_present() {
   local fix_script="${BIN_DIR}/autodarts-ap-internet-fix.sh"
   if [[ ! -f "$fix_script" ]]; then
@@ -762,6 +786,7 @@ run_optional_desktop_migration_if_downloaded
 install_autodarts_update_fallback
 run_extensions_service_repair_if_present
 install_caller_boot_stabilize
+ensure_display_tools
 
 if [[ "${UPDATED_ANY}" != "1" ]]; then
   log "Kein Updatepaket installiert."

@@ -7153,6 +7153,36 @@ def api_autodarts_display_backend():
     return _json_nocache(result, status)
 
 
+@app.route("/api/autodarts/open-display-settings", methods=["POST"])
+def api_autodarts_open_display_settings():
+    probe = _probe_display_session()
+    if not probe.get("ok"):
+        return _json_nocache({"ok": False, "message": t("themes.display_no_session", "Keine passende Desktop-Sitzung gefunden.")})
+
+    backend = str(probe.get("backend") or "x11").lower()
+    user = str(probe.get("user") or "").strip()
+
+    if backend == "wayland":
+        candidates = ["wdisplays", "lxrandr", "arandr"]
+        env = _build_display_env(user, wayland_display=str(probe.get("wayland_display") or "wayland-1"))
+    else:
+        candidates = ["lxrandr", "arandr", "xfce4-display-settings"]
+        env = _build_display_env(user, display_name=str(probe.get("display") or ":0"))
+
+    for tool in candidates:
+        tool_path = shutil.which(tool)
+        if not tool_path:
+            continue
+        try:
+            cmd = (["sudo", "-u", user, "--", tool_path] if user else [tool_path])
+            subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return _json_nocache({"ok": True, "message": t("themes.display_fix_opened", "Systemeinstellungen wurden am Pi geöffnet.")})
+        except Exception:
+            continue
+
+    return _json_nocache({"ok": False, "message": t("themes.display_fix_failed", "Systemeinstellungen konnten nicht geöffnet werden.")})
+
+
 @app.route("/api/autodarts-theme/preview/<path:filename>", methods=["GET"])
 def api_autodarts_theme_preview(filename):
     safe_name = os.path.basename(str(filename or "").strip())
