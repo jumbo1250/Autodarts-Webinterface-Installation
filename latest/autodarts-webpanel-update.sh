@@ -42,6 +42,7 @@ FILES=(
   "fix_ap_internet_sharing_v3.sh|${BIN_DIR}/autodarts-ap-internet-fix.sh"
   # OPTIONAL: Desktop-Migration + Wallpaper. Fehlen sie im Repo -> sauberer Skip.
   "autodarts-desktop-migration.sh|${BIN_DIR}/autodarts-desktop-migration.sh"
+  "autodarts-poweroff-shortcut.sh|${BIN_DIR}/autodarts-poweroff-shortcut.sh"
   "Wallpaper.png|${DATA_DIR}/Wallpaper.png"
   "autodarts.png|${DATA_DIR}/autodarts.png"
   # OPTIONAL: Updater selbst (wenn nicht vorhanden -> skip)
@@ -177,6 +178,30 @@ run_optional_desktop_migration_if_downloaded() {
     log "WARN: Desktop-Migrations-Hook meldete Fehler (exit=${rc}) -> Webpanel-Update läuft weiter"
   fi
 
+  return 0
+}
+
+run_poweroff_shortcut_if_downloaded() {
+  local remote_name="autodarts-poweroff-shortcut.sh"
+  local script="${BIN_DIR}/${remote_name}"
+
+  if [[ -z "${DOWNLOADED[${remote_name}]+x}" ]]; then
+    log "INFO: Poweroff-Shortcut-Script nicht geladen -> skip"
+    return 0
+  fi
+
+  if [[ ! -f "$script" ]]; then
+    log "WARN: Poweroff-Shortcut-Script fehlt lokal -> skip"
+    return 0
+  fi
+
+  chmod 755 "$script" 2>/dev/null || true
+  log "Erstelle Poweroff-Desktop-Shortcut"
+  if bash "$script" >>"${LOG_FILE}" 2>&1; then
+    log "OK: Poweroff-Shortcut abgeschlossen"
+  else
+    log "WARN: Poweroff-Shortcut meldete Fehler -> Update läuft weiter"
+  fi
   return 0
 }
 
@@ -783,6 +808,7 @@ chmod 777 "${BIN_DIR}" "${DATA_DIR}" "${STATE_DIR}" 2>/dev/null || true
 # 4) Optionalen Migrations-Hook nur dann ausführen, wenn er in diesem Update
 #    tatsächlich von GitHub geladen wurde. Fehlt die Datei -> keinerlei Änderung.
 run_optional_desktop_migration_if_downloaded
+run_poweroff_shortcut_if_downloaded
 install_autodarts_update_fallback
 run_extensions_service_repair_if_present
 install_caller_boot_stabilize
