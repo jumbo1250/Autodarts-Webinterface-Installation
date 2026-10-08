@@ -7356,7 +7356,8 @@ def index():
     update_check = load_update_check()
     webpanel_version = get_webpanel_version()
     webpanel_check = load_webpanel_update_check()
-    webpanel_update_available = bool(webpanel_version and webpanel_check.get('latest') and webpanel_version != webpanel_check.get('latest'))
+    _wc = SETTINGS.get("webpanel_channel", "stable")
+    webpanel_update_available = (_wc == "beta") or bool(webpanel_version and webpanel_check.get('latest') and webpanel_version != webpanel_check.get('latest'))
     webpanel_state = load_webpanel_update_state() if admin_unlocked else {}
     webpanel_log_tail = tail_file(WEBPANEL_UPDATE_LOG, n=25, max_chars=3500) if admin_unlocked else ""
     uvc_backup_info = get_uvc_backup_info() if admin_unlocked else {}
