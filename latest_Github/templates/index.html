@@ -94,6 +94,18 @@ Provided "as is", without warranty.
         {% if webpanel_check.latest %}<span data-key="quick_admin.last_check_label">· letzter Check:</span> <strong id="webpanelLatestVersion">{{ webpanel_check.latest }}</strong>{% endif %}
       </div>
       <div id="webpanelUpdateStatus" class="hint" style="margin-top:6px; display:none;" aria-live="polite"></div>
+      <div style="margin-top:8px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+        <span class="hint" style="margin:0;" data-key="admin.webpanel_channel_label">Update-Kanal:</span>
+        <label style="display:flex; align-items:center; gap:6px; cursor:pointer; user-select:none;">
+          <input type="checkbox" id="webpanelBetaToggle"
+                 {% if webpanel_channel == 'beta' %}checked{% endif %}
+                 style="width:16px; height:16px; cursor:pointer; accent-color:#ffb347;">
+          <span id="webpanelBetaLabel" class="hint" style="margin:0; color:{% if webpanel_channel == 'beta' %}#ffb347{% else %}#aaa{% endif %};">
+            {% if webpanel_channel == 'beta' %}<span data-key="admin.webpanel_channel_beta">Beta</span>{% else %}<span data-key="admin.webpanel_channel_stable">Stable</span>{% endif %}
+          </span>
+        </label>
+        <span id="webpanelChannelStatus" class="hint" style="margin:0;"></span>
+      </div>
       {% if pi5_headless_info and pi5_headless_info.show %}
         <div class="qa-headless">
           <div class="qa-headless-title"><span data-key="pi5_headless.quick_title">Raspberry Pi 5 Headless</span></div>
@@ -319,7 +331,6 @@ Provided "as is", without warranty.
         </div>
 
         <div class="btn-row">
-          <a href="{{ darts_url }}" target="_blank" class="btn btn-primary"><span data-key="account.manager_btn">Dartscheiben-Manager öffnen</span></a>
           {% if autodarts_ttyd_running %}
             <a href="{{ darts_ttyd_url }}" target="_blank" class="btn"><span data-key="account.ttyd_btn">Terminal öffnen</span></a>
           {% endif %}
@@ -378,52 +389,6 @@ Provided "as is", without warranty.
         </div>
         {% endif %}
       </div>
-      <div id="ad-version"></div>
-      <details style="margin-top:12px;" {% if open_adver %}open{% endif %}>
-        <summary style="cursor:pointer; font-weight:700;"><span data-key="account.version_summary">Autodarts – Version &amp; Auto-Update</span></summary>
-        <div style="margin-top:10px;">
-          <div class="hint" style="margin-top:-6px;">
-            <span data-key="account.version_hint">Wenn ein Update Probleme macht, kannst du hier schnell auf eine stabile Version wechseln oder gezielt die aktuellste installieren.
-            Auto-Update bleibt dabei standardmäßig AUS (du kannst es unten jederzeit einschalten).</span>
-          </div>
-
-          <div style="margin-top:10px;">
-            <span data-key="common.installed_label">Installiert:</span> <strong>{{ autodarts_version or 'unbekannt' }}</strong>
-            &nbsp;•&nbsp; <span data-key="account.stable_label">Stabil:</span> <strong>{{ autodarts_stable_version or '—' }}</strong>
-            &nbsp;•&nbsp; <span data-key="account.online_label">Aktuell (online):</span> <strong>{{ autodarts_latest_online or 'unbekannt' }}</strong>
-            &nbsp;•&nbsp; <span data-key="account.last_label">Zuletzt:</span> <strong>{{ autodarts_last_version or '—' }}</strong>
-          </div>
-
-          {% if msg and open_adver %}
-            <p class="info-msg" style="margin-top:10px;">{{ msg }}</p>
-          {% endif %}
-
-          <div class="btn-row" style="margin-top:10px; align-items:center; gap:10px; flex-wrap:wrap;">
-            <form method="post" action="{{ url_for('autodarts_install_version') }}" style="margin:0;"
-                  data-confirm-key="confirm.autodarts_switch_stable"
-                  onsubmit="return confirm('Auf stabile Version wechseln?\n\nHinweis: Das kann ein paar Minuten dauern und Autodarts neu starten.');">
-              <input type="hidden" name="version" value="stable">
-              <button type="submit" class="btn btn-primary" {% if not autodarts_stable_version %}disabled title="Keine stabile Version in AUTODARTS_VERSION_MENU hinterlegt." data-title-key="account.stable_version_missing_title"{% endif %}><span data-key="account.switch_stable_btn">Auf stabile Version wechseln</span></button>
-            </form>
-
-            <form method="post" action="{{ url_for('autodarts_install_version') }}" style="margin:0; display:flex; gap:8px; align-items:center; flex-wrap:wrap;"
-                  data-confirm-key="confirm.autodarts_install_selected"
-                  onsubmit="return confirm('Gewählte Version installieren?\n\nHinweis: Das kann ein paar Minuten dauern und Autodarts neu starten.');">
-              <select name="version" style="min-width:220px;">
-                {% for opt in autodarts_versions_choices %}
-                  <option value="{{ opt.value }}">{{ opt.label }}</option>
-                {% endfor %}
-              </select>
-              <button type="submit" class="btn"><span data-key="account.install_version_btn">Version installieren</span></button>
-            </form>
-          </div>
-
-          <div class="hint" style="margin-top:8px;">
-            Tipp: Für Freunde/Familie ist „Stabil“ die sichere Wahl. „Aktuellste“ nimmt immer die neueste Online-Version{% if autodarts_latest_online %} (aktuell: {{ autodarts_latest_online }}){% endif %}.
-          </div>
-
-        </div>
-      </details>
     </div>
 
     <div class="card">
@@ -994,19 +959,6 @@ Provided "as is", without warranty.
               <span data-key="common.check_update_tip">Tipp: Erst „Update prüfen“, dann nur bei Bedarf aktualisieren.</span>
             {% endif %}
           </p>
-
-          <div style="margin-top:10px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-            <span class="hint" style="margin:0;" data-key="admin.webpanel_channel_label">Update-Kanal:</span>
-            <label style="display:flex; align-items:center; gap:6px; cursor:pointer; user-select:none;">
-              <input type="checkbox" id="webpanelBetaToggle"
-                     {% if webpanel_channel == 'beta' %}checked{% endif %}
-                     style="width:18px; height:18px; cursor:pointer; accent-color:#ffb347;">
-              <span id="webpanelBetaLabel" class="hint" style="margin:0; color:{% if webpanel_channel == 'beta' %}#ffb347{% else %}#aaa{% endif %};">
-                {% if webpanel_channel == 'beta' %}<span data-key="admin.webpanel_channel_beta">Beta</span>{% else %}<span data-key="admin.webpanel_channel_stable">Stable</span>{% endif %}
-              </span>
-            </label>
-            <span id="webpanelChannelStatus" class="hint" style="margin:0;"></span>
-          </div>
 
           {% if webpanel_state.started %}
             <p class="hint" style="margin-top:8px;">
