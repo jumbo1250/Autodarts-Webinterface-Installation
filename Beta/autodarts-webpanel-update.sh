@@ -219,7 +219,7 @@ UPDATED_ANY=0
 # 1) Einzeldateien laden
 for entry in "${FILES[@]}"; do
   IFS="|" read -r src dst <<< "${entry}"
-  local out="${TMP_DIR}/${src}"
+  out="${TMP_DIR}/${src}"
   rm -f "${out}" 2>/dev/null || true
   log "Download: ${src}"
   http_code="$(curl -sSL --retry 2 --connect-timeout 5 --max-time 60 -o "${out}" -w "%{http_code}" "${BASE_URL}/${src}" || true)"
