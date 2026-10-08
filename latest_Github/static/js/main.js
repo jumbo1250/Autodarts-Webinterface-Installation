@@ -19,6 +19,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initPiMonitorUi(appData);
   initApClientInternetUi(appUrls);
   initWebpanelUpdateUi(appUrls);
+  initWebpanelChannelToggle(appUrls);
   initPlayercamPipewireUi();
   initVideoModalUi();
   initApConnectionNotice();
@@ -1267,4 +1268,51 @@ function initApConnectionNotice() {
   okBtn.addEventListener('click', closeNotice);
 
   try { okBtn.focus({ preventScroll: true }); } catch (e) { try { okBtn.focus(); } catch (_e) {} }
+}
+
+
+/* =========================================================
+   Webpanel Update-Kanal Toggle (Stable / Beta)
+   ========================================================= */
+function initWebpanelChannelToggle(appUrls) {
+  const toggle = document.getElementById('webpanelBetaToggle');
+  const label = document.getElementById('webpanelBetaLabel');
+  const status = document.getElementById('webpanelChannelStatus');
+  const url = appUrls && appUrls.api_webpanel_channel;
+
+  if (!toggle || !url) return;
+
+  toggle.addEventListener('change', async function () {
+    const isBeta = toggle.checked;
+    const channel = isBeta ? 'beta' : 'stable';
+
+    toggle.disabled = true;
+    if (status) status.textContent = tr('admin.webpanel_channel_saving', 'Wird gespeichert…');
+
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ channel })
+      });
+      const data = await res.json();
+      if (data && data.ok) {
+        if (label) {
+          label.style.color = isBeta ? '#ffb347' : '#aaa';
+          label.textContent = isBeta
+            ? tr('admin.webpanel_channel_beta', 'Beta')
+            : tr('admin.webpanel_channel_stable', 'Stable');
+        }
+        if (status) { status.textContent = data.message || ''; status.style.color = '#6be26b'; }
+      } else {
+        toggle.checked = !isBeta;
+        if (status) { status.textContent = (data && data.message) || tr('admin.webpanel_channel_error', 'Fehler beim Speichern.'); status.style.color = '#ff6b6b'; }
+      }
+    } catch (e) {
+      toggle.checked = !isBeta;
+      if (status) { status.textContent = tr('admin.webpanel_channel_error', 'Fehler beim Speichern.'); status.style.color = '#ff6b6b'; }
+    } finally {
+      toggle.disabled = false;
+    }
+  });
 }

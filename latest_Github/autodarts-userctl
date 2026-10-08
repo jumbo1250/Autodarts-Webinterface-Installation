@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# BUILD: AUTODARTS-USERCTL-20261008-01
+#
+# Wrapper: Steuert den Autodarts User-Service von Root-Prozessen aus.
+# Root-Kontext (Flask, button-led, updater) kann damit den systemd
+# User-Service des Users "peter" steuern, ohne direkt loginctl/sudo
+# auseinanderhalten zu müssen.
+#
+# Verwendung: autodarts-userctl {start|stop|restart|status|is-active|is-enabled}
+
+set -euo pipefail
+
+USER_NAME="${AUTODARTS_DESKTOP_USER:-peter}"
+ACTION="${1:-}"
+SERVICE="autodarts.service"
+
+if [[ -z "$ACTION" ]]; then
+    echo "Verwendung: autodarts-userctl {start|stop|restart|status|is-active|is-enabled}" >&2
+    exit 1
+fi
+
+case "$ACTION" in
+    start|stop|restart|status|is-active|is-enabled|enable|disable) ;;
+    *)
+        echo "Unbekannte Aktion: $ACTION" >&2
+        echo "Erlaubt: start stop restart status is-active is-enabled enable disable" >&2
+        exit 1
+        ;;
+esac
+
+USER_ID="$(id -u "$USER_NAME" 2>/dev/null || true)"
+if [[ -z "$USER_ID" ]]; then
+    echo "FEHLER: User '$USER_NAME' nicht gefunden." >&2
+    exit 1
+fi
+
+export XDG_RUNTIME_DIR="/run/user/${USER_ID}"
+
+# Methode 1: systemctl --user via machinectl (bevorzugt, funktioniert auch ohne aktive Login-Session)
+if command -v systemctl >/dev/null 2>&1 && systemctl --user -M "${USER_NAME}@.host" "$ACTION" "$SERVICE" 2>/dev/null; then
+    exit 0
+fi
+
+# Methode 2: sudo -u mit XDG_RUNTIME_DIR (Fallback)
+if sudo -n -u "$USER_NAME" \
+    XDG_RUNTIME_DIR="/run/user/${USER_ID}" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${USER_ID}/bus" \
+    systemctl --user "$ACTION" "$SERVICE" 2>/dev/null; then
+    exit 0
+fi
+
+echo "FEHLER: Konnte '$ACTION' für $SERVICE (user: $USER_NAME) nicht ausführen." >&2
+exit 1

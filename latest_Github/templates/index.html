@@ -318,8 +318,85 @@ Provided "as is", without warranty.
         <span data-key="account.intro_prefix">Sie benötigen ein bestehendes Autodarts-Konto. Falls noch keines vorhanden ist,
         können Sie es auf</span> <strong>autodarts.io</strong> <span data-key="account.intro_suffix">anlegen.</span>
       </p>
-      <div class="btn-row">
-        <a href="{{ darts_url }}" target="_blank" class="btn btn-primary"><span data-key="account.manager_btn">Dartscheiben-Manager öffnen</span></a>
+
+      <!-- Dartscheiben-Konfigurator -->
+      <div style="margin-bottom:12px;">
+        <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
+          {% if autodarts_v2_running %}
+            <span style="display:inline-flex; align-items:center; gap:6px;">
+              <span style="width:10px; height:10px; border-radius:50%; background:#6be26b; display:inline-block;"></span>
+              <span style="color:#6be26b; font-weight:600;" data-key="account.v2_active">Autodarts v2 aktiv</span>
+            </span>
+          {% else %}
+            <span style="display:inline-flex; align-items:center; gap:6px;">
+              <span style="width:10px; height:10px; border-radius:50%; background:#ff6b6b; display:inline-block;"></span>
+              <span style="color:#ff6b6b; font-weight:600;" data-key="account.v2_inactive">Autodarts v2 inaktiv</span>
+            </span>
+          {% endif %}
+          {% if autodarts_ttyd_running %}
+            <span style="display:inline-flex; align-items:center; gap:6px; margin-left:8px;">
+              <span style="width:10px; height:10px; border-radius:50%; background:#6be26b; display:inline-block;"></span>
+              <span style="color:#6be26b;" data-key="account.ttyd_active">Terminal aktiv</span>
+            </span>
+          {% endif %}
+        </div>
+
+        <div class="btn-row">
+          <a href="{{ darts_url }}" target="_blank" class="btn btn-primary"><span data-key="account.manager_btn">Dartscheiben-Manager öffnen</span></a>
+          {% if autodarts_ttyd_running %}
+            <a href="{{ darts_ttyd_url }}" target="_blank" class="btn"><span data-key="account.ttyd_btn">Terminal öffnen</span></a>
+          {% endif %}
+          {% if autodarts_v2_running %}
+            <button type="button" class="btn btn-small" onclick="(function(btn){
+              const box = document.getElementById('dartsBoardConfigBox');
+              if (!box) return;
+              const show = box.style.display === 'none' || box.style.display === '';
+              box.style.display = show ? 'block' : 'none';
+              btn.textContent = show ? btn.getAttribute('data-hide') : btn.getAttribute('data-show');
+            })(this);"
+            data-show="▼  Konfigurator einblenden"
+            data-hide="▲  Konfigurator ausblenden">▼  <span data-key="account.show_configurator_btn">Konfigurator einblenden</span></button>
+          {% endif %}
+        </div>
+
+        {% if autodarts_v2_running %}
+        <div id="dartsBoardConfigBox" style="display:none; margin-top:14px;">
+
+          <!-- Kamera-Streams -->
+          <p class="hint" style="margin:0 0 8px;"><span data-key="account.cam_streams_label">Live-Kamera-Streams (Autodarts v2):</span></p>
+          <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
+            {% for cam_i in [0, 1, 2] %}
+              <div style="flex:1; min-width:200px; max-width:340px; background:#111; border-radius:8px; overflow:hidden; border:1px solid #333;">
+                <div style="padding:4px 8px; background:#1a1a1a; font-size:0.8rem; color:#aaa;">
+                  <span data-key="account.cam_label">Kamera</span> {{ cam_i + 1 }}
+                </div>
+                <img src="{{ darts_url }}/api/streams/cams/{{ cam_i }}"
+                     alt="Kamera {{ cam_i + 1 }}"
+                     style="width:100%; display:block;"
+                     onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                <div style="display:none; height:120px; align-items:center; justify-content:center; color:#555; font-size:0.85rem;">
+                  <span data-key="account.cam_unavailable">kein Signal</span>
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+
+          <!-- Eingebetteter Board-Manager -->
+          <p class="hint" style="margin:0 0 8px;"><span data-key="account.embedded_manager_label">Dartscheiben-Manager (eingebettet):</span></p>
+          <div style="position:relative; width:100%; padding-top:62%; border-radius:8px; overflow:hidden; border:1px solid #333; background:#0b0b0b;">
+            <iframe src="{{ darts_url }}"
+                    style="position:absolute; top:0; left:0; width:100%; height:100%; border:none;"
+                    allow="camera; microphone"
+                    loading="lazy"
+                    title="Autodarts Board Manager">
+            </iframe>
+          </div>
+          <p class="hint" style="margin:6px 0 0; font-size:0.8rem;">
+            <span data-key="account.embedded_hint">Lädt nicht? <a href="{{ darts_url }}" target="_blank" style="color:#ffb347;">Im neuen Tab öffnen →</a></span>
+          </p>
+
+        </div>
+        {% endif %}
       </div>
       <div id="ad-version"></div>
       <details style="margin-top:12px;" {% if open_adver %}open{% endif %}>
@@ -970,6 +1047,19 @@ Provided "as is", without warranty.
             {% endif %}
           </p>
 
+          <div style="margin-top:10px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+            <span class="hint" style="margin:0;" data-key="admin.webpanel_channel_label">Update-Kanal:</span>
+            <label style="display:flex; align-items:center; gap:6px; cursor:pointer; user-select:none;">
+              <input type="checkbox" id="webpanelBetaToggle"
+                     {% if webpanel_channel == 'beta' %}checked{% endif %}
+                     style="width:18px; height:18px; cursor:pointer; accent-color:#ffb347;">
+              <span id="webpanelBetaLabel" class="hint" style="margin:0; color:{% if webpanel_channel == 'beta' %}#ffb347{% else %}#aaa{% endif %};">
+                {% if webpanel_channel == 'beta' %}<span data-key="admin.webpanel_channel_beta">Beta</span>{% else %}<span data-key="admin.webpanel_channel_stable">Stable</span>{% endif %}
+              </span>
+            </label>
+            <span id="webpanelChannelStatus" class="hint" style="margin:0;"></span>
+          </div>
+
           {% if webpanel_state.started %}
             <p class="hint" style="margin-top:8px;">
               <span data-key="admin.last_webpanel_update">Letztes Webpanel-Update gestartet:</span> <code>{{ webpanel_state.started }}</code>
@@ -1265,7 +1355,8 @@ cp /var/log/pi_monitor_test_README.txt ~/
       api_extensions_v2_board_id: "{{ url_for('api_extensions_v2_board_id') }}",
       api_extensions_v2_auth_reset: "{{ url_for('api_extensions_v2_auth_reset') }}",
       api_webpanel_update: "{{ url_for('api_webpanel_update_start') }}",
-      api_webpanel_update_status: "{{ url_for('api_webpanel_update_status') }}"
+      api_webpanel_update_status: "{{ url_for('api_webpanel_update_status') }}",
+      api_webpanel_channel: "{{ url_for('api_webpanel_channel') }}"
     };
 
     window.app_data = {

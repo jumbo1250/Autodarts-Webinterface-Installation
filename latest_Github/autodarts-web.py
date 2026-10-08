@@ -395,6 +395,9 @@ DEFAULT_SETTINGS = {
     # Standard: Auto-Update soll AUS sein (wir deaktivieren den Service einmalig beim ersten Start nach Webpanel-Update).
     # Wer das nicht möchte, kann hier True setzen.
     "autoupdate_default_enabled": False,
+
+    # Update-Kanal: "stable" (Standard) oder "beta" (immer aktuell, kein Versionscheck)
+    "webpanel_channel": "stable",
 }
 
 
@@ -463,7 +466,33 @@ def load_settings() -> dict:
 
     merged["autoupdate_default_enabled"] = bool(merged.get("autoupdate_default_enabled", False))
 
+    ch = str(merged.get("webpanel_channel") or "stable").strip().lower()
+    merged["webpanel_channel"] = "beta" if ch == "beta" else "stable"
+
     return merged
+
+
+def save_setting(key: str, value) -> None:
+    """Schreibt einen einzelnen Schlüssel in webpanel-settings.json (atomic)."""
+    try:
+        cfg = {}
+        if os.path.exists(SETTINGS_PATH):
+            with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
+                cfg = json.load(f) or {}
+    except Exception:
+        cfg = {}
+    cfg[key] = value
+    tmp = SETTINGS_PATH + ".tmp"
+    try:
+        os.makedirs(os.path.dirname(SETTINGS_PATH), exist_ok=True)
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, SETTINGS_PATH)
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
 
 
 # --- Settings (werden automatisch neu geladen, wenn sich webpanel-settings.json ändert) ---
@@ -1222,6 +1251,26 @@ def is_boardmanager_reachable() -> bool:
     import socket
     try:
         socket.create_connection(("8.8.8.8", 53), timeout=1.5).close()
+        return True
+    except OSError:
+        return False
+
+
+def is_autodarts_v2_running() -> bool:
+    """Prüft ob Autodarts v2 auf Port 3180 antwortet."""
+    import socket
+    try:
+        socket.create_connection(("127.0.0.1", 3180), timeout=1.5).close()
+        return True
+    except OSError:
+        return False
+
+
+def is_ttyd_running() -> bool:
+    """Prüft ob ttyd auf Port 7681 antwortet."""
+    import socket
+    try:
+        socket.create_connection(("127.0.0.1", 7681), timeout=1.0).close()
         return True
     except OSError:
         return False
@@ -2252,6 +2301,11 @@ def start_webpanel_update_background(mode: str = "update", allow_self_update: bo
     remote_updater_url = WEBPANEL_RAW_BASE + "/autodarts-webpanel-update.sh"
     mode_arg = shlex.quote(mode)
 
+    # Kanal aus Settings lesen und als Env-Variable an das Update-Script weitergeben
+    _channel = str(load_settings().get("webpanel_channel") or "stable").strip().lower()
+    _channel = "beta" if _channel == "beta" else "stable"
+    channel_env = f"AUTODARTS_WEBPANEL_CHANNEL={shlex.quote(_channel)} "
+
     self_update_cmd = ""
     if allow_self_update and mode == "update":
         self_update_cmd = (
@@ -2271,7 +2325,7 @@ def start_webpanel_update_background(mode: str = "update", allow_self_update: bo
         f"lock={shlex.quote(lock_path)}; "
         f"{self_update_cmd}"
         "rc=0; "
-        f"(exec sudo -n {shlex.quote(WEBPANEL_UPDATE_SCRIPT)} {mode_arg} >> {shlex.quote(WEBPANEL_UPDATE_LOG)} 2>&1) || rc=$?; "
+        f"(exec sudo -n {channel_env}{shlex.quote(WEBPANEL_UPDATE_SCRIPT)} {mode_arg} >> {shlex.quote(WEBPANEL_UPDATE_LOG)} 2>&1) || rc=$?; "
         f"printf '%s\n' \"$rc\" > {shlex.quote(result_path)} || true; "
         'rm -f "$lock" || true; '
         "exit $rc"
@@ -2302,7 +2356,7 @@ def start_webpanel_update_background(mode: str = "update", allow_self_update: bo
             "nohup /bin/bash -lc "
             + shlex.quote(
                 f"{self_update_cmd}"
-                f"rc=0; (exec sudo -n {WEBPANEL_UPDATE_SCRIPT} {mode_arg} >> {WEBPANEL_UPDATE_LOG} 2>&1) || rc=$?; "
+                f"rc=0; (exec sudo -n {channel_env}{WEBPANEL_UPDATE_SCRIPT} {mode_arg} >> {WEBPANEL_UPDATE_LOG} 2>&1) || rc=$?; "
                 f"printf '%s\n' \"$rc\" > {shlex.quote(result_path)} || true; "
                 f"rm -f {shlex.quote(lock_path)} || true; exit $rc"
             )
@@ -7411,6 +7465,9 @@ def index():
             cam_info_message = t("camera.none_searched_yet", "Es wurden noch keine Kameras gesucht.")
     host = request.host.split(":", 1)[0]
     darts_url = f"http://{host}:3180"
+    darts_ttyd_url = f"http://{host}:7681"
+    autodarts_v2_running = is_autodarts_v2_running()
+    autodarts_ttyd_running = is_ttyd_running()
 
     cam_indices = list(range(1, len(cam_slots) + 1))
 
@@ -7571,6 +7628,7 @@ def index():
         webpanel_update_available=webpanel_update_available,
         webpanel_state=webpanel_state,
         webpanel_log_tail=webpanel_log_tail,
+        webpanel_channel=str(SETTINGS.get("webpanel_channel") or "stable"),
         uvc_backup_info=uvc_backup_info,
         autodarts_versions_choices=get_autodarts_versions_choices(),
         autodarts_stable_version=autodarts_stable_from_menu(),
@@ -7590,6 +7648,9 @@ def index():
         autodarts_theme_store_url=AUTODARTS_THEME_STORE_URL,
         autodarts_display_info=get_autodarts_display_info(),
         pi5_headless_info=get_pi5_headless_info(),
+        darts_ttyd_url=darts_ttyd_url,
+        autodarts_v2_running=autodarts_v2_running,
+        autodarts_ttyd_running=autodarts_ttyd_running,
     )
 
 
@@ -8911,6 +8972,20 @@ def api_webpanel_update_start():
         "latest": latest,
         "message": t("webpanel.update_started", "Webpanel-Update gestartet. Die Weboberfläche kann kurz neu starten."),
     })
+
+
+@app.route("/api/webpanel/channel", methods=["POST"])
+def api_webpanel_channel():
+    data = request.get_json(silent=True) or {}
+    channel = str(data.get("channel") or "").strip().lower()
+    if channel not in ("stable", "beta"):
+        return jsonify({"ok": False, "message": t("webpanel.channel_invalid", "Ungültiger Kanal. Erlaubt: stable, beta.")}), 400
+    try:
+        save_setting("webpanel_channel", channel)
+    except Exception as e:
+        return jsonify({"ok": False, "message": str(e)}), 500
+    label = t("webpanel.channel_beta", "Beta") if channel == "beta" else t("webpanel.channel_stable", "Stable")
+    return jsonify({"ok": True, "channel": channel, "message": t("webpanel.channel_saved", "Update-Kanal gesetzt: {label}.", label=label)})
 
 
 @app.route("/admin/webpanel/update", methods=["POST"])
