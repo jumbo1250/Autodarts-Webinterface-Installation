@@ -2292,12 +2292,14 @@ def start_webpanel_update_background(mode: str = "update", allow_self_update: bo
     except Exception:
         pass
 
-    remote_updater_url = WEBPANEL_RAW_BASE + "/autodarts-webpanel-update.sh"
     mode_arg = shlex.quote(mode)
 
     # Kanal aus Settings lesen und als Env-Variable an das Update-Script weitergeben
     _channel = str(load_settings().get("webpanel_channel") or "stable").strip().lower()
     _channel = "beta" if _channel == "beta" else "stable"
+
+    _raw_base = WEBPANEL_RAW_BASE.replace("/latest", "/Beta") if _channel == "beta" else WEBPANEL_RAW_BASE
+    remote_updater_url = _raw_base + "/autodarts-webpanel-update.sh"
     channel_env = f"AUTODARTS_WEBPANEL_CHANNEL={shlex.quote(_channel)} "
 
     self_update_cmd = ""
