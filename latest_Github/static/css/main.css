@@ -245,13 +245,15 @@
       position: fixed;
       top: 10px;
       right: 10px;
-      background: var(--panel-strong);
+      background: rgba(6, 14, 31, 0.78);
       border-radius: 16px;
-      padding: 10px 12px;
-      font-size: 0.8rem;
+      padding: 14px 18px;
+      font-size: 0.9rem;
+      min-width: 155px;
+      color: #eef6ff;
       box-shadow: var(--shadow);
       z-index: 1000;
-      border: 1px solid var(--line);
+      border: 1px solid rgba(255,255,255,0.15);
       backdrop-filter: var(--blur);
       -webkit-backdrop-filter: var(--blur);
     }
@@ -260,18 +262,19 @@
       top: 10px;
       left: 10px;
       width: min(220px, calc(100vw - 20px));
-      background: var(--panel-strong);
+      background: rgba(6, 14, 31, 0.78);
       border-radius: 18px;
       padding: 10px 12px;
       font-size: 0.82rem;
+      color: #eef6ff;
       box-shadow: var(--shadow);
       z-index: 1000;
-      border: 1px solid var(--line);
+      border: 1px solid rgba(255,255,255,0.15);
       backdrop-filter: var(--blur);
       -webkit-backdrop-filter: var(--blur);
     }
     .quick-admin h3 { margin:0 0 4px; font-size:0.95rem; }
-    .quick-admin .qa-status { color: var(--muted); margin-bottom:8px; }
+    .quick-admin .qa-status { color: rgba(180, 205, 235, 0.75); margin-bottom:8px; }
     .quick-admin .qa-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
     .quick-admin .qa-grid form { margin:0; }
     .quick-admin .qa-grid .btn { width:100%; padding:8px 10px; font-size:0.82rem; }
@@ -403,8 +406,19 @@ body.video-modal-open {
 		padding-top: 14px;
 	  }
 	}
-    .sysinfo h3 { margin:0 0 4px; font-size:0.9rem; }
-    .sysinfo-row { white-space:nowrap; }
+    .sysinfo-header { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; }
+    .sysinfo h3 { margin:0; font-size:1rem; }
+    .sysinfo-row { display:flex; justify-content:space-between; align-items:center; gap:12px; white-space:nowrap; padding:2px 0; }
+    .sysinfo-label { color: rgba(180, 205, 235, 0.75); font-size:0.82rem; }
+    .sysinfo-val { font-size:1rem; font-weight:600; color: #eef6ff; }
+    .sysinfo-refresh {
+      background: none; border: 1px solid rgba(255,255,255,0.25); border-radius:6px;
+      color: rgba(180, 205, 235, 0.75); cursor:pointer; font-size:0.95rem;
+      padding:2px 6px; line-height:1;
+    }
+    .sysinfo-refresh:hover { color:#eef6ff; border-color:rgba(255,255,255,0.5); }
+    .sysinfo-refresh.spinning { animation: spin 0.6s linear; }
+    @keyframes spin { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
     code {
       background: rgba(5, 12, 26, 0.72);
       padding: 2px 6px;

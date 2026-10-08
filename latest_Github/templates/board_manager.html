@@ -26,7 +26,14 @@
       cursor: pointer; font-size: 0.82rem;
     }
     #spiderToggleBtn:hover { background: #2e2e2e; }
-    #spiderToggleBtn.active { border-color: #ff3b30; color: #ff3b30; }
+    #spiderToggleBtn.active { border-color: #00ffcc; color: #00ffcc; }
+    #spiderRefreshBtn {
+      display: none; padding: 5px 10px; border-radius: 5px;
+      background: #222; border: 1px solid #555; color: #aaa;
+      cursor: pointer; font-size: 1rem; line-height: 1;
+    }
+    #spiderRefreshBtn:hover { background: #2e2e2e; color: #eee; }
+    #spiderRefreshBtn:disabled { opacity: 0.35; cursor: default; }
 
     /* --- Main layout --- */
     #main { flex: 1; display: flex; overflow: hidden; }
@@ -97,6 +104,7 @@
   <a href="/" class="back">← Zurück</a>
   <strong>Dartboard Manager</strong>
   <button id="spiderToggleBtn" onclick="toggleSpider()">Kalibrierung anzeigen</button>
+  <button id="spiderRefreshBtn" onclick="reloadSpider()" title="Kalibrierung neu laden">↺</button>
 </div>
 
 <div id="main">
@@ -204,7 +212,18 @@ for (let i = 0; i < 3; i++) {
   document.getElementById('cam-img-' + i).src = DARTS_URL + '/api/streams/cams/' + i;
 }
 pollCamState();
-setInterval(pollCamState, 3000);
+let _camStateTimer = setInterval(pollCamState, 3000);
+
+// Polling pausieren wenn Tab nicht sichtbar → weniger Netzlast im Hintergrund
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    clearInterval(_camStateTimer);
+    _camStateTimer = null;
+  } else if (!_camStateTimer) {
+    pollCamState();
+    _camStateTimer = setInterval(pollCamState, 3000);
+  }
+});
 
 /* ====================================================
    Kalibrierungs-Spinne
@@ -254,10 +273,10 @@ function drawSpider(camId) {
 
   // 4 Ringe als glatte Ellipsen in Rot
   const rings = [
-    { key: 'doubleOuter', sw: '2.5' },
-    { key: 'doubleInner', sw: '2'   },
-    { key: 'trebleOuter', sw: '2'   },
-    { key: 'trebleInner', sw: '2'   },
+    { key: 'doubleOuter', sw: '1.5' },
+    { key: 'doubleInner', sw: '1.5' },
+    { key: 'trebleOuter', sw: '1.5' },
+    { key: 'trebleInner', sw: '1.5' },
   ];
   for (const ring of rings) {
     const p = ellipseParams(camData[ring.key]);
@@ -268,7 +287,7 @@ function drawSpider(camId) {
       const poly = document.createElementNS(NS, 'polygon');
       poly.setAttribute('points', pts.map(pt => pt.join(',')).join(' '));
       poly.setAttribute('fill', 'none');
-      poly.setAttribute('stroke', '#ff3b30');
+      poly.setAttribute('stroke', '#00ffcc');
       poly.setAttribute('stroke-width', ring.sw);
       poly.setAttribute('opacity', '0.9');
       poly.setAttribute('vector-effect', 'non-scaling-stroke');
@@ -282,7 +301,7 @@ function drawSpider(camId) {
     el.setAttribute('ry', p.ry);
     el.setAttribute('transform', `rotate(${p.angle} ${p.cx} ${p.cy})`);
     el.setAttribute('fill', 'none');
-    el.setAttribute('stroke', '#ff3b30');
+    el.setAttribute('stroke', '#00ffcc');
     el.setAttribute('stroke-width', ring.sw);
     el.setAttribute('opacity', '0.9');
     el.setAttribute('vector-effect', 'non-scaling-stroke');
@@ -296,9 +315,9 @@ function drawSpider(camId) {
       const line = document.createElementNS(NS, 'line');
       line.setAttribute('x1', bx); line.setAttribute('y1', by);
       line.setAttribute('x2', px); line.setAttribute('y2', py);
-      line.setAttribute('stroke', '#ff3b30');
-      line.setAttribute('stroke-width', '1');
-      line.setAttribute('opacity', '0.35');
+      line.setAttribute('stroke', '#00ffcc');
+      line.setAttribute('stroke-width', '2');
+      line.setAttribute('opacity', '0.65');
       line.setAttribute('vector-effect', 'non-scaling-stroke');
       svg.appendChild(line);
     }
@@ -306,7 +325,7 @@ function drawSpider(camId) {
     const dot = document.createElementNS(NS, 'circle');
     dot.setAttribute('cx', bx); dot.setAttribute('cy', by);
     dot.setAttribute('r', '7');
-    dot.setAttribute('fill', '#ff3b30');
+    dot.setAttribute('fill', '#00ffcc');
     dot.setAttribute('stroke', '#fff');
     dot.setAttribute('stroke-width', '1.5');
     dot.setAttribute('opacity', '0.9');
@@ -358,7 +377,8 @@ async function loadSpiderData() {
 }
 
 async function toggleSpider() {
-  const btn = document.getElementById('spiderToggleBtn');
+  const btn        = document.getElementById('spiderToggleBtn');
+  const refreshBtn = document.getElementById('spiderRefreshBtn');
   if (!spiderLoaded) {
     const ok = await loadSpiderData();
     if (!ok) return;
@@ -371,6 +391,21 @@ async function toggleSpider() {
   });
   btn.textContent = spiderVisible ? 'Kalibrierung ausblenden' : 'Kalibrierung anzeigen';
   btn.classList.toggle('active', spiderVisible);
+  refreshBtn.style.display = spiderVisible ? 'inline-block' : 'none';
+}
+
+async function reloadSpider() {
+  if (!spiderVisible) return;
+  const btn = document.getElementById('spiderRefreshBtn');
+  btn.disabled = true;
+  spiderLoaded = false;
+  const ok = await loadSpiderData();
+  btn.disabled = false;
+  if (ok) {
+    document.querySelectorAll('.cam-spider').forEach(svg => {
+      svg.style.display = 'block';
+    });
+  }
 }
 </script>
 </body>

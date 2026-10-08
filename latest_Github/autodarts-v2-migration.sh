@@ -304,6 +304,14 @@ ensure_tui_service() {
 
   if [[ -f "$TUI_SERVICE" ]] && systemctl is-enabled --quiet autodarts-tui.service 2>/dev/null; then
     log "INFO: autodarts-tui.service bereits vorhanden"
+    # -m 1 nachträglich ergänzen falls fehlend (verhindert mehrere parallele Sitzungen)
+    if ! grep -q -- '-m 1' "$TUI_SERVICE" 2>/dev/null; then
+      log "INFO: Ergänze -m 1 in autodarts-tui.service"
+      sed -i 's|ExecStart=\(.*ttyd\) |ExecStart=\1 -m 1 |' "$TUI_SERVICE" 2>/dev/null || true
+      systemctl daemon-reload 2>/dev/null || true
+      systemctl restart autodarts-tui.service 2>/dev/null || true
+      log "OK: -m 1 ergänzt und autodarts-tui.service neu gestartet"
+    fi
     systemctl is-active --quiet autodarts-tui.service 2>/dev/null \
       || systemctl start autodarts-tui.service 2>/dev/null || true
     return 0
@@ -321,7 +329,7 @@ Type=simple
 User=${AD_USER}
 Environment=HOME=${AD_HOME}
 WorkingDirectory=${AD_HOME}
-ExecStart=${ttyd_bin} -W -p ${PORT_TTYD} -i 0.0.0.0 ${autodarts_cli} -H 127.0.0.1
+ExecStart=${ttyd_bin} -W -p ${PORT_TTYD} -m 1 -i 0.0.0.0 ${autodarts_cli} -H 127.0.0.1
 Restart=always
 RestartSec=3
 

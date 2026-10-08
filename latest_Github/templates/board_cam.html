@@ -25,7 +25,7 @@
       cursor: pointer; font-size: 0.85rem;
     }
     #spider-toggle:hover { background: #2e2e2e; }
-    #spider-toggle.active { border-color: #ff3b30; color: #ff3b30; }
+    #spider-toggle.active { border-color: #00ffcc; color: #00ffcc; }
 
     #stage-wrap { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 10px; }
     #stage { position: relative; max-width: 100%; max-height: 100%; }
@@ -137,10 +137,10 @@ function drawSpiderSvg(svg, camData) {
   }
 
   const rings = [
-    { key: 'doubleOuter', sw: '3'   },
-    { key: 'doubleInner', sw: '2.5' },
-    { key: 'trebleOuter', sw: '2.5' },
-    { key: 'trebleInner', sw: '2.5' },
+    { key: 'doubleOuter', sw: '1.8' },
+    { key: 'doubleInner', sw: '1.8' },
+    { key: 'trebleOuter', sw: '1.8' },
+    { key: 'trebleInner', sw: '1.8' },
   ];
   for (const ring of rings) {
     const p = ellipseParams(camData[ring.key]);
@@ -151,7 +151,7 @@ function drawSpiderSvg(svg, camData) {
       const poly = document.createElementNS(NS, 'polygon');
       poly.setAttribute('points', pts.map(pt => pt.join(',')).join(' '));
       poly.setAttribute('fill', 'none');
-      poly.setAttribute('stroke', '#ff3b30');
+      poly.setAttribute('stroke', '#00ffcc');
       poly.setAttribute('stroke-width', ring.sw);
       poly.setAttribute('opacity', '0.9');
       poly.setAttribute('vector-effect', 'non-scaling-stroke');
@@ -165,7 +165,7 @@ function drawSpiderSvg(svg, camData) {
     el.setAttribute('ry', p.ry);
     el.setAttribute('transform', `rotate(${p.angle} ${p.cx} ${p.cy})`);
     el.setAttribute('fill', 'none');
-    el.setAttribute('stroke', '#ff3b30');
+    el.setAttribute('stroke', '#00ffcc');
     el.setAttribute('stroke-width', ring.sw);
     el.setAttribute('opacity', '0.9');
     el.setAttribute('vector-effect', 'non-scaling-stroke');
@@ -178,16 +178,16 @@ function drawSpiderSvg(svg, camData) {
       const line = document.createElementNS(NS, 'line');
       line.setAttribute('x1', bx); line.setAttribute('y1', by);
       line.setAttribute('x2', px); line.setAttribute('y2', py);
-      line.setAttribute('stroke', '#ff3b30');
-      line.setAttribute('stroke-width', '1');
-      line.setAttribute('opacity', '0.35');
+      line.setAttribute('stroke', '#00ffcc');
+      line.setAttribute('stroke-width', '2.2');
+      line.setAttribute('opacity', '0.7');
       line.setAttribute('vector-effect', 'non-scaling-stroke');
       svg.appendChild(line);
     }
     const circle = document.createElementNS(NS, 'circle');
     circle.setAttribute('cx', bx); circle.setAttribute('cy', by);
     circle.setAttribute('r', '8');
-    circle.setAttribute('fill', '#ff3b30');
+    circle.setAttribute('fill', '#00ffcc');
     circle.setAttribute('stroke', '#fff');
     circle.setAttribute('stroke-width', '2');
     circle.setAttribute('opacity', '0.9');

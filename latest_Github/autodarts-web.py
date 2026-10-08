@@ -383,7 +383,7 @@ AUTODARTS_VERSION_CACHE_TTL_SEC = 10.0
 
 # === leichte Caches für Statusdaten (reduziert subprocess-Last) ===
 INDEX_STATS_CACHE = {'ts': 0.0, 'data': None}
-INDEX_STATS_TTL_SEC = 2.0  # Startseite: Statuswerte max. alle 2s neu holen
+INDEX_STATS_TTL_SEC = 30.0  # Startseite: Statuswerte max. alle 30s neu holen
 
 WIFI_SIGNAL_CACHE = {'ts': 0.0, 'v': None}
 WIFI_SIGNAL_CACHE_TTL_SEC = 5.0  # Signalstärke nur auf Knopfdruck, kurz cachen
@@ -1174,6 +1174,26 @@ def get_system_stats():
             pass
 
     return cpu_pct, mem_used, mem_total, temp_c
+
+
+def get_cpu_actual_pct():
+    """Echter CPU-%, gemessen über /proc/stat mit 300 ms Abstand."""
+    def _read():
+        with open("/proc/stat", "r") as f:
+            parts = f.readline().split()
+        vals = [int(x) for x in parts[1:8]]  # user nice sys idle iowait irq softirq
+        return sum(vals), vals[3]             # total, idle
+    try:
+        t1, i1 = _read()
+        time.sleep(0.3)
+        t2, i2 = _read()
+        diff = t2 - t1
+        if diff == 0:
+            return None
+        return round((1.0 - (i2 - i1) / diff) * 100.0, 1)
+    except Exception:
+        return None
+
 
 def get_index_stats_cached():
     """
@@ -8122,6 +8142,19 @@ def api_pi_monitor_stop():
     if not res.get("ok"):
         return jsonify(res), 400
     return jsonify(res)
+
+@app.route("/api/system/stats", methods=["GET"])
+def api_system_stats():
+    cpu_pct, mem_used, mem_total, temp_c = get_system_stats()
+    cpu_pct_actual = get_cpu_actual_pct()   # blockiert ~300 ms
+    return jsonify({
+        "cpu_pct":        cpu_pct,
+        "cpu_pct_actual": cpu_pct_actual,
+        "mem_used":       mem_used,
+        "mem_total":      mem_total,
+        "temp_c":         temp_c,
+    })
+
 
 @app.route("/admin/unlock", methods=["POST"])
 def admin_unlock():

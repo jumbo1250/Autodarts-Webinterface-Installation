@@ -264,6 +264,8 @@ def restart_autodarts():
     append_section(log_path, "camera_mode update", cam_info)
 
     # 3) Restart asynchron anstoßen, damit wir währenddessen weiterloggen können
+    old_pid = get_main_pid()
+    append_section(log_path, "pre-restart pid", f"old_main_pid={old_pid}\n")
     try:
         restart_proc = subprocess.Popen(
             [USERCTL, "restart"],
@@ -280,6 +282,8 @@ def restart_autodarts():
     deadline = time.monotonic() + RESTART_MAX_LOG_SECONDS
     success = False
     restart_return_logged = False
+    new_pid = 0
+    pid_changed = False
 
     while time.monotonic() < deadline:
         write_snapshot(log_path, "restart-wait", dmesg_since, journal_since)
@@ -289,11 +293,14 @@ def restart_autodarts():
 
         active = is_autodarts_active()
         proc_done = restart_proc.poll() is not None
+        new_pid = get_main_pid() if active else 0
+        pid_changed = new_pid > 0 and (old_pid <= 0 or new_pid != old_pid)
 
         append_section(
             log_path,
             "restart state",
-            f"service_active={active}\nrestart_proc_done={proc_done}\nrestart_proc_returncode={restart_proc.poll()}\n",
+            f"service_active={active}\nrestart_proc_done={proc_done}\nrestart_proc_returncode={restart_proc.poll()}\n"
+            f"old_main_pid={old_pid}\nnew_main_pid={new_pid}\npid_changed={pid_changed}\n",
         )
 
         if proc_done and not restart_return_logged:
@@ -310,7 +317,7 @@ def restart_autodarts():
             append_section(log_path, "restart command result", body)
             restart_return_logged = True
 
-        if active:
+        if proc_done and restart_proc.returncode == 0 and active and pid_changed:
             success = True
             break
 
@@ -338,6 +345,7 @@ def restart_autodarts():
         log_path,
         "summary",
         f"log_path={log_path}\nservice_active_at_end={is_autodarts_active()}\nrestart_proc_returncode={restart_proc.poll()}\n"
+        f"old_main_pid={old_pid}\nnew_main_pid={new_pid}\npid_changed={pid_changed}\n"
         f"logged_until={datetime.now().isoformat(timespec='seconds')}\n",
     )
 
@@ -403,7 +411,7 @@ def led_manager():
         net_ok = cached_net_ok
 
         if server_ok and net_ok:
-            # Service läuft + Port 3180 antwortet → alles OK
+            # Service läuft + Internet erreichbar → alles OK
             led.on()
             time.sleep(LED_ON_SLEEP)
         else:
@@ -414,10 +422,10 @@ def led_manager():
                 led.off()
 
             if server_ok and not net_ok:
-                # Service läuft, Port 3180 antwortet nicht → langsam blinken
+                # Service läuft, kein Internet → langsam blinken
                 time.sleep(LED_BLINK_NO_NET)
             elif net_ok:
-                # Port OK, aber Service aus → mittel blinken
+                # Internet OK, aber Service aus → mittel blinken
                 time.sleep(LED_BLINK_NO_SERVER)
             else:
                 # Service aus + Port nicht erreichbar → langsam blinken

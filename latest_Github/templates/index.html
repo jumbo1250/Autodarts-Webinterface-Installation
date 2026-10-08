@@ -139,17 +139,50 @@ Provided "as is", without warranty.
 
   {% if cpu_pct is not none or mem_used is not none or temp_c is not none %}
   <div class="sysinfo">
-    <h3><span data-key="sysinfo.title">Mini PC</span></h3>
+    <div class="sysinfo-header">
+      <h3><span data-key="sysinfo.title">Mini PC</span></h3>
+      <button class="sysinfo-refresh" id="sysinfoRefreshBtn" onclick="refreshSysinfo()" title="Aktualisieren">↺</button>
+    </div>
     {% if cpu_pct is not none %}
-      <div class="sysinfo-row"><span data-key="sysinfo.cpu_label">CPU:</span> {{ cpu_pct }}%</div>
+      <div class="sysinfo-row">
+        <span class="sysinfo-label" data-key="sysinfo.cpu_label">CPU Last</span>
+        <span class="sysinfo-val" id="sysinfo-cpu">{{ cpu_pct }}%</span>
+      </div>
+      <div class="sysinfo-row">
+        <span class="sysinfo-label" data-key="sysinfo.cpu_actual_label">CPU %</span>
+        <span class="sysinfo-val" id="sysinfo-cpu-actual">–</span>
+      </div>
     {% endif %}
     {% if mem_used is not none and mem_total is not none %}
-      <div class="sysinfo-row"><span data-key="sysinfo.ram_label">RAM:</span> {{ mem_used }} / {{ mem_total }} GB</div>
+      <div class="sysinfo-row">
+        <span class="sysinfo-label" data-key="sysinfo.ram_label">RAM</span>
+        <span class="sysinfo-val" id="sysinfo-ram">{{ mem_used }} / {{ mem_total }} GB</span>
+      </div>
     {% endif %}
     {% if temp_c is not none %}
-      <div class="sysinfo-row"><span data-key="sysinfo.temp_label">Temp:</span> {{ "%.1f"|format(temp_c) }} °C</div>
+      <div class="sysinfo-row">
+        <span class="sysinfo-label" data-key="sysinfo.temp_label">Temp</span>
+        <span class="sysinfo-val" id="sysinfo-temp">{{ "%.1f"|format(temp_c) }} °C</span>
+      </div>
     {% endif %}
   </div>
+  <script>
+  async function refreshSysinfo() {
+    const btn = document.getElementById('sysinfoRefreshBtn');
+    if (btn) { btn.classList.add('spinning'); btn.disabled = true; }
+    try {
+      const r = await fetch('/api/system/stats', { cache: 'no-store' });
+      const d = await r.json();
+      if (d.cpu_pct        != null) { const el = document.getElementById('sysinfo-cpu');        if (el) el.textContent = d.cpu_pct + '%'; }
+      if (d.cpu_pct_actual != null) { const el = document.getElementById('sysinfo-cpu-actual'); if (el) el.textContent = d.cpu_pct_actual + '%'; }
+      if (d.mem_used != null && d.mem_total != null) { const el = document.getElementById('sysinfo-ram');  if (el) el.textContent = d.mem_used + ' / ' + d.mem_total + ' GB'; }
+      if (d.temp_c   != null) { const el = document.getElementById('sysinfo-temp'); if (el) el.textContent = d.temp_c.toFixed(1) + ' °C'; }
+    } catch (_) {}
+    if (btn) { setTimeout(() => { btn.classList.remove('spinning'); btn.disabled = false; }, 600); }
+  }
+  // CPU % beim Seitenstart automatisch befüllen (ohne Seiten-Reload)
+  window.addEventListener('load', () => setTimeout(refreshSysinfo, 400));
+  </script>
   {% endif %}
 
   <div class="container">
