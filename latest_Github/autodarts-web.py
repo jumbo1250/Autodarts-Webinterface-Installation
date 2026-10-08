@@ -8811,7 +8811,8 @@ def api_webpanel_update_start():
             "message": t("webpanel.latest_not_determined", "Webpanel: Konnte 'latest' nicht ermitteln – bitte zuerst 'Update prüfen'."),
         }), 503
 
-    if installed and installed == latest:
+    _channel = str(load_settings().get("webpanel_channel") or "stable").strip().lower()
+    if _channel != "beta" and installed and installed == latest:
         return jsonify({
             "ok": True,
             "already_current": True,
