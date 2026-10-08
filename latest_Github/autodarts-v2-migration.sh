@@ -1,215 +1,461 @@
 #!/usr/bin/env bash
-# BUILD: AUTODARTS-V2-MIGRATION-20261008-01
-#
-# Einmalige Migration von Autodarts v1 (System-Service) → v2 (User-Service, Port 3180).
-# Idempotent: Läuft v2 bereits gesund (Port 3180 oder User-Service aktiv) → exit 0.
-# Wird nur ausgeführt, wenn er in DIESEM Update heruntergeladen wurde (DOWNLOADED[]-Pattern).
-
+# BUILD: AUTODARTS-V2-MIGRATION-20261008-03
+# Roadmap STEP 1: Migration v1 → v2, ttyd, autodarts-tui.service
+# Idempotent. Installer: https://autodarts.sh --headless (immer)
 set -euo pipefail
 
-USER_NAME="${AUTODARTS_DESKTOP_USER:-peter}"
 PORT_V2=3180
-SERVICE="autodarts.service"
+PORT_TTYD=7681
 LOG="${LOG_FILE:-/var/log/autodarts_webpanel_update.log}"
+STATE_DIR="/var/lib/autodarts"
+STATE_FILE="${STATE_DIR}/autodarts-v2-migration-state.json"
+TUI_SERVICE="/etc/systemd/system/autodarts-tui.service"
 
-log_m() { echo "[$(date +'%F %T')] [V2-MIGRATION] $*" | tee -a "${LOG}" >/dev/null; }
+mkdir -p "${STATE_DIR}"
 
-# ────────────────────────────────────────────────────────────────────────────────
-# Hilfsfunktionen
-# ────────────────────────────────────────────────────────────────────────────────
+ts()  { date +"[%F %T]"; }
+log() { echo "$(ts) [V2-MIGRATION] $*" | tee -a "${LOG}"; }
 
-user_uid() {
-  id -u "$USER_NAME" 2>/dev/null || true
+# ─── §2: Autodarts-User ermitteln ────────────────────────────────────────────
+
+detect_ad_user() {
+  # 1. AUTODARTS_USER env
+  if [[ -n "${AUTODARTS_USER:-}" ]] && id "${AUTODARTS_USER}" >/dev/null 2>&1; then
+    echo "${AUTODARTS_USER}"; return
+  fi
+  # 2. User= aus bestehendem Legacy-Service
+  local su
+  su="$(systemctl show autodarts.service -p User 2>/dev/null | cut -d= -f2 | tr -d '[:space:]' || true)"
+  [[ -n "$su" ]] && id "$su" >/dev/null 2>&1 && { echo "$su"; return; }
+  # 3. Besitzer von config.toml
+  local cf co
+  for cf in /home/*/.config/autodarts/config.toml; do
+    [[ -f "$cf" ]] || continue
+    co="$(stat -c '%U' "$cf" 2>/dev/null || true)"
+    [[ -n "$co" ]] && id "$co" >/dev/null 2>&1 && { echo "$co"; return; }
+  done
+  # 4. peter
+  id peter >/dev/null 2>&1 && { echo "peter"; return; }
+  # 5. Erster regulärer User UID >= 1000
+  getent passwd | awk -F: '$3>=1000 && $3<65534 {print $1; exit}'
 }
 
+AD_USER="$(detect_ad_user)"
+if [[ -z "$AD_USER" ]]; then
+  echo "$(ts) [V2-MIGRATION] FEHLER: Kein Autodarts-User gefunden"
+  exit 1
+fi
+AD_UID="$(id -u "$AD_USER")"
+AD_HOME="$(getent passwd "$AD_USER" | cut -d: -f6)"
+
+log "Autodarts-User: $AD_USER (UID=$AD_UID, HOME=$AD_HOME)"
+
+# Pfade die vom User abhängen
+USER_SERVICE_DIR="${AD_HOME}/.config/systemd/user"
+USER_SERVICE="${USER_SERVICE_DIR}/autodarts.service"
+CONFIG_DIR="${AD_HOME}/.config/autodarts"
+V2_BINARY=""  # wird via find_v2_binary() gesetzt
+
+# ─── Basisfunktionen ─────────────────────────────────────────────────────────
+
 run_as_user() {
-  local uid
-  uid="$(user_uid)"
-  [[ -z "$uid" ]] && { log_m "FEHLER: User '$USER_NAME' nicht gefunden."; return 1; }
-  sudo -n -u "$USER_NAME" \
-    XDG_RUNTIME_DIR="/run/user/${uid}" \
-    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${uid}/bus" \
+  sudo -u "$AD_USER" \
+    XDG_RUNTIME_DIR="/run/user/${AD_UID}" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${AD_UID}/bus" \
+    HOME="${AD_HOME}" \
     "$@"
 }
 
-# Prüft ob v2 bereits läuft und gesund ist
-is_v2_healthy() {
-  local uid
-  uid="$(user_uid)"
-  [[ -z "$uid" ]] && return 1
+service_enabled() { run_as_user systemctl --user is-enabled  autodarts.service >/dev/null 2>&1; }
+service_active()  { run_as_user systemctl --user is-active   autodarts.service >/dev/null 2>&1; }
 
-  # Priorität 1: User-Service aktiv?
-  if run_as_user systemctl --user is-active "$SERVICE" >/dev/null 2>&1; then
-    log_m "INFO: Autodarts v2 läuft als User-Service."
-    return 0
-  fi
+# §11: running:false ist kein Fehler — gültiges JSON reicht
+api_reachable() {
+  local resp
+  resp="$(curl -sSf --max-time 4 "http://127.0.0.1:${PORT_V2}/api/state" 2>/dev/null || true)"
+  echo "$resp" | grep -q '"' && return 0
+  curl -sSf --max-time 3 "http://127.0.0.1:${PORT_V2}/api/version" >/dev/null 2>&1
+}
 
-  # Priorität 2: Port 3180 antwortet?
-  if curl -sSf --max-time 3 "http://localhost:${PORT_V2}/api/version" >/dev/null 2>&1; then
-    log_m "INFO: Autodarts v2 antwortet auf Port ${PORT_V2}."
-    return 0
-  fi
+# ─── §3: Binary finden (3 Pfade + realpath) ──────────────────────────────────
 
+find_v2_binary() {
+  local candidates=(
+    "${AD_HOME}/.local/share/autodarts/autodarts"
+    "${AD_HOME}/.local/bin/autodarts"
+    "${AD_HOME}/.local/opt/autodarts/autodarts"
+  )
+  local b real
+  for b in "${candidates[@]}"; do
+    [[ -x "$b" ]] || continue
+    real="$(realpath "$b" 2>/dev/null || echo "$b")"
+    [[ -x "$real" ]] && echo "$real" && return 0
+  done
   return 1
 }
 
-# Prüft ob noch der alte System-Service (v1) läuft
-stop_v1_if_running() {
-  if systemctl is-active --quiet "$SERVICE" 2>/dev/null; then
-    log_m "Stoppe v1 System-Service: $SERVICE"
-    systemctl stop "$SERVICE" 2>/dev/null || true
+classify_state() {
+  # Liest globales V2_BINARY (muss vorher via find_v2_binary gesetzt sein)
+  if [[ -z "${V2_BINARY}" ]]; then
+    if systemctl is-active --quiet autodarts.service 2>/dev/null \
+       || systemctl is-enabled --quiet autodarts.service 2>/dev/null; then
+      echo "V1_ONLY"
+    else
+      echo "FRESH"
+    fi
+    return
+  fi
+
+  local ver major
+  ver="$(run_as_user "${V2_BINARY}" --version 2>/dev/null || true)"
+  major="$(echo "$ver" | grep -oE '[0-9]+' | head -n1 || true)"
+
+  if [[ -z "$major" ]];           then echo "BROKEN_OR_UNKNOWN"; return; fi
+  if [[ "$major" -gt 2 ]];        then echo "NEWER_THAN_V2";     return; fi
+  if [[ "$major" -lt 2 ]];        then echo "V1_ONLY";           return; fi
+
+  # major == 2
+  if service_active && api_reachable; then
+    echo "V2_HEALTHY"
+  else
+    echo "V2_SERVICE_BROKEN"
+  fi
+}
+
+# ─── §4: Vollständiges Backup mit Metadaten ───────────────────────────────────
+
+backup_before_migration() {
+  local bd="${STATE_DIR}/config/backups/autodarts-v2-core-migration-$(date +%Y%m%d_%H%M%S)"
+  mkdir -p "$bd"
+  log "Backup: $bd"
+
+  [[ -d "${CONFIG_DIR}" ]]                      && cp -a "${CONFIG_DIR}" "${bd}/config_autodarts"    || true
+  cp /etc/systemd/system/autodarts.service         "${bd}/" 2>/dev/null || true
+  cp /etc/systemd/system/autodartsupdater.service  "${bd}/" 2>/dev/null || true
+  cp -r /etc/systemd/system/autodartsupdater.service.d "${bd}/" 2>/dev/null || true
+  cp /usr/local/bin/autodarts-safe-updater.sh      "${bd}/" 2>/dev/null || true
+  [[ -d "${AD_HOME}/.local/opt/autodarts" ]]    && cp -a "${AD_HOME}/.local/opt/autodarts" "${bd}/local_opt_autodarts" || true
+  [[ -f "${AD_HOME}/.local/bin/autodarts" ]]    && cp "${AD_HOME}/.local/bin/autodarts" "${bd}/autodarts_v1_bin" || true
+
+  {
+    echo "=== uname ===";       uname -a
+    echo "=== os-release ===";  cat /etc/os-release 2>/dev/null || true
+    echo "=== user ===";        id "$AD_USER"
+    echo "=== autodarts version ==="
+    run_as_user "${AD_HOME}/.local/bin/autodarts" --version 2>/dev/null \
+      || run_as_user "${AD_HOME}/.local/opt/autodarts/autodarts" --version 2>/dev/null \
+      || echo "unbekannt"
+    echo "=== autodarts.service ==="
+    cat /etc/systemd/system/autodarts.service 2>/dev/null || echo "nicht vorhanden"
+    echo "=== symlinks ==="
+    ls -la "${AD_HOME}/.local/bin/autodarts" 2>/dev/null || echo "kein symlink"
+  } > "${bd}/metadata.txt" 2>/dev/null || true
+
+  log "OK: Backup abgeschlossen ($bd)"
+}
+
+# ─── §5: v1 Services stoppen (Dateien bleiben bis v2 verifiziert) ────────────
+
+stop_v1_services() {
+  if systemctl is-active --quiet autodarts.service 2>/dev/null; then
+    log "Stoppe v1 autodarts.service"
+    systemctl stop autodarts.service 2>/dev/null || true
     sleep 2
   fi
-
-  # Alten autodartsupdater-Service deaktivieren (wird durch v2 ersetzt)
   if systemctl is-enabled --quiet autodartsupdater.service 2>/dev/null; then
-    log_m "Deaktiviere alten autodartsupdater.service"
-    systemctl disable autodartsupdater.service 2>/dev/null || true
+    log "Deaktiviere autodartsupdater.service"
+    systemctl disable --now autodartsupdater.service 2>/dev/null || true
   fi
 }
 
-arch_norm() {
-  case "$(uname -m)" in
-    x86_64|amd64)   echo "amd64"  ;;
-    aarch64|arm64)  echo "arm64"  ;;
-    armv7l)         echo "armv7l" ;;
-    *)              uname -m      ;;
-  esac
+# §16: Legacy erst NACH bestätigtem v2 entfernen
+cleanup_v1_files() {
+  log "Entferne v1 Legacy-Dateien (v2 bestätigt)"
+  rm -f  /etc/systemd/system/autodarts.service           2>/dev/null || true
+  rm -f  /etc/systemd/system/autodartsupdater.service    2>/dev/null || true
+  rm -rf /etc/systemd/system/autodartsupdater.service.d  2>/dev/null || true
+  rm -f  /usr/local/bin/autodarts-safe-updater.sh        2>/dev/null || true
+  rm -rf "${AD_HOME}/.local/opt/autodarts"               2>/dev/null || true
+  systemctl daemon-reload 2>/dev/null || true
+  log "OK: v1 Legacy-Dateien entfernt"
 }
 
-# Lädt den offiziellen Autodarts-Installer herunter und validiert ihn
-fetch_installer() {
-  local base="$1"
-  local tmp
-  tmp="$(mktemp)"
+# ─── §9: Linger ───────────────────────────────────────────────────────────────
 
-  if ! curl -fsSL --connect-timeout 8 --max-time 30 "${base}/install.sh" -o "$tmp" 2>/dev/null; then
-    rm -f "$tmp"
-    return 1
-  fi
-
-  # Sanity-Check: muss ein Shell-Script sein und INSTALL_DIR enthalten
-  if ! head -n 1 "$tmp" | grep -q '^#!' || ! grep -q 'INSTALL_DIR\|install_dir\|autodarts' "$tmp"; then
-    log_m "WARN: Installer von ${base} sieht ungültig aus."
-    rm -f "$tmp"
-    return 1
-  fi
-
-  echo "$tmp"
-}
-
-# Versucht get.autodarts.io, dann get.autodarts.com
-install_autodarts_v2_binary() {
-  local installer_path base
-
-  for base in "https://get.autodarts.io" "https://get.autodarts.com"; do
-    log_m "Versuche Installer von: $base"
-    installer_path="$(fetch_installer "$base" || true)"
-    if [[ -n "$installer_path" && -f "$installer_path" ]]; then
-      log_m "Installer gefunden: $base"
-      # Installer als Ziel-User ausführen (v2 installiert im Home des Users)
-      if run_as_user bash "$installer_path" >>"${LOG}" 2>&1; then
-        rm -f "$installer_path"
-        log_m "OK: Autodarts v2 durch Installer installiert."
-        return 0
-      else
-        log_m "WARN: Installer von ${base} fehlgeschlagen."
-        rm -f "$installer_path"
-      fi
-    fi
-  done
-
-  log_m "FEHLER: Kein gültiger Installer erreichbar (get.autodarts.io / get.autodarts.com)."
-  return 1
-}
-
-# Aktiviert Linger damit der User-Service auch ohne aktive Login-Session läuft
 enable_linger() {
-  if loginctl show-user "$USER_NAME" 2>/dev/null | grep -q "^Linger=yes"; then
-    log_m "INFO: Linger für $USER_NAME bereits aktiv."
-    return 0
-  fi
-  log_m "Aktiviere loginctl linger für $USER_NAME"
-  loginctl enable-linger "$USER_NAME" 2>/dev/null || {
-    log_m "WARN: loginctl enable-linger fehlgeschlagen (kein harter Fehler)."
-  }
+  loginctl show-user "$AD_USER" 2>/dev/null | grep -q "^Linger=yes" && return 0
+  log "Aktiviere loginctl linger für $AD_USER"
+  loginctl enable-linger "$AD_USER" 2>/dev/null || log "WARN: linger fehlgeschlagen"
 }
 
-# Startet den User-Service (falls noch nicht aktiv)
-start_user_service() {
-  if run_as_user systemctl --user is-active "$SERVICE" >/dev/null 2>&1; then
-    log_m "INFO: User-Service bereits aktiv."
+# ─── §6: Installer — immer --headless ────────────────────────────────────────
+
+install_autodarts_v2() {
+  log "Installiere Autodarts v2 (https://autodarts.sh --headless) ..."
+  if run_as_user bash -c "curl -fsSL https://autodarts.sh | bash -s -- --headless" >>"${LOG}" 2>&1; then
+    # Post-install: Binary prüfen (§6 Nachverifikation)
+    local new_bin
+    new_bin="$(find_v2_binary 2>/dev/null || true)"
+    if [[ -z "$new_bin" ]]; then
+      log "FEHLER: Binary nach Installation nicht gefunden"; return 1
+    fi
+    local ver
+    ver="$(run_as_user "$new_bin" --version 2>/dev/null || true)"
+    log "OK: Autodarts v2 installiert — Version: $ver"
+    V2_BINARY="$new_bin"
     return 0
+  else
+    log "FEHLER: Installation fehlgeschlagen"; return 1
+  fi
+}
+
+# ─── §8: User-Service (vollständige Unit) ─────────────────────────────────────
+
+ensure_user_service() {
+  run_as_user mkdir -p "$USER_SERVICE_DIR" 2>/dev/null || true
+
+  if [[ ! -f "$USER_SERVICE" ]]; then
+    log "Erstelle User-Service: $USER_SERVICE"
+    local bin="${V2_BINARY:-${AD_HOME}/.local/share/autodarts/autodarts}"
+    sudo -u "$AD_USER" bash -c "cat > '${USER_SERVICE}'" <<EOF
+[Unit]
+Description=Autodarts board
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=notify
+NotifyAccess=main
+ExecStart=${bin} run
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+WatchdogSec=30
+StateDirectory=autodarts
+StateDirectoryMode=0700
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
+EOF
+    chown "$AD_USER:$AD_USER" "$USER_SERVICE" 2>/dev/null || true
   fi
 
-  log_m "Aktiviere und starte User-Service: $SERVICE"
   run_as_user systemctl --user daemon-reload 2>/dev/null || true
-  run_as_user systemctl --user enable "$SERVICE" 2>/dev/null || true
-  run_as_user systemctl --user start "$SERVICE" 2>/dev/null || {
-    log_m "WARN: systemctl --user start $SERVICE fehlgeschlagen."
-    return 1
-  }
+  service_enabled || run_as_user systemctl --user enable autodarts.service 2>/dev/null || true
+  service_active  || run_as_user systemctl --user start  autodarts.service 2>/dev/null \
+    || log "WARN: Service-Start fehlgeschlagen"
 }
 
-# Verifiziert Port 3180 (bis zu 20s warten)
+# ─── §11: API-Verifikation ────────────────────────────────────────────────────
+
 verify_v2() {
+  log "Warte auf API (Port $PORT_V2, max 30s) ..."
   local i
-  for i in 1 2 3 4 5 6 7 8 9 10; do
-    if curl -sSf --max-time 3 "http://localhost:${PORT_V2}/api/version" >/dev/null 2>&1; then
-      log_m "OK: Autodarts v2 antwortet auf Port ${PORT_V2}."
+  for i in $(seq 1 15); do
+    if service_active && api_reachable; then
+      log "OK: Service active + API erreichbar"
       return 0
     fi
     sleep 2
   done
-  log_m "WARN: Port ${PORT_V2} antwortet nach 20s nicht. Service könnte noch starten."
+  log "WARN: API nach 30s nicht erreichbar"
   return 1
 }
 
-# ────────────────────────────────────────────────────────────────────────────────
-# Hauptablauf
-# ────────────────────────────────────────────────────────────────────────────────
+# ─── §13: ttyd installieren ───────────────────────────────────────────────────
 
-log_m "===== Autodarts V2 Migration START ====="
-
-# Schritt 1: Bereits gesund? → fertig
-if is_v2_healthy; then
-  log_m "Autodarts v2 bereits aktiv → Migration übersprungen."
-  log_m "===== Autodarts V2 Migration SKIP (already running) ====="
-  exit 0
-fi
-
-log_m "Autodarts v2 nicht aktiv. Starte Migration..."
-
-# Schritt 2: User existiert?
-UID_CHECK="$(user_uid)"
-if [[ -z "$UID_CHECK" ]]; then
-  log_m "FEHLER: User '$USER_NAME' nicht gefunden → Migration abgebrochen."
-  exit 1
-fi
-
-# Schritt 3: Linger aktivieren (vor Installation, damit Service nach Install autostartet)
-enable_linger
-
-# Schritt 4: v1 stoppen
-stop_v1_if_running
-
-# Schritt 5: v2 Binary installieren (offizieller Installer)
-if ! install_autodarts_v2_binary; then
-  log_m "FEHLER: Autodarts v2 konnte nicht installiert werden → Migration abgebrochen."
-  exit 1
-fi
-
-# Schritt 6: User-Service starten
-start_user_service || {
-  log_m "WARN: User-Service konnte nicht gestartet werden."
+install_ttyd() {
+  if command -v ttyd >/dev/null 2>&1 && ttyd --version >/dev/null 2>&1; then
+    log "INFO: ttyd bereits vorhanden"
+    return 0
+  fi
+  log "Installiere ttyd ..."
+  if apt-get install -y ttyd >>"${LOG}" 2>&1; then
+    log "OK: ttyd via apt installiert"; return 0
+  fi
+  log "WARN: apt fehlgeschlagen, versuche Binary-Download ..."
+  local arch
+  case "$(uname -m)" in
+    aarch64|arm64) arch="aarch64" ;;
+    armv7l)        arch="armhf"   ;;
+    x86_64)        arch="x86_64"  ;;
+    *)             arch="$(uname -m)" ;;
+  esac
+  if curl -fsSL --max-time 60 \
+       "https://github.com/tsl0922/ttyd/releases/latest/download/ttyd.${arch}" \
+       -o /usr/local/bin/ttyd 2>/dev/null; then
+    chmod 755 /usr/local/bin/ttyd
+    log "OK: ttyd Binary installiert"
+  else
+    log "WARN: ttyd konnte nicht installiert werden"; return 1
+  fi
 }
 
-# Schritt 7: Verifizierung
-if verify_v2; then
-  log_m "===== Autodarts V2 Migration OK ====="
-  exit 0
-else
-  log_m "WARN: Verifizierung fehlgeschlagen. Service könnte verzögert starten."
-  log_m "===== Autodarts V2 Migration PARTIAL (binary installed, port unverified) ====="
-  exit 0
-fi
+# ─── §14: TUI-Service (korrekte ExecStart) ────────────────────────────────────
+
+ensure_tui_service() {
+  local ttyd_bin
+  ttyd_bin="$(command -v ttyd 2>/dev/null || echo /usr/local/bin/ttyd)"
+  local autodarts_cli="${AD_HOME}/.local/bin/autodarts"
+
+  if [[ -f "$TUI_SERVICE" ]] && systemctl is-enabled --quiet autodarts-tui.service 2>/dev/null; then
+    log "INFO: autodarts-tui.service bereits vorhanden"
+    systemctl is-active --quiet autodarts-tui.service 2>/dev/null \
+      || systemctl start autodarts-tui.service 2>/dev/null || true
+    return 0
+  fi
+
+  log "Erstelle autodarts-tui.service"
+  cat > "$TUI_SERVICE" <<EOF
+[Unit]
+Description=Autodarts v2 Browser TUI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${AD_USER}
+Environment=HOME=${AD_HOME}
+WorkingDirectory=${AD_HOME}
+ExecStart=${ttyd_bin} -W -p ${PORT_TTYD} -i 0.0.0.0 ${autodarts_cli} -H 127.0.0.1
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  systemctl daemon-reload 2>/dev/null || true
+  systemctl enable autodarts-tui.service 2>/dev/null || true
+  systemctl start  autodarts-tui.service 2>/dev/null \
+    || log "WARN: autodarts-tui.service Start fehlgeschlagen"
+  log "OK: autodarts-tui.service installiert"
+}
+
+# ─── §15: Firewall ────────────────────────────────────────────────────────────
+
+ensure_firewall_port() {
+  command -v ufw >/dev/null 2>&1 || return 0
+  ufw status 2>/dev/null | grep -q "^Status: active" || return 0
+  ufw status 2>/dev/null | grep -q "${PORT_TTYD}/tcp" && {
+    log "INFO: UFW Port ${PORT_TTYD} bereits freigegeben"; return 0
+  }
+  log "Öffne UFW Port ${PORT_TTYD}/tcp"
+  ufw allow "${PORT_TTYD}/tcp" >/dev/null 2>&1 || true
+}
+
+# ─── State-File ───────────────────────────────────────────────────────────────
+
+write_state() {
+  local result="$1"
+  local ver
+  ver="$(run_as_user "${V2_BINARY:-/dev/null}" --version 2>/dev/null \
+    | grep -oE '[0-9]+\.[0-9]+[^ ]*' | head -n1 || echo 'unknown')"
+  cat > "$STATE_FILE" <<EOF
+{
+  "migration_version": 3,
+  "status": "success",
+  "result": "${result}",
+  "ad_user": "${AD_USER}",
+  "ad_uid": "${AD_UID}",
+  "ad_home": "${AD_HOME}",
+  "v2_binary": "${V2_BINARY:-unknown}",
+  "autodarts_version": "${ver}",
+  "service_enabled": $(service_enabled && echo true || echo false),
+  "service_active": $(service_active && echo true || echo false),
+  "api_reachable": $(api_reachable && echo true || echo false),
+  "ttyd_installed": $(command -v ttyd >/dev/null 2>&1 && echo true || echo false),
+  "ttyd_service_active": $(systemctl is-active --quiet autodarts-tui.service 2>/dev/null && echo true || echo false),
+  "updated_at": "$(date -Iseconds)"
+}
+EOF
+  log "State-Datei: $STATE_FILE ($result)"
+}
+
+# ─── HAUPTABLAUF ─────────────────────────────────────────────────────────────
+
+log "===== Autodarts V2 Migration START (user=$AD_USER) ====="
+
+V2_BINARY="$(find_v2_binary 2>/dev/null || true)"
+AD_STATE="$(classify_state)"
+log "Zustand: $AD_STATE | Binary: ${V2_BINARY:-keines}"
+
+case "$AD_STATE" in
+
+  V2_HEALTHY)
+    # §18: Idempotenz — kein Installer, kein Backup, kein Service-Neustart
+    log "v2 läuft gesund → nur Integration prüfen"
+    enable_linger
+    install_ttyd       || true
+    ensure_tui_service || true
+    ensure_firewall_port
+    write_state "already_v2"
+    log "===== V2 Migration SKIP (already healthy) ====="
+    exit 0
+    ;;
+
+  V2_SERVICE_BROKEN)
+    log "v2-Binary OK, Service/API defekt → reparieren"
+    enable_linger
+    ensure_user_service
+    verify_v2          || true
+    install_ttyd       || true
+    ensure_tui_service || true
+    ensure_firewall_port
+    write_state "repaired_v2_service"
+    log "===== V2 Migration OK (repaired) ====="
+    exit 0
+    ;;
+
+  NEWER_THAN_V2)
+    log "Autodarts-Version > 2 → kein Eingriff"
+    ensure_tui_service || true
+    ensure_firewall_port
+    write_state "newer_than_v2"
+    log "===== V2 Migration SKIP (newer_than_v2) ====="
+    exit 0
+    ;;
+
+  V1_ONLY|FRESH|BROKEN_OR_UNKNOWN)
+    case "$AD_STATE" in
+      V1_ONLY)           MIGRATION_TYPE="migrated_from_v1"; log "v1 erkannt → Migration" ;;
+      BROKEN_OR_UNKNOWN) MIGRATION_TYPE="fresh_install_from_broken"; log "Defekter Zustand → Neuinstallation" ;;
+      *)                 MIGRATION_TYPE="fresh_install"; log "Kein Autodarts → Neuinstallation" ;;
+    esac
+
+    backup_before_migration
+    enable_linger
+    stop_v1_services
+
+    if ! install_autodarts_v2; then
+      log "FEHLER: Installation fehlgeschlagen → Abbruch"
+      exit 1
+    fi
+
+    ensure_user_service
+
+    # §11: API prüfen
+    if verify_v2; then
+      # §16: Legacy erst nach bestätigtem v2 entfernen
+      cleanup_v1_files
+    else
+      log "WARN: v2 Service nicht aktiv — Legacy-Dateien bleiben als Fallback"
+    fi
+
+    install_ttyd       || true
+    ensure_tui_service || true
+    ensure_firewall_port
+    write_state "$MIGRATION_TYPE"
+    log "===== V2 Migration OK (${MIGRATION_TYPE}) ====="
+    exit 0
+    ;;
+
+  *)
+    log "FEHLER: Unbekannter Zustand '$AD_STATE'"
+    exit 1
+    ;;
+esac

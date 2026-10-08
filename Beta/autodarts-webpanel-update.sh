@@ -37,6 +37,8 @@ FILES=(
   "autodarts-caller-auth-reset.sh|${BIN_DIR}/autodarts-caller-auth-reset.sh"
   "version.txt|${LOCAL_VER_FILE}"
   "autodarts-webpanel-update.sh|${BIN_DIR}/autodarts-webpanel-update.sh"
+  "autodarts-userctl|${BIN_DIR}/autodarts-userctl"
+  "autodarts-v2-migration.sh|${BIN_DIR}/autodarts-v2-migration.sh"
 )
 
 ts()  { date +"[%Y-%m-%d %H:%M:%S]"; }
@@ -118,7 +120,36 @@ install_webpanel_from_zip() {
   done
 }
 
+run_v2_migration_if_downloaded() {
+  local remote_name="autodarts-v2-migration.sh"
+  local script="${BIN_DIR}/${remote_name}"
+  local userctl="${BIN_DIR}/autodarts-userctl"
+
+  if [[ -z "${DOWNLOADED[${remote_name}]+x}" ]]; then
+    log "INFO: V2-Migrations-Script nicht geladen -> skip"
+    return 0
+  fi
+  if [[ ! -f "$script" ]]; then
+    log "WARN: V2-Migrations-Script fehlt lokal -> skip"
+    return 0
+  fi
+
+  chmod 755 "$script" 2>/dev/null || true
+  [[ -f "$userctl" ]] && chmod 755 "$userctl" 2>/dev/null || true
+
+  log "Starte Autodarts V2 Migration"
+  if LOG_FILE="${LOG_FILE}" bash "$script" >>"${LOG_FILE}" 2>&1; then
+    log "OK: Autodarts V2 Migration abgeschlossen"
+  else
+    log "WARN: V2 Migration meldete Fehler (exit=$?) -> Update läuft weiter"
+  fi
+}
+
 run_revision_chain() {
+  # ZUKUNFT: Wenn Beta in latest promoted wird, können hier Checkpoint-Skripte
+  # für alte Systeme hinterlegt werden (z.B. 1.808/autodarts-webpanel-update.sh).
+  # Bis dahin: Beta überspringt die Kette immer. Stable-Systeme laufen sie durch
+  # sobald update-revisions.conf Einträge enthält die größer als ihre lokale Version sind.
   # Beta-Kanal: Revisionskette überspringen
   [[ "$CHANNEL" == "beta" ]] && return 0
 
@@ -269,6 +300,8 @@ for entry in "${FILES[@]}"; do
 done
 
 chmod 777 "${BIN_DIR}" "${DATA_DIR}" "${STATE_DIR}" 2>/dev/null || true
+
+run_v2_migration_if_downloaded
 
 if [[ "${UPDATED_ANY}" != "1" ]]; then
   log "Kein Updatepaket installiert."
