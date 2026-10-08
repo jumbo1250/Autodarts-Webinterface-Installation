@@ -142,10 +142,6 @@ ADMIN_GPIO_IMAGE = "/home/peter/autodarts-data/GPIO_Setup.jpeg"
 
 # --- Webpanel Settings (damit man Kleinigkeiten ändern kann, ohne am Script zu schrauben) ---
 SETTINGS_PATH = "/var/lib/autodarts/webpanel-settings.json"
-AUTODARTS_UPDATE_LOG = "/var/log/autodarts_update.log"
-AUTODARTS_UPDATE_STATE = "/var/lib/autodarts/autodarts-update-state.json"
-AUTODARTS_UPDATE_CHECK = "/var/lib/autodarts/autodarts-update-check.json"
-AUTOUPDATE_SERVICE = "autodartsupdater.service"
 AUTODARTS_THEME_DIR = Path(os.environ.get("AUTODARTS_THEME_DIR", "/usr/local/bin/theme"))
 AUTODARTS_THEME_STATE_PATH = Path(os.environ.get("AUTODARTS_THEME_STATE_PATH", "/var/lib/autodarts/autodarts-theme-state.json"))
 AUTODARTS_THEME_PANEL_URL = os.environ.get("AUTODARTS_THEME_PANEL_URL", "http://10.77.0.1")
@@ -172,141 +168,6 @@ PI5_HEADLESS_RESOLUTION = os.environ.get("AUTODARTS_PI5_HEADLESS_RESOLUTION", "1
 PI5_HEADLESS_RATE = os.environ.get("AUTODARTS_PI5_HEADLESS_RATE", "60").strip() or "60"
 PI5_HEADLESS_OUTPUTS = ["HDMI-A-1", "HDMI-1"]
 
-
-# --- Autodarts Versionen (EINFACH pflegen) ---
-# Du änderst nur diese EINE Liste (Reihenfolge = Dropdown):
-#   "aktuell"  -> installiert immer die neueste Version (wie "latest")
-#   "zuletzt"  -> Rollback auf die zuletzt installierte Version (merkt sich das Panel automatisch)
-#   "1.0.4"    -> fixe Version (SemVer)
-#
-# Beispiel (so wie du es beschrieben hast):
-#   ["aktuell", "zuletzt", "1.0.4"]
-# Wenn später 1.0.6 stabil ist:
-#   ["aktuell", "zuletzt", "1.0.6", "1.0.4"]
-AUTODARTS_VERSION_MENU = ["aktuell", "zuletzt", "1.0.7", "1.0.6", "1.0.5", "1.0.4"]
-
-# Datei, in die das Panel automatisch die "zuletzt"-Version schreibt (musst du NICHT anfassen)
-AUTODARTS_LAST_VERSION_FILE = "/var/lib/autodarts/autodarts-last-version.json"
-
-_AUTODARTS_LATEST_CACHE = {"ts": 0.0, "ver": None}
-_SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+(?:-(?:beta|alpha)\.\d+)?$")
-
-# Updatequelle fuer den offiziellen Boardmanager-Installer.
-# get.autodarts.io bleibt bevorzugt, weil es aktuell die offizielle Quelle ist.
-# get.autodarts.com wird nur als vorsichtiger Fallback getestet/benutzt, wenn dort derselbe Pfad gueltig antwortet.
-AUTODARTS_INSTALLER_BASE_URLS = ["https://get.autodarts.io", "https://get.autodarts.com"]
-
-def autodarts_installer_fallback_cmd(*installer_args: str) -> str:
-    """Baut einen schlanken, sicheren Installer-Aufruf mit .io -> .com Fallback."""
-    bases = " ".join(shlex.quote(x) for x in AUTODARTS_INSTALLER_BASE_URLS)
-    args = " ".join(shlex.quote(str(x)) for x in installer_args if str(x).strip())
-    return (
-        "set -Eeuo pipefail\n"
-        "TMP_INSTALLER=\"$(mktemp /tmp/autodarts-installer.XXXXXX)\"\n"
-        "cleanup_autodarts_installer() { rm -f \"$TMP_INSTALLER\" 2>/dev/null || true; }\n"
-        "trap cleanup_autodarts_installer EXIT\n"
-        f"for AD_BASE in {bases}; do\n"
-        "  echo \"Teste Autodarts Installer: $AD_BASE\"\n"
-        "  if curl -fsSL --connect-timeout 5 --max-time 20 \"$AD_BASE\" -o \"$TMP_INSTALLER\"; then\n"
-        "    if head -n 1 \"$TMP_INSTALLER\" | grep -q '^#!' && grep -q 'INSTALL_DIR' \"$TMP_INSTALLER\"; then\n"
-        "      echo \"Nutze Autodarts Installer: $AD_BASE\"\n"
-        f"      bash \"$TMP_INSTALLER\" {args}\n"
-        "      exit $?\n"
-        "    fi\n"
-        "    echo \"Installer bei $AD_BASE sieht ungueltig aus.\"\n"
-        "  else\n"
-        "    echo \"Installer nicht erreichbar: $AD_BASE\"\n"
-        "  fi\n"
-        "done\n"
-        "echo \"FEHLER: Keine gueltige Autodarts-Installerquelle erreichbar (.io/.com).\" >&2\n"
-        "exit 1"
-    )
-
-def _menu_token(raw: str) -> str:
-    s = (raw or "").strip()
-    low = s.lower()
-    if low in {"aktuell", "aktuellste", "neueste", "neuste", "latest"}:
-        return "__LATEST__"
-    if low in {"zuletzt", "rollback", "vorige", "previous", "last"}:
-        return "__LAST__"
-    return s.lstrip("v").strip()
-
-def autodarts_stable_from_menu() -> str | None:
-    """Erste feste SemVer in AUTODARTS_VERSION_MENU gilt als 'stabil'."""
-    for x in AUTODARTS_VERSION_MENU:
-        tok = _menu_token(str(x))
-        if _SEMVER_RE.match(tok):
-            return tok
-    return None
-
-def autodarts_last_version() -> str | None:
-    try:
-        p = Path(AUTODARTS_LAST_VERSION_FILE)
-        if not p.exists():
-            return None
-        data = json.loads(p.read_text(encoding="utf-8", errors="ignore") or "{}")
-        v = str(data.get("last") or "").strip().lstrip("v")
-        return v if _SEMVER_RE.match(v) else None
-    except Exception:
-        return None
-
-def autodarts_set_last_version(v: str) -> None:
-    try:
-        v = (v or "").strip().lstrip("v")
-        if not _SEMVER_RE.match(v):
-            return
-        Path(AUTODARTS_LAST_VERSION_FILE).parent.mkdir(parents=True, exist_ok=True)
-        Path(AUTODARTS_LAST_VERSION_FILE).write_text(json.dumps({"last": v}, ensure_ascii=False), encoding="utf-8")
-    except Exception:
-        pass
-
-def autodarts_latest_cached(ttl_s: float = 60.0) -> str | None:
-    """Online 'aktuellste' Version (kurz gecached)."""
-    try:
-        now = time.time()
-        ts = float(_AUTODARTS_LATEST_CACHE.get("ts") or 0.0)
-        if now - ts < ttl_s:
-            return _AUTODARTS_LATEST_CACHE.get("ver")
-        ver = fetch_latest_autodarts_version()
-        _AUTODARTS_LATEST_CACHE["ts"] = now
-        _AUTODARTS_LATEST_CACHE["ver"] = ver
-        return ver
-    except Exception:
-        return None
-
-def build_autodarts_versions_dropdown() -> list[dict]:
-    """Dropdown-Optionen aus AUTODARTS_VERSION_MENU (kein Freitext)."""
-    stable = autodarts_stable_from_menu()
-    last = autodarts_last_version()
-    latest = autodarts_latest_cached()
-
-    choices: list[dict] = []
-    for x in AUTODARTS_VERSION_MENU:
-        tok = _menu_token(str(x))
-        if tok == "__LATEST__":
-            label = t("autodarts.latest_online", "Aktuellste (online: {latest})", latest=latest) if latest else t("autodarts.latest_online_unknown", "Aktuellste (online: unbekannt)")
-            choices.append({"value": "__LATEST__", "label": label})
-        elif tok == "__LAST__":
-            label = t("autodarts.last_rollback", "Zuletzt (Rollback: {last})", last=last) if last else t("autodarts.last_rollback_unavailable", "Zuletzt (Rollback: noch nicht verfügbar)")
-            choices.append({"value": "__LAST__", "label": label})
-        else:
-            if not _SEMVER_RE.match(tok):
-                continue
-            if stable and tok == stable:
-                choices.append({"value": tok, "label": t("autodarts.stable_label", "Stabil ({version})", version=tok)})
-            else:
-                choices.append({"value": tok, "label": tok})
-
-    # Doppelte raus (falls jemand z.B. 'aktuell' zweimal rein schreibt)
-    seen: set[str] = set()
-    out: list[dict] = []
-    for o in choices:
-        v = str(o.get("value") or "")
-        if not v or v in seen:
-            continue
-        seen.add(v)
-        out.append(o)
-    return out
 
 PINGTEST_STATE_DIR = "/var/lib/autodarts/pingtests"
 
@@ -510,13 +371,6 @@ def refresh_settings_if_needed(force: bool = False) -> None:
         ADMIN_PASSWORD = SETTINGS.get("admin_password", ADMIN_PASSWORD)
         AP_SSID_CHOICES = SETTINGS.get("ap_ssid_choices", AP_SSID_CHOICES)
         _SETTINGS_MTIME = mt
-
-def get_autodarts_versions_choices() -> list[dict]:
-    """Liste der erlaubten Versionen für das Dropdown.
-
-    Quelle ist AUTODARTS_VERSION_MENU (oben im Script). Kein Freitext.
-    """
-    return build_autodarts_versions_dropdown()
 
 
 
@@ -1230,23 +1084,11 @@ def wifi_reboot_cancel():
 def is_autodarts_active() -> bool:
     try:
         r = subprocess.run(
-            ["systemctl", "is-active", AUTODARTS_SERVICE],
-            capture_output=True,
-            text=True,
-            timeout=1.0,
+            ["/usr/local/bin/autodarts-userctl", "is-active"],
+            capture_output=True, text=True, timeout=2.0,
         )
-        return r.stdout.strip() == "active"
+        return r.returncode == 0
     except Exception:
-        return False
-
-
-def is_boardmanager_reachable() -> bool:
-    """Internet-Zugang prüfen via Socket-Connect zu 8.8.8.8:53."""
-    import socket
-    try:
-        socket.create_connection(("8.8.8.8", 53), timeout=1.5).close()
-        return True
-    except OSError:
         return False
 
 
@@ -2001,133 +1843,6 @@ def get_autodarts_version() -> str | None:
     except Exception:
         return None
 
-
-def _get_autodarts_updater_path() -> str | None:
-    """Versucht updater.sh zu finden (wird vom offiziellen Installer angelegt)."""
-    # Neben dem autodarts binary
-    bin_path = get_autodarts_binary_path()
-    if bin_path:
-        d = os.path.dirname(bin_path)
-        cand = os.path.join(d, "updater.sh")
-        if os.path.exists(cand):
-            return cand
-
-    # typische Orte
-    candidates = [
-        os.path.expanduser("~/.local/bin/updater.sh"),
-        "/home/peter/.local/bin/updater.sh",
-        "/home/pi/.local/bin/updater.sh",
-        "/root/.local/bin/updater.sh",
-    ]
-    for c in candidates:
-        if c and os.path.exists(c):
-            return c
-    return None
-
-
-def load_update_state() -> dict:
-    try:
-        with open(AUTODARTS_UPDATE_STATE, "r", encoding="utf-8") as f:
-            return json.load(f) or {}
-    except Exception:
-        return {}
-
-
-def save_update_state(state: dict):
-    try:
-        os.makedirs(os.path.dirname(AUTODARTS_UPDATE_STATE), exist_ok=True)
-        with open(AUTODARTS_UPDATE_STATE, "w", encoding="utf-8") as f:
-            json.dump(state, f, indent=2)
-    except Exception:
-        pass
-
-
-def start_autodarts_update_background(
-    cmd_override: str | None = None,
-    requested_version: str | None = None,
-    purpose: str | None = None,
-    disable_autoupdate_after: bool = False,
-) -> tuple[bool, str]:
-    """Startet ein Autodarts-Update/Install im Hintergrund und loggt nach AUTODARTS_UPDATE_LOG.
-
-    cmd_override: wenn gesetzt, wird genau dieses Kommando in `bash -lc` ausgeführt.
-    requested_version/purpose: nur Info für Status/Log.
-    disable_autoupdate_after: am Ende best-effort Auto-Updater deaktivieren (Default soll AUS bleiben).
-    """
-    # Läuft schon?
-    state = load_update_state()
-    pid = state.get("pid")
-    if pid:
-        try:
-            os.kill(int(pid), 0)
-            return False, t("autodarts.update_already_running", "Update läuft bereits.")
-        except Exception:
-            pass  # PID tot -> weiter
-
-    # Command bestimmen
-    cmd = (cmd_override or "").strip()
-    if not cmd:
-        cmd = (SETTINGS.get("autodarts_update_cmd") or "").strip()
-
-    updater = _get_autodarts_updater_path()
-    safe_updater = "/usr/local/bin/autodarts-safe-updater.sh"
-    if not cmd:
-        if os.path.exists(safe_updater):
-            cmd = shlex.quote(safe_updater)
-        elif updater:
-            cmd = updater
-        else:
-            # Fallback auf offiziellen Installer (holt auch updater.sh neu), mit .io -> .com Sicherheitsnetz
-            cmd = autodarts_installer_fallback_cmd()
-
-    if disable_autoupdate_after:
-        # Danach: Auto-Updater sicherheitshalber deaktivieren (egal ob Service existiert)
-        cmd += f"; (sudo -n systemctl disable --now {AUTOUPDATE_SERVICE} >/dev/null 2>&1 || systemctl disable --now {AUTOUPDATE_SERVICE} >/dev/null 2>&1 || true)"
-
-    # Log-File öffnen
-    try:
-        os.makedirs(os.path.dirname(AUTODARTS_UPDATE_LOG), exist_ok=True)
-    except Exception:
-        pass
-
-    try:
-        logf = open(AUTODARTS_UPDATE_LOG, "a", encoding="utf-8")
-        logf.write("\n\n===== Autodarts Job gestartet: %s =====\n" % time.strftime("%Y-%m-%d %H:%M:%S"))
-        if purpose:
-            logf.write(f"Purpose: {purpose}\n")
-        if requested_version:
-            logf.write(f"Requested Version: {requested_version}\n")
-        logf.write(f"CMD: {cmd}\n")
-        logf.flush()
-
-        # in bash ausführen (für process substitution)
-        # WICHTIG: Wenn das Webpanel als root läuft, soll der Autodarts-Installer/Updater
-        # unter dem User 'peter' laufen (sonst landet Binary+Config unter /root).
-        popen_cmd = ["bash", "-lc", cmd]
-        if os.geteuid() == 0:
-            if shutil.which("sudo"):
-                popen_cmd = ["sudo", "-u", "peter", "-H", "bash", "-lc", cmd]
-            elif shutil.which("runuser"):
-                popen_cmd = ["runuser", "-l", "peter", "-c", "bash -lc " + shlex.quote(cmd)]
-            elif shutil.which("su"):
-                popen_cmd = ["su", "-", "peter", "-c", "bash -lc " + shlex.quote(cmd)]
-        p = subprocess.Popen(
-            popen_cmd,
-            stdout=logf,
-            stderr=logf,
-            close_fds=True,
-        )
-
-        save_update_state({
-            "pid": p.pid,
-            "started": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "cmd": cmd,
-            "purpose": purpose or "",
-            "requested_version": requested_version or "",
-        })
-        return True, "Job gestartet."
-    except Exception as e:
-        return False, t("jobs.start_failed", "Job konnte nicht gestartet werden: {error}", error=e)
 
 def get_webpanel_version() -> str | None:
     """Liest die installierte Webpanel-Version (lokale version.txt)."""
@@ -3514,72 +3229,6 @@ def caller_wled_connection_status() -> dict:
 
 
 
-
-
-# ---------------- Update-Check (nur bei Klick) ----------------
-
-def load_update_check() -> dict:
-    try:
-        with open(AUTODARTS_UPDATE_CHECK, "r", encoding="utf-8") as f:
-            return json.load(f) or {}
-    except Exception:
-        return {}
-
-def save_update_check(d: dict):
-    os.makedirs(os.path.dirname(AUTODARTS_UPDATE_CHECK), exist_ok=True)
-    with open(AUTODARTS_UPDATE_CHECK, "w", encoding="utf-8") as f:
-        json.dump(d, f, indent=2)
-
-def _get_platform_arch_for_autodarts() -> tuple[str, str]:
-    # Plattform ist im Installer 'linux'
-    platform = "linux"
-    arch = subprocess.run(["uname", "-m"], capture_output=True, text=True).stdout.strip()
-    if arch in ("x86_64", "amd64"):
-        arch = "amd64"
-    elif arch in ("aarch64", "arm64"):
-        arch = "arm64"
-    elif arch == "armv7l":
-        arch = "armv7l"
-    return platform, arch
-
-def _get_updater_channel() -> str:
-    # Versuche CHANNEL aus updater.sh zu lesen (latest/beta)
-    updater = _get_autodarts_updater_path()
-    if updater:
-        try:
-            for line in Path(updater).read_text(encoding="utf-8", errors="ignore").splitlines():
-                if line.startswith("CHANNEL="):
-                    v = line.split("=", 1)[1].strip().strip('"').strip("'")
-                    if v:
-                        return v
-        except Exception:
-            pass
-    return "latest"
-
-def fetch_latest_autodarts_version(channel: str | None = None, timeout_s: float = 2.5) -> str | None:
-    try:
-        platform, arch = _get_platform_arch_for_autodarts()
-        ch = (channel or _get_updater_channel()).strip() or "latest"
-        # Installer nutzt:
-        # latest: detection/latest/<platform>/<arch>/RELEASES.json
-        # beta:   detection/beta/<platform>/<arch>/RELEASES.json
-        # .io bleibt bevorzugt; .com nur, wenn derselbe Detection-Pfad gueltiges JSON liefert.
-        for base in AUTODARTS_INSTALLER_BASE_URLS:
-            url = f"{base}/detection/{ch}/{platform}/{arch}/RELEASES.json"
-            try:
-                req = urllib.request.Request(url, headers={"User-Agent": "AutodartsPanel"})
-                with urllib.request.urlopen(req, timeout=timeout_s) as r:
-                    data = json.loads(r.read().decode("utf-8", errors="ignore") or "{}")
-                cv = str(data.get("currentVersion", "")).strip()
-                if cv.startswith("v"):
-                    cv = cv[1:]
-                if cv:
-                    return cv
-            except Exception:
-                continue
-        return None
-    except Exception:
-        return None
 
 
 # ---------------- Verbindungstest (Ping) ----------------
@@ -7355,7 +7004,6 @@ def index():
     msg = request.args.get('msg', '') or (ensure_msg or '')
     open_adver = (request.args.get('open_adver') == '1')
 
-    update_check = load_update_check()
     webpanel_version = get_webpanel_version()
     webpanel_check = load_webpanel_update_check()
     _wc = SETTINGS.get("webpanel_channel", "stable")
@@ -7368,10 +7016,6 @@ def index():
     extensions_last = load_extensions_update_last() if admin_unlocked else {}
     extensions_log_tail = tail_file(EXTENSIONS_UPDATE_LOG, n=25, max_chars=3500) if admin_unlocked else ""
     extensions_v2 = extensions_v2_status()
-    update_available = bool(update_check.get('installed') and update_check.get('latest') and update_check.get('installed') != update_check.get('latest'))
-
-    update_state = load_update_state() if admin_unlocked else {}
-    update_log_tail = tail_file(AUTODARTS_UPDATE_LOG, n=25, max_chars=3500) if admin_unlocked else ""
 
     os_update_state = load_os_update_state() if admin_unlocked else {}
     os_update_log_tail = tail_file(OS_UPDATE_LOG, n=25, max_chars=3500) if admin_unlocked else ""
@@ -7406,8 +7050,6 @@ def index():
     # Buttons
     can_save_creds = caller_exists
     can_check = caller_installed and caller_exists and bool(caller_email and caller_board_id)
-
-    boardmanager_ok = is_boardmanager_reachable()
 
     # Admin / Doku
     admin_gpio_exists = os.path.exists(ADMIN_GPIO_IMAGE)
@@ -7454,11 +7096,8 @@ def index():
         adminerr=adminerr,
         adminmsg=adminmsg,
         adminok=adminok,
-        update_state=update_state,
-        update_log_tail=update_log_tail,
         wled_service_exists=wled_service_exists,
         wled_service_active=wled_service_active,
-        boardmanager_ok=boardmanager_ok,
         admin_gpio_exists=admin_gpio_exists,
         pi_csv_tail=pi_csv_tail,
         pi_mon_status=pi_mon_status,
@@ -7486,8 +7125,6 @@ def index():
         wifi_conn_name=wifi_conn_name,
         wifi_autoconnect_enabled=wifi_autoconnect_enabled,
         msg=msg,
-        update_check=update_check,
-        update_available=update_available,
         wifi_interface=WIFI_INTERFACE,
         webpanel_version=webpanel_version,
         webpanel_check=webpanel_check,
@@ -7496,10 +7133,6 @@ def index():
         webpanel_log_tail=webpanel_log_tail,
         webpanel_channel=str(SETTINGS.get("webpanel_channel") or "stable"),
         uvc_backup_info=uvc_backup_info,
-        autodarts_versions_choices=get_autodarts_versions_choices(),
-        autodarts_stable_version=autodarts_stable_from_menu(),
-        autodarts_latest_online=autodarts_latest_cached(),
-        autodarts_last_version=autodarts_last_version(),
         settings_path=SETTINGS_PATH,
         extensions_state=extensions_state,
         extensions_last=extensions_last,
@@ -8695,50 +8328,6 @@ def admin_ufw_disable():
     ufw_refresh_state()
     short = (msg.splitlines()[0] if msg else (t("generic.ok", "OK") if ok else t("generic.error", "Fehler")))
     return redirect(url_for("index", admin="1", adminmsg=short, adminok=("1" if ok else "0")) + "#admin_details")
-@app.route("/admin/autodarts/check", methods=["POST"])
-def admin_autodarts_check():
-    if not bool(session.get("admin_unlocked", False)):
-        return _forbidden_response()
-
-    installed = get_autodarts_version()
-    latest = fetch_latest_autodarts_version()
-    channel = _get_updater_channel()
-    data = {
-        "ts": int(time.time()),
-        "installed": installed,
-        "latest": latest,
-        "channel": channel,
-    }
-    save_update_check(data)
-
-    if installed and latest:
-        if installed == latest:
-            msg = t("autodarts.no_update_available", "Kein Update verfügbar (bereits v{installed}).", installed=installed)
-        else:
-            msg = t("autodarts.update_available", "Update verfügbar: v{installed} → v{latest}.", installed=installed, latest=latest)
-    else:
-        msg = t("autodarts.update_check_unavailable", "Update-Check nicht möglich (Version oder Internet nicht verfügbar).")
-
-    return redirect(url_for("index", admin="1", adminmsg=msg, adminok="1") + "#admin_details")
-
-
-@app.route("/admin/autodarts/update", methods=["POST"])
-def admin_autodarts_update():
-    if not bool(session.get("admin_unlocked", False)):
-        return _forbidden_response()
-
-    installed = get_autodarts_version()
-    latest = fetch_latest_autodarts_version()
-
-    # Wenn wir sicher wissen, dass es kein Update gibt → nicht starten
-    if installed and latest and installed == latest:
-        msg = t("autodarts.no_update_available", "Kein Update verfügbar (bereits v{installed}).", installed=installed)
-        return redirect(url_for("index", admin="1", adminok="1", adminmsg=msg) + "#admin_details")
-
-    ok, msg = start_autodarts_update_background()
-    return redirect(url_for("index", admin="1", adminok=("1" if ok else "0"), adminmsg=msg) + "#admin_details")
-
-
 @app.route("/admin/webpanel/check", methods=["POST"])
 def admin_webpanel_check():
     # Admin muss entsperrt sein
@@ -8867,6 +8456,11 @@ def api_calibration_mtime():
         return jsonify({"exists": True, "mtime": int(mtime), "display": dt.strftime("%d.%m.%Y %H:%M")})
     except Exception as e:
         return jsonify({"exists": False, "mtime": None, "display": None, "error": str(e)})
+
+
+@app.route("/board-manager")
+def board_manager():
+    return render_template("board_manager.html")
 
 
 @app.route("/board-manager/cam/<int:cam_id>")
@@ -9044,7 +8638,7 @@ def camera_mode_start():
         save_cam_config(cfg)
         return redirect(url_for("index", msg=t("camera.none_connected", "Keine Kamera erkannt. Bitte Kamera anschließen und erneut versuchen.")))
 
-    subprocess.run(["systemctl", "stop", AUTODARTS_SERVICE], capture_output=True, text=True)
+    subprocess.run(["/usr/local/bin/autodarts-userctl", "stop"], capture_output=True, text=True)
     subprocess.run(["pkill", "-f", "mjpg_streamer"], capture_output=True, text=True)
 
     _set_camera_mode_state(cfg, True)
@@ -9057,7 +8651,7 @@ def camera_mode_start():
 def camera_mode_end():
     """Kamera-Einstellung beenden: Streams stoppen, Autodarts neu starten, Flag zurücksetzen."""
     subprocess.run(["pkill", "-f", "mjpg_streamer"], capture_output=True, text=True)
-    subprocess.run(["systemctl", "restart", AUTODARTS_SERVICE], capture_output=True, text=True)
+    subprocess.run(["/usr/local/bin/autodarts-userctl", "restart"], capture_output=True, text=True)
 
     cfg = load_cam_config()
     _set_camera_mode_state(cfg, False)
@@ -9474,103 +9068,6 @@ def wifi_forget_saved():
     return redirect(url_for("wifi"))
 
 
-@app.route("/autodarts/version/install", methods=["POST"])
-def autodarts_install_version():
-    """
-    Installiert gezielt eine freigegebene Autodarts-Version (kein Freitext).
-
-    Quellen:
-      - Dropdown aus AUTODARTS_VERSION_MENU (oben im Script)
-      - "Auf stabile Version wechseln" -> erste feste Version (SemVer) in der Liste
-      - "aktuell" -> neueste Online-Version (Installer ohne Versionsangabe)
-      - "zuletzt" -> Rollback auf die zuletzt installierte Version (merkt sich das Panel automatisch)
-    """
-
-    v_raw = (request.form.get("version") or "").strip()
-    if not v_raw:
-        return redirect(url_for("index", msg=t("autodarts.select_version", "Bitte eine Version auswählen."), open_adver="1") + "#ad-version")
-
-    stable = autodarts_stable_from_menu()
-
-    special: str | None = None
-    req_label = ""
-
-    # "stable" => erste SemVer aus Liste
-    if v_raw.lower() == "stable":
-        if not stable:
-            return redirect(url_for("index", msg=t("autodarts.no_stable_version_defined", "Keine stabile Version hinterlegt. Bitte oben in AUTODARTS_VERSION_MENU eine feste Version (z.B. 1.0.4) eintragen."), open_adver="1") + "#ad-version")
-        selected = stable
-        req_label = f"Stabil ({stable})"
-    else:
-        # Nur freigegebene Dropdown-Werte erlauben
-        allowed = {str(opt.get("value")) for opt in get_autodarts_versions_choices()}
-        if v_raw not in allowed:
-            return redirect(url_for("index", msg=t("autodarts.version_not_allowed", "Diese Version ist nicht freigegeben. Bitte über das Dropdown auswählen."), open_adver="1") + "#ad-version")
-
-        selected = v_raw
-        if selected in ("__LATEST__", "__LAST__"):
-            special = selected
-
-        if special == "__LATEST__":
-            latest = autodarts_latest_cached()
-            req_label = t("autodarts.latest_online", "Aktuellste (online: {latest})", latest=latest) if latest else t("autodarts.latest_short", "Aktuellste")
-        elif special == "__LAST__":
-            last = autodarts_last_version()
-            req_label = t("autodarts.last_rollback", "Zuletzt (Rollback: {last})", last=last) if last else t("autodarts.last_rollback_short", "Zuletzt (Rollback)")
-        else:
-            if stable and selected == stable:
-                req_label = t("autodarts.stable_label", "Stabil ({version})", version=selected)
-            else:
-                req_label = str(selected)
-
-    # Aktuell installierte Version ermitteln (für "zuletzt")
-    installed = (get_autodarts_version() or "").strip().lstrip("v")
-
-    # Ziel bestimmen + Command bauen
-    if special == "__LATEST__":
-        # Wichtig: Keine Versionsangabe -> Installer nimmt die neueste Version.
-        cmd = autodarts_installer_fallback_cmd("-u")
-        req = "latest"
-
-        # vorherige Version merken
-        if installed and _SEMVER_RE.match(installed):
-            autodarts_set_last_version(installed)
-
-    elif special == "__LAST__":
-        target = autodarts_last_version()
-        if not target:
-            return redirect(url_for("index", msg=t("autodarts.rollback_not_possible", "Rollback nicht möglich: Es ist noch keine 'zuletzt'-Version gespeichert."), open_adver="1") + "#ad-version")
-
-        # Toggle-Verhalten: aktuelle Version als 'zuletzt' merken, damit man wieder zurück kann
-        if installed and _SEMVER_RE.match(installed):
-            autodarts_set_last_version(installed)
-
-        cmd = autodarts_installer_fallback_cmd("-u", target)
-        req = target
-
-    else:
-        v = (str(selected) or "").strip().lstrip("v")
-        if not _SEMVER_RE.match(v):
-            return redirect(url_for("index", msg=t("autodarts.invalid_version", "Ungültige Versionsangabe."), open_adver="1") + "#ad-version")
-
-        # vorherige Version merken
-        if installed and _SEMVER_RE.match(installed):
-            autodarts_set_last_version(installed)
-
-        cmd = autodarts_installer_fallback_cmd("-u", v)
-        req = v
-
-    ok, _m = start_autodarts_update_background(
-        cmd_override=cmd,
-        requested_version=req,
-        purpose="install-version",
-        disable_autoupdate_after=True,  # Default soll AUS bleiben
-    )
-    if ok:
-        return redirect(url_for("index", msg=t("autodarts.install_update_started", "Autodarts Install/Update gestartet (Ziel: {target}).", target=req_label), open_adver="1") + "#ad-version")
-    return redirect(url_for("index", msg=_m, open_adver="1") + "#ad-version")
-
-
 @app.route("/wifi/ping/start", methods=["POST"])
 def wifi_ping_start():
     ok, msg, job_id = start_ping_test(count=30)
@@ -9984,8 +9481,9 @@ def _post_update_1762_once():
             os.chmod(str(safe_updater), 0o755)
             plog(f"OK: Safe-Updater installiert: {safe_updater}")
 
-            if service_exists(AUTOUPDATE_SERVICE) or Path(f"/etc/systemd/system/{AUTOUPDATE_SERVICE}").exists():
-                override_dir = Path(f"/etc/systemd/system/{AUTOUPDATE_SERVICE}.d")
+            _autoupdate_svc = "autodartsupdater.service"
+            if service_exists(_autoupdate_svc) or Path(f"/etc/systemd/system/{_autoupdate_svc}").exists():
+                override_dir = Path(f"/etc/systemd/system/{_autoupdate_svc}.d")
                 override_dir.mkdir(parents=True, exist_ok=True)
                 override_file = override_dir / "override.conf"
                 override_file.write_text(f"[Service]\nExecStart=\nExecStart={safe_updater}\n", encoding="utf-8")

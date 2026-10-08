@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dartboard Manager</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0b0b0b; color: #eee; font-family: sans-serif;
+      height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+    }
+
+    /* --- Toolbar --- */
+    #toolbar {
+      display: flex; align-items: center; gap: 14px; flex-shrink: 0;
+      padding: 8px 14px; background: #141414; border-bottom: 1px solid #2a2a2a;
+      font-size: 0.88rem;
+    }
+    #toolbar a.back { color: #aaa; text-decoration: none; }
+    #toolbar a.back:hover { color: #eee; }
+    #toolbar strong { color: #eee; font-size: 1rem; }
+    #spiderToggleBtn {
+      margin-left: auto; padding: 5px 14px; border-radius: 5px;
+      background: #222; border: 1px solid #555; color: #eee;
+      cursor: pointer; font-size: 0.82rem;
+    }
+    #spiderToggleBtn:hover { background: #2e2e2e; }
+    #spiderToggleBtn.active { border-color: #ff3b30; color: #ff3b30; }
+
+    /* --- Main layout --- */
+    #main { flex: 1; display: flex; overflow: hidden; }
+
+    /* TUI: 2/3 */
+    #tui-panel { flex: 2; min-width: 0; position: relative; }
+    #tui-panel iframe { width: 100%; height: 100%; border: none; display: block; }
+    #tui-offline {
+      display: none; position: absolute; inset: 0;
+      align-items: center; justify-content: center; flex-direction: column; gap: 12px;
+      background: #0e0e0e; color: #666; font-size: 0.9rem; text-align: center;
+    }
+    #tui-offline button {
+      padding: 6px 18px; border-radius: 6px; background: #222; border: 1px solid #555;
+      color: #eee; cursor: pointer; font-size: 0.85rem;
+    }
+    #tui-offline button:hover { background: #2e2e2e; }
+
+    /* Cam panel: 1/3, capped at 400px, min 280px */
+    #cam-panel {
+      width: min(33%, 400px);
+      min-width: 280px;
+      flex-shrink: 0;
+      display: flex; flex-direction: column;
+      border-left: 1px solid #2a2a2a; overflow-y: auto; background: #0e0e0e;
+    }
+
+    /* --- Cam cards --- */
+    .cam-card { border-bottom: 1px solid #1e1e1e; padding: 8px; }
+    .cam-card-header {
+      display: flex; align-items: center; gap: 6px;
+      margin-bottom: 6px; font-size: 0.8rem;
+    }
+    .cam-label   { color: #aaa; font-weight: 600; }
+    .cam-status  { font-size: 0.72rem; color: #666; flex: 1; }
+    a.fullscreen { color: #6be26b; font-size: 0.75rem; text-decoration: none; flex-shrink: 0; }
+    a.fullscreen:hover { text-decoration: underline; }
+
+    /* Stream wrapper */
+    .stream-wrap {
+      position: relative; background: #111; border-radius: 4px; overflow: hidden;
+    }
+    .stream-wrap img {
+      width: 100%; display: block;
+      aspect-ratio: 16/9; object-fit: contain;
+      cursor: pointer;
+    }
+    .cam-spider {
+      position: absolute; inset: 0; width: 100%; height: 100%;
+      display: none; pointer-events: none;
+    }
+    /* State overlay — shown when /api/cams/state says not running */
+    .cam-state-overlay {
+      display: none; position: absolute; inset: 0;
+      background: #000;
+      align-items: center; justify-content: center;
+      flex-direction: column; gap: 8px;
+      text-align: center; padding: 12px;
+      pointer-events: none;
+    }
+    .overlay-title { color: #888; font-size: 0.82rem; font-weight: 600; }
+    .overlay-hint  { color: #555; font-size: 0.72rem; line-height: 1.5; }
+  </style>
+</head>
+<body>
+
+<div id="toolbar">
+  <a href="/" class="back">← Zurück</a>
+  <strong>Dartboard Manager</strong>
+  <button id="spiderToggleBtn" onclick="toggleSpider()">Kalibrierung anzeigen</button>
+</div>
+
+<div id="main">
+
+  <!-- TUI via ttyd (2/3) -->
+  <div id="tui-panel">
+    <iframe id="tuiFrame" src="" allow="clipboard-read; clipboard-write" title="Autodarts TUI"></iframe>
+    <div id="tui-offline">
+      <span>Terminal nicht erreichbar (ttyd :7681)</span>
+      <button onclick="reloadTui()">Erneut versuchen</button>
+    </div>
+  </div>
+
+  <!-- Cam0 / Cam1 / Cam2 (1/3) -->
+  <div id="cam-panel">
+    {% for cam_i in [0, 1, 2] %}
+    <div class="cam-card">
+      <div class="cam-card-header">
+        <span class="cam-label">Cam{{ cam_i }}</span>
+        <span id="cam-status-{{ cam_i }}" class="cam-status"></span>
+        <a href="/board-manager/cam/{{ cam_i }}" target="_blank" class="fullscreen">Vollbild</a>
+      </div>
+      <div class="stream-wrap">
+        <img id="cam-img-{{ cam_i }}" src="" alt="Cam{{ cam_i }}"
+             onclick="window.open('/board-manager/cam/{{ cam_i }}', '_blank')">
+        <svg id="cam-spider-{{ cam_i }}" class="cam-spider"
+             viewBox="0 0 1280 720" preserveAspectRatio="none"></svg>
+        <div id="cam-overlay-{{ cam_i }}" class="cam-state-overlay">
+          <span class="overlay-title">Stream gestoppt</span>
+          <span class="overlay-hint">
+            Bitte in der Autodarts-TUI<br>auf „Start" klicken,<br>
+            damit die Kamerabilder<br>angezeigt werden.
+          </span>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+</div>
+
+<script>
+// Host aus Browser-URL ableiten — niemals 127.0.0.1 hardcoden
+const HOST      = window.location.hostname;
+const DARTS_URL = 'http://' + HOST + ':3180';
+const TTYD_URL  = 'http://' + HOST + ':7681';
+const NS        = 'http://www.w3.org/2000/svg';
+
+/* ====================================================
+   TUI
+   ==================================================== */
+const tuiFrame   = document.getElementById('tuiFrame');
+const tuiOffline = document.getElementById('tui-offline');
+
+function loadTui() {
+  tuiFrame.style.display = 'block';
+  tuiOffline.style.display = 'none';
+  tuiFrame.src = TTYD_URL;
+}
+function reloadTui() { tuiFrame.src = ''; setTimeout(loadTui, 300); }
+tuiFrame.addEventListener('error', () => {
+  tuiFrame.style.display = 'none';
+  tuiOffline.style.display = 'flex';
+});
+loadTui();
+
+/* ====================================================
+   Cam-State-Polling  /api/cams/state
+   ==================================================== */
+let camsRunning = null;  // null = noch unbekannt
+
+function setCamsRunning(ok) {
+  if (ok === camsRunning) return;
+  camsRunning = ok;
+  for (let i = 0; i < 3; i++) {
+    const img     = document.getElementById('cam-img-' + i);
+    const overlay = document.getElementById('cam-overlay-' + i);
+    overlay.style.display = ok ? 'none' : 'flex';
+    if (ok) {
+      // Neu laden mit Cache-Buster damit der Browser nicht ein altes Bild cached
+      img.src = DARTS_URL + '/api/streams/cams/' + i + '?r=' + Date.now();
+    }
+  }
+}
+
+async function pollCamState() {
+  try {
+    const r = await fetch(DARTS_URL + '/api/cams/state', { cache: 'no-store' });
+    if (!r.ok) { setCamsRunning(false); return; }
+    const d = await r.json();
+    let ok;
+    if (Array.isArray(d)) {
+      ok = d.some(c => c.isOpened === true && c.isRunning === true);
+    } else {
+      ok = d.isOpened === true && d.isRunning === true;
+    }
+    setCamsRunning(ok);
+  } catch {
+    /* Netzwerkfehler → aktuellen Zustand beibehalten */
+  }
+}
+
+// Streams sofort laden (optimistisch), gleichzeitig Status prüfen
+for (let i = 0; i < 3; i++) {
+  document.getElementById('cam-img-' + i).src = DARTS_URL + '/api/streams/cams/' + i;
+}
+pollCamState();
+setInterval(pollCamState, 3000);
+
+/* ====================================================
+   Kalibrierungs-Spinne
+   ==================================================== */
+let spiderVisible = false;
+let spiderLoaded  = false;
+let calibData     = null;
+let geomData      = null;
+
+function drawSpider(camId) {
+  const svg = document.getElementById('cam-spider-' + camId);
+  if (!svg) return;
+  svg.innerHTML = '';
+
+  const camGeo  = geomData && geomData.cams && geomData.cams[camId];
+  const camData = calibData && calibData[String(camId)];
+  if (!camData) return;
+
+  const w = camGeo ? camGeo.width  : 1280;
+  const h = camGeo ? camGeo.height : 720;
+  svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+
+  function ellipseParams(e) {
+    if (!e) return null;
+    // Flat array: [cx, cy, rx, ry, angle]
+    if (Array.isArray(e) && !Array.isArray(e[0]) && e.length >= 4)
+      return { cx: +e[0], cy: +e[1], rx: +e[2], ry: +e[3], angle: +(e[4] ?? 0) };
+    // OpenCV RotatedRect: [[cx,cy],[w,h],angle]
+    if (Array.isArray(e) && Array.isArray(e[0]) && e.length >= 2) {
+      const s = Array.isArray(e[1]) ? e[1] : null;
+      if (s) return { cx: +e[0][0], cy: +e[0][1], rx: +s[0] / 2, ry: +s[1] / 2, angle: +(e[2] ?? 0) };
+    }
+    if (Array.isArray(e)) return null;
+    // Object: try many field name conventions
+    const cx = e.cx ?? e.centerX ?? e.x
+            ?? (e.center != null ? (Array.isArray(e.center) ? e.center[0] : e.center.x) : null);
+    const cy = e.cy ?? e.centerY ?? e.y
+            ?? (e.center != null ? (Array.isArray(e.center) ? e.center[1] : e.center.y) : null);
+    let rx = e.rx ?? e.radiusX ?? e.a ?? null;
+    let ry = e.ry ?? e.radiusY ?? e.b ?? null;
+    if (rx == null) { const w = e.width  ?? (e.size != null ? (Array.isArray(e.size) ? e.size[0] : e.size.width)  : null); if (w != null) rx = w / 2; }
+    if (ry == null) { const h = e.height ?? (e.size != null ? (Array.isArray(e.size) ? e.size[1] : e.size.height) : null); if (h != null) ry = h / 2; }
+    const angle = e.angle ?? e.rotation ?? e.theta ?? e.phi ?? 0;
+    if (cx == null || cy == null || rx == null || ry == null) return null;
+    return { cx: +cx, cy: +cy, rx: +rx, ry: +ry, angle: +angle };
+  }
+
+  // 4 Ringe als glatte Ellipsen in Rot
+  const rings = [
+    { key: 'doubleOuter', sw: '2.5' },
+    { key: 'doubleInner', sw: '2'   },
+    { key: 'trebleOuter', sw: '2'   },
+    { key: 'trebleInner', sw: '2'   },
+  ];
+  for (const ring of rings) {
+    const p = ellipseParams(camData[ring.key]);
+    if (!p) {
+      // Fallback: Polygon aus *Points wenn kein Ellipsen-Objekt vorhanden
+      const pts = camData[ring.key + 'Points'];
+      if (!pts || !pts.length) continue;
+      const poly = document.createElementNS(NS, 'polygon');
+      poly.setAttribute('points', pts.map(pt => pt.join(',')).join(' '));
+      poly.setAttribute('fill', 'none');
+      poly.setAttribute('stroke', '#ff3b30');
+      poly.setAttribute('stroke-width', ring.sw);
+      poly.setAttribute('opacity', '0.9');
+      poly.setAttribute('vector-effect', 'non-scaling-stroke');
+      svg.appendChild(poly);
+      continue;
+    }
+    const el = document.createElementNS(NS, 'ellipse');
+    el.setAttribute('cx', p.cx);
+    el.setAttribute('cy', p.cy);
+    el.setAttribute('rx', p.rx);
+    el.setAttribute('ry', p.ry);
+    el.setAttribute('transform', `rotate(${p.angle} ${p.cx} ${p.cy})`);
+    el.setAttribute('fill', 'none');
+    el.setAttribute('stroke', '#ff3b30');
+    el.setAttribute('stroke-width', ring.sw);
+    el.setAttribute('opacity', '0.9');
+    el.setAttribute('vector-effect', 'non-scaling-stroke');
+    svg.appendChild(el);
+  }
+
+  // Segmentlinien (Bull → jeder doubleOuter-Punkt)
+  if (camData.bull && camData.doubleOuterPoints) {
+    const [bx, by] = camData.bull;
+    for (const [px, py] of camData.doubleOuterPoints) {
+      const line = document.createElementNS(NS, 'line');
+      line.setAttribute('x1', bx); line.setAttribute('y1', by);
+      line.setAttribute('x2', px); line.setAttribute('y2', py);
+      line.setAttribute('stroke', '#ff3b30');
+      line.setAttribute('stroke-width', '1');
+      line.setAttribute('opacity', '0.35');
+      line.setAttribute('vector-effect', 'non-scaling-stroke');
+      svg.appendChild(line);
+    }
+    // Bull-Punkt
+    const dot = document.createElementNS(NS, 'circle');
+    dot.setAttribute('cx', bx); dot.setAttribute('cy', by);
+    dot.setAttribute('r', '7');
+    dot.setAttribute('fill', '#ff3b30');
+    dot.setAttribute('stroke', '#fff');
+    dot.setAttribute('stroke-width', '1.5');
+    dot.setAttribute('opacity', '0.9');
+    svg.appendChild(dot);
+  }
+}
+
+function updateCamStatus() {
+  if (!geomData || !geomData.cams) return;
+  for (let i = 0; i < 3; i++) {
+    const el  = document.getElementById('cam-status-' + i);
+    if (!el) continue;
+    const cam = geomData.cams[i];
+    if (!cam) { el.textContent = ''; continue; }
+    if (cam.calibrating) {
+      el.textContent = 'Kalibrierung läuft…'; el.style.color = '#ffaa00';
+    } else if (cam.fit_failed) {
+      el.textContent = '✗ Fehler'; el.style.color = '#ff6b6b';
+    } else if (cam.calibrated) {
+      el.textContent = '✓ kalibriert'; el.style.color = '#6be26b';
+    } else {
+      el.textContent = 'nicht kalibriert'; el.style.color = '#888';
+    }
+  }
+}
+
+async function loadSpiderData() {
+  const btn = document.getElementById('spiderToggleBtn');
+  btn.disabled = true;
+  btn.textContent = 'Lade…';
+  try {
+    const [geomRes, ellipsesRes] = await Promise.all([
+      fetch(DARTS_URL + '/api/config/calibration/geometry'),
+      fetch(DARTS_URL + '/api/config/calibration/ellipses')
+    ]);
+    geomData  = await geomRes.json();
+    calibData = await ellipsesRes.json();
+    spiderLoaded = true;
+    console.log('[Spider] calibData cam0:', JSON.stringify(calibData && calibData['0']));
+    updateCamStatus();
+    for (let i = 0; i < 3; i++) drawSpider(i);
+  } catch {
+    btn.textContent = 'Fehler – erneut versuchen';
+    btn.disabled = false;
+    return false;
+  }
+  btn.disabled = false;
+  return true;
+}
+
+async function toggleSpider() {
+  const btn = document.getElementById('spiderToggleBtn');
+  if (!spiderLoaded) {
+    const ok = await loadSpiderData();
+    if (!ok) return;
+    spiderVisible = true;
+  } else {
+    spiderVisible = !spiderVisible;
+  }
+  document.querySelectorAll('.cam-spider').forEach(svg => {
+    svg.style.display = spiderVisible ? 'block' : 'none';
+  });
+  btn.textContent = spiderVisible ? 'Kalibrierung ausblenden' : 'Kalibrierung anzeigen';
+  btn.classList.toggle('active', spiderVisible);
+}
+</script>
+</body>
+</html>

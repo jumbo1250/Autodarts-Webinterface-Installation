@@ -336,6 +336,38 @@ EOF
   log "OK: autodarts-tui.service installiert"
 }
 
+# ─── §3 Caller: boot-stabilize.conf Drop-in bereinigen ───────────────────────
+# Das Drop-in enthält eine [Unit]-Abhängigkeit auf den alten System-Service
+# autodarts.service. Da v2 als User-Service läuft, muss diese weg.
+# ExecStartPre und RestartSec bleiben erhalten.
+
+fix_caller_drop_in() {
+  local drop_in="/etc/systemd/system/darts-caller.service.d/boot-stabilize.conf"
+  [[ -f "$drop_in" ]] || { log "INFO: $drop_in nicht vorhanden → skip"; return 0; }
+
+  # Prüfen ob die Abhängigkeit überhaupt drin ist
+  if ! grep -q "autodarts.service" "$drop_in" 2>/dev/null; then
+    log "INFO: $drop_in enthält keine autodarts.service-Abhängigkeit → skip"
+    return 0
+  fi
+
+  log "Bereinige $drop_in (entferne autodarts.service-Abhängigkeit)"
+  cat > "$drop_in" <<'EOF'
+[Service]
+ExecStartPre=/bin/sleep 12
+RestartSec=8
+EOF
+
+  systemctl daemon-reload 2>/dev/null || true
+
+  if systemctl is-active --quiet darts-caller.service 2>/dev/null; then
+    log "Starte darts-caller.service neu (Drop-in geändert)"
+    systemctl restart darts-caller.service 2>/dev/null \
+      || log "WARN: darts-caller.service Neustart fehlgeschlagen"
+  fi
+  log "OK: boot-stabilize.conf bereinigt"
+}
+
 # ─── §15: Firewall ────────────────────────────────────────────────────────────
 
 ensure_firewall_port() {
@@ -390,6 +422,7 @@ case "$AD_STATE" in
     # §18: Idempotenz — kein Installer, kein Backup, kein Service-Neustart
     log "v2 läuft gesund → nur Integration prüfen"
     enable_linger
+    fix_caller_drop_in || true
     install_ttyd       || true
     ensure_tui_service || true
     ensure_firewall_port
@@ -401,6 +434,7 @@ case "$AD_STATE" in
   V2_SERVICE_BROKEN)
     log "v2-Binary OK, Service/API defekt → reparieren"
     enable_linger
+    fix_caller_drop_in || true
     ensure_user_service
     verify_v2          || true
     install_ttyd       || true
@@ -429,6 +463,7 @@ case "$AD_STATE" in
 
     backup_before_migration
     enable_linger
+    fix_caller_drop_in || true
     stop_v1_services
 
     if ! install_autodarts_v2; then

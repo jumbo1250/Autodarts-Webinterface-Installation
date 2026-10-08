@@ -154,7 +154,7 @@ Provided "as is", without warranty.
 
   <div class="container">
     <div id="header">
-      {% if boardmanager_ok %}
+      {% if autodarts_v2_running %}
         <div class="ad-status ad-on"><span data-key="header.autodarts_active">Autodarts: AKTIV</span></div>
       {% else %}
         <div class="ad-status ad-off"><span data-key="header.autodarts_inactive">Autodarts: INAKTIV</span></div>
@@ -308,7 +308,7 @@ Provided "as is", without warranty.
         können Sie es auf</span> <strong>autodarts.io</strong> <span data-key="account.intro_suffix">anlegen.</span>
       </p>
 
-      <!-- Dartscheiben-Konfigurator -->
+      <!-- Dartboard Manager -->
       <div style="margin-bottom:12px;">
         <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
           {% if autodarts_v2_running %}
@@ -331,63 +331,10 @@ Provided "as is", without warranty.
         </div>
 
         <div class="btn-row">
-          {% if autodarts_ttyd_running %}
-            <a href="{{ darts_ttyd_url }}" target="_blank" class="btn"><span data-key="account.ttyd_btn">Terminal öffnen</span></a>
-          {% endif %}
           {% if autodarts_v2_running %}
-            <button type="button" class="btn btn-small" onclick="(function(btn){
-              const box = document.getElementById('dartsBoardConfigBox');
-              if (!box) return;
-              const show = box.style.display === 'none' || box.style.display === '';
-              box.style.display = show ? 'block' : 'none';
-              btn.textContent = show ? btn.getAttribute('data-hide') : btn.getAttribute('data-show');
-            })(this);"
-            data-show="▼  Konfigurator einblenden"
-            data-hide="▲  Konfigurator ausblenden">▼  <span data-key="account.show_configurator_btn">Konfigurator einblenden</span></button>
+            <a href="{{ url_for('board_manager') }}" target="_blank" class="btn"><span data-key="account.board_manager_btn">Dartboard einstellen</span></a>
           {% endif %}
         </div>
-
-        {% if autodarts_v2_running %}
-        <div id="dartsBoardConfigBox" style="display:none; margin-top:14px;">
-
-          <!-- Kalibrierung Toggle + Mtime -->
-          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
-            <button type="button" id="calibrationSpiderToggle" class="btn btn-small">
-              <span data-key="account.spider_show">Kalibrierung anzeigen</span>
-            </button>
-            <span id="calibrationMtimeDisplay" class="hint" style="font-size:0.8rem;"></span>
-          </div>
-
-          <!-- Kamera-Streams mit SVG-Overlay -->
-          <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
-            {% for cam_i in [0, 1, 2] %}
-              <div style="flex:1; min-width:200px; max-width:360px; background:#111; border-radius:8px; overflow:hidden; border:1px solid #333;">
-                <!-- Header: Cam-Name + Kalibriert-Status -->
-                <div style="padding:4px 8px; background:#1a1a1a; font-size:0.8rem; color:#aaa; display:flex; justify-content:space-between; align-items:center;">
-                  <span><span data-key="account.cam_label">Kamera</span> {{ cam_i + 1 }}</span>
-                  <span id="cam-status-{{ cam_i }}" style="font-size:0.75rem;"></span>
-                </div>
-                <!-- Stage: Stream + SVG-Overlay, klickbar für Vollbild -->
-                <a href="/board-manager/cam/{{ cam_i }}" target="_blank" style="display:block; position:relative; line-height:0; cursor:pointer;" title="Vollbild öffnen">
-                  <img src="{{ darts_url }}/api/streams/cams/{{ cam_i }}"
-                       alt="Kamera {{ cam_i + 1 }}"
-                       style="width:100%; display:block;"
-                       onerror="this.style.display='none'; this.nextElementSibling.style.display='none'; this.parentElement.nextElementSibling.style.display='flex';">
-                  <svg id="cam-spider-{{ cam_i }}" class="cam-spider"
-                       viewBox="0 0 1280 720" preserveAspectRatio="none"
-                       style="position:absolute; inset:0; width:100%; height:100%; display:none; pointer-events:none;">
-                  </svg>
-                </a>
-                <!-- Kein-Signal-Fallback -->
-                <div style="display:none; height:100px; align-items:center; justify-content:center; color:#555; font-size:0.85rem;">
-                  <span data-key="account.cam_unavailable">kein Signal</span>
-                </div>
-              </div>
-            {% endfor %}
-          </div>
-
-        </div>
-        {% endif %}
       </div>
     </div>
 
@@ -980,51 +927,7 @@ Provided "as is", without warranty.
             <span data-key="common.installed_version_label">Installierte Version:</span> <strong>{{ autodarts_version or 'unbekannt' }}</strong>
           </p>
 
-          <div class="btn-row">
-            <form method="post" action="{{ url_for('admin_autodarts_check') }}" style="margin:0;">
-              <button type="submit" class="btn"><span data-key="common.check_update_btn">Update prüfen</span></button>
-            </form>
-
-            <form method="post" action="{{ url_for('admin_autodarts_update') }}"
-                  data-confirm-key="confirm.autodarts_update"
-                  onsubmit="return confirm('Autodarts jetzt aktualisieren?');" style="margin:0;">
-              <button type="submit" class="btn btn-primary {% if not update_available %}btn-disabled{% endif %}">
-                {% if update_available %}<span data-key="common.install_update_btn">Update installieren</span>{% else %}<span data-key="admin.autodarts_update_btn">Autodarts aktualisieren</span>{% endif %}
-              </button>
-            </form>
-          </div>
-
-          <p class="hint" style="margin-top:8px;">
-            {% if update_check.latest %}
-              Letzter Check: <strong>{{ update_check.installed or 'unbekannt' }}</strong> → <strong>{{ update_check.latest }}</strong>
-              {% if update_available %}
-                <span style="color:#ffb347;" data-key="common.update_available">(Update verfügbar)</span>
-              {% else %}
-                <span style="color:#6be26b;" data-key="common.up_to_date">(aktuell)</span>
-              {% endif %}
-            {% else %}
-              <span data-key="common.check_update_tip">Tipp: Erst „Update prüfen“, dann nur bei Bedarf aktualisieren.</span>
-            {% endif %}
-          </p>
-
-          <p class="hint" style="margin-top:6px;">
-            <span data-key="admin.update_script_hint_start">Das Update nutzt das offizielle Autodarts-Update-Script (</span><code>updater.sh</code><span data-key="admin.update_script_hint_end">) und schreibt ein Log.</span>
-          </p>
-
-          {% if update_state.started %}
-            <p class="hint" style="margin-top:8px;">
-              <span data-key="admin.last_update">Letztes Update gestartet:</span> <code>{{ update_state.started }}</code>
-            </p>
-          {% endif %}
-
-          {% if update_log_tail %}
-            <details style="margin-top:10px;">
-              <summary><span data-key="admin.autodarts_log_summary">Update-Log anzeigen</span></summary>
-              <pre style="background:#0b0b0b; padding:12px; border-radius:10px; border:1px solid #333; overflow:auto; white-space:pre-wrap; margin:10px 0 0;">{{ update_log_tail }}</pre>
-            </details>
-          {% endif %}
-
-          <hr style="border:none; border-top:1px solid #333; margin:14px 0;">
+          <hr style=”border:none; border-top:1px solid #333; margin:14px 0;”>
 
           <h3 style="margin:0 0 8px;"><span data-key="admin.extensions_title">Extensions (darts-caller / darts-wled)</span></h3>
           <p class="hint" style="margin-top:0;">

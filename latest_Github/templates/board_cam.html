@@ -25,7 +25,7 @@
       cursor: pointer; font-size: 0.85rem;
     }
     #spider-toggle:hover { background: #2e2e2e; }
-    #spider-toggle.active { border-color: #00ff88; color: #00ff88; }
+    #spider-toggle.active { border-color: #ff3b30; color: #ff3b30; }
 
     #stage-wrap { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 10px; }
     #stage { position: relative; max-width: 100%; max-height: 100%; }
@@ -52,7 +52,7 @@
     <img id="cam-stream"
          src="{{ darts_url }}/api/streams/cams/{{ cam_id }}"
          alt="Cam {{ cam_id }}"
-         onerror="document.getElementById('error-msg').style.display='block'; this.style.display='none';">
+         onerror="retryStream()">
     <svg id="cam-svg" viewBox="0 0 1280 720" preserveAspectRatio="none"></svg>
   </div>
   <div id="error-msg">Kein Signal — Stream nicht erreichbar</div>
@@ -65,6 +65,19 @@ const NS        = 'http://www.w3.org/2000/svg';
 
 let spiderVisible = false;
 let spiderDrawn   = false;
+let _streamRetries = 0;
+
+function retryStream() {
+  if (_streamRetries++ < 8) {
+    setTimeout(() => {
+      document.getElementById('cam-stream').src =
+        DARTS_URL + '/api/streams/cams/' + CAM_ID + '?r=' + Date.now();
+    }, 1500);
+  } else {
+    document.getElementById('error-msg').style.display = 'block';
+    document.getElementById('cam-stream').style.display = 'none';
+  }
+}
 
 async function loadAndDrawSpider() {
   const svg = document.getElementById('cam-svg');
@@ -87,6 +100,7 @@ async function loadAndDrawSpider() {
 
     if (!camData) return;
 
+    console.log('[Spider] camData:', JSON.stringify(camData));
     drawSpiderSvg(svg, camData);
     spiderDrawn = true;
   } catch (e) {
@@ -97,21 +111,65 @@ async function loadAndDrawSpider() {
 function drawSpiderSvg(svg, camData) {
   svg.innerHTML = '';
 
+  function ellipseParams(e) {
+    if (!e) return null;
+    // Flat array: [cx, cy, rx, ry, angle]
+    if (Array.isArray(e) && !Array.isArray(e[0]) && e.length >= 4)
+      return { cx: +e[0], cy: +e[1], rx: +e[2], ry: +e[3], angle: +(e[4] ?? 0) };
+    // OpenCV RotatedRect: [[cx,cy],[w,h],angle]
+    if (Array.isArray(e) && Array.isArray(e[0]) && e.length >= 2) {
+      const s = Array.isArray(e[1]) ? e[1] : null;
+      if (s) return { cx: +e[0][0], cy: +e[0][1], rx: +s[0] / 2, ry: +s[1] / 2, angle: +(e[2] ?? 0) };
+    }
+    if (Array.isArray(e)) return null;
+    // Object: try many field name conventions
+    const cx = e.cx ?? e.centerX ?? e.x
+            ?? (e.center != null ? (Array.isArray(e.center) ? e.center[0] : e.center.x) : null);
+    const cy = e.cy ?? e.centerY ?? e.y
+            ?? (e.center != null ? (Array.isArray(e.center) ? e.center[1] : e.center.y) : null);
+    let rx = e.rx ?? e.radiusX ?? e.a ?? null;
+    let ry = e.ry ?? e.radiusY ?? e.b ?? null;
+    if (rx == null) { const w = e.width  ?? (e.size != null ? (Array.isArray(e.size) ? e.size[0] : e.size.width)  : null); if (w != null) rx = w / 2; }
+    if (ry == null) { const h = e.height ?? (e.size != null ? (Array.isArray(e.size) ? e.size[1] : e.size.height) : null); if (h != null) ry = h / 2; }
+    const angle = e.angle ?? e.rotation ?? e.theta ?? e.phi ?? 0;
+    if (cx == null || cy == null || rx == null || ry == null) return null;
+    return { cx: +cx, cy: +cy, rx: +rx, ry: +ry, angle: +angle };
+  }
+
   const rings = [
-    { pts: camData.doubleOuterPoints, stroke: '#00ff88' },
-    { pts: camData.doubleInnerPoints, stroke: '#00ff88' },
-    { pts: camData.trebleOuterPoints, stroke: '#ffaa00' },
-    { pts: camData.trebleInnerPoints, stroke: '#ffaa00' },
+    { key: 'doubleOuter', sw: '3'   },
+    { key: 'doubleInner', sw: '2.5' },
+    { key: 'trebleOuter', sw: '2.5' },
+    { key: 'trebleInner', sw: '2.5' },
   ];
   for (const ring of rings) {
-    if (!ring.pts || ring.pts.length === 0) continue;
-    const poly = document.createElementNS(NS, 'polygon');
-    poly.setAttribute('points', ring.pts.map(p => p.join(',')).join(' '));
-    poly.setAttribute('fill', 'none');
-    poly.setAttribute('stroke', ring.stroke);
-    poly.setAttribute('stroke-width', '2');
-    poly.setAttribute('opacity', '0.9');
-    svg.appendChild(poly);
+    const p = ellipseParams(camData[ring.key]);
+    if (!p) {
+      // Fallback: Polygon aus *Points wenn kein Ellipsen-Objekt vorhanden
+      const pts = camData[ring.key + 'Points'];
+      if (!pts || !pts.length) continue;
+      const poly = document.createElementNS(NS, 'polygon');
+      poly.setAttribute('points', pts.map(pt => pt.join(',')).join(' '));
+      poly.setAttribute('fill', 'none');
+      poly.setAttribute('stroke', '#ff3b30');
+      poly.setAttribute('stroke-width', ring.sw);
+      poly.setAttribute('opacity', '0.9');
+      poly.setAttribute('vector-effect', 'non-scaling-stroke');
+      svg.appendChild(poly);
+      continue;
+    }
+    const el = document.createElementNS(NS, 'ellipse');
+    el.setAttribute('cx', p.cx);
+    el.setAttribute('cy', p.cy);
+    el.setAttribute('rx', p.rx);
+    el.setAttribute('ry', p.ry);
+    el.setAttribute('transform', `rotate(${p.angle} ${p.cx} ${p.cy})`);
+    el.setAttribute('fill', 'none');
+    el.setAttribute('stroke', '#ff3b30');
+    el.setAttribute('stroke-width', ring.sw);
+    el.setAttribute('opacity', '0.9');
+    el.setAttribute('vector-effect', 'non-scaling-stroke');
+    svg.appendChild(el);
   }
 
   if (camData.bull && camData.doubleOuterPoints) {
@@ -120,15 +178,18 @@ function drawSpiderSvg(svg, camData) {
       const line = document.createElementNS(NS, 'line');
       line.setAttribute('x1', bx); line.setAttribute('y1', by);
       line.setAttribute('x2', px); line.setAttribute('y2', py);
-      line.setAttribute('stroke', '#ffffff');
+      line.setAttribute('stroke', '#ff3b30');
       line.setAttribute('stroke-width', '1');
       line.setAttribute('opacity', '0.35');
+      line.setAttribute('vector-effect', 'non-scaling-stroke');
       svg.appendChild(line);
     }
     const circle = document.createElementNS(NS, 'circle');
     circle.setAttribute('cx', bx); circle.setAttribute('cy', by);
     circle.setAttribute('r', '8');
-    circle.setAttribute('fill', '#ff4444');
+    circle.setAttribute('fill', '#ff3b30');
+    circle.setAttribute('stroke', '#fff');
+    circle.setAttribute('stroke-width', '2');
     circle.setAttribute('opacity', '0.9');
     svg.appendChild(circle);
   }
