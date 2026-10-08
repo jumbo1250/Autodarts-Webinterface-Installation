@@ -125,7 +125,7 @@ Provided "as is", without warranty.
     {% endif %}
   </div>
 
-  {% if cpu_pct is not none or mem_used is not none or temp_c is not none or autoupdate_enabled is not none %}
+  {% if cpu_pct is not none or mem_used is not none or temp_c is not none %}
   <div class="sysinfo">
     <h3><span data-key="sysinfo.title">Mini PC</span></h3>
     {% if cpu_pct is not none %}
@@ -137,29 +137,6 @@ Provided "as is", without warranty.
     {% if temp_c is not none %}
       <div class="sysinfo-row"><span data-key="sysinfo.temp_label">Temp:</span> {{ "%.1f"|format(temp_c) }} °C</div>
     {% endif %}
-    <div class="sysinfo-row" style="margin-top:6px;">
-      <span data-key="sysinfo.autoupdate_label">Auto-Update:</span>
-      {% if autoupdate_enabled is none %}
-        <span style="color:#ff6b6b; font-weight:700;"><span data-key="common.off">AUS</span></span>
-        <span class="hint" style="font-size:11px;">(<span data-key="sysinfo.service_missing">Service fehlt</span>)</span>
-      {% elif autoupdate_enabled %}
-        <span style="color:#6be26b; font-weight:700;"><span data-key="common.on">AN</span></span>
-      {% else %}
-        <span style="color:#ff6b6b; font-weight:700;"><span data-key="common.off">AUS</span></span>
-      {% endif %}
-    </div>
-    <div style="margin-top:6px; display:flex; gap:6px;">
-      <form method="post" action="{{ url_for('autoupdate_set', mode='on') }}" style="flex:1; margin:0;">
-        <button type="submit" class="btn btn-small" style="width:100%;" {% if autoupdate_enabled %}disabled{% endif %}>
-          <span data-key="common.autoupdate_on_btn">Auto-Update AN</span>
-        </button>
-      </form>
-      <form method="post" action="{{ url_for('autoupdate_set', mode='off') }}" style="flex:1; margin:0;">
-        <button type="submit" class="btn btn-small" style="width:100%;" {% if not autoupdate_enabled %}disabled{% endif %}>
-          <span data-key="common.autoupdate_off_btn">Auto-Update AUS</span>
-        </button>
-      </form>
-    </div>
   </div>
   {% endif %}
 
@@ -362,38 +339,41 @@ Provided "as is", without warranty.
         {% if autodarts_v2_running %}
         <div id="dartsBoardConfigBox" style="display:none; margin-top:14px;">
 
-          <!-- Kamera-Streams -->
-          <p class="hint" style="margin:0 0 8px;"><span data-key="account.cam_streams_label">Live-Kamera-Streams (Autodarts v2):</span></p>
-          <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
+          <!-- Kalibrierung Toggle + Mtime -->
+          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
+            <button type="button" id="calibrationSpiderToggle" class="btn btn-small">
+              <span data-key="account.spider_show">Kalibrierung anzeigen</span>
+            </button>
+            <span id="calibrationMtimeDisplay" class="hint" style="font-size:0.8rem;"></span>
+          </div>
+
+          <!-- Kamera-Streams mit SVG-Overlay -->
+          <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
             {% for cam_i in [0, 1, 2] %}
-              <div style="flex:1; min-width:200px; max-width:340px; background:#111; border-radius:8px; overflow:hidden; border:1px solid #333;">
-                <div style="padding:4px 8px; background:#1a1a1a; font-size:0.8rem; color:#aaa;">
-                  <span data-key="account.cam_label">Kamera</span> {{ cam_i + 1 }}
+              <div style="flex:1; min-width:200px; max-width:360px; background:#111; border-radius:8px; overflow:hidden; border:1px solid #333;">
+                <!-- Header: Cam-Name + Kalibriert-Status -->
+                <div style="padding:4px 8px; background:#1a1a1a; font-size:0.8rem; color:#aaa; display:flex; justify-content:space-between; align-items:center;">
+                  <span><span data-key="account.cam_label">Kamera</span> {{ cam_i + 1 }}</span>
+                  <span id="cam-status-{{ cam_i }}" style="font-size:0.75rem;"></span>
                 </div>
-                <img src="{{ darts_url }}/api/streams/cams/{{ cam_i }}"
-                     alt="Kamera {{ cam_i + 1 }}"
-                     style="width:100%; display:block;"
-                     onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
-                <div style="display:none; height:120px; align-items:center; justify-content:center; color:#555; font-size:0.85rem;">
+                <!-- Stage: Stream + SVG-Overlay, klickbar für Vollbild -->
+                <a href="/board-manager/cam/{{ cam_i }}" target="_blank" style="display:block; position:relative; line-height:0; cursor:pointer;" title="Vollbild öffnen">
+                  <img src="{{ darts_url }}/api/streams/cams/{{ cam_i }}"
+                       alt="Kamera {{ cam_i + 1 }}"
+                       style="width:100%; display:block;"
+                       onerror="this.style.display='none'; this.nextElementSibling.style.display='none'; this.parentElement.nextElementSibling.style.display='flex';">
+                  <svg id="cam-spider-{{ cam_i }}" class="cam-spider"
+                       viewBox="0 0 1280 720" preserveAspectRatio="none"
+                       style="position:absolute; inset:0; width:100%; height:100%; display:none; pointer-events:none;">
+                  </svg>
+                </a>
+                <!-- Kein-Signal-Fallback -->
+                <div style="display:none; height:100px; align-items:center; justify-content:center; color:#555; font-size:0.85rem;">
                   <span data-key="account.cam_unavailable">kein Signal</span>
                 </div>
               </div>
             {% endfor %}
           </div>
-
-          <!-- Eingebetteter Board-Manager -->
-          <p class="hint" style="margin:0 0 8px;"><span data-key="account.embedded_manager_label">Dartscheiben-Manager (eingebettet):</span></p>
-          <div style="position:relative; width:100%; padding-top:62%; border-radius:8px; overflow:hidden; border:1px solid #333; background:#0b0b0b;">
-            <iframe src="{{ darts_url }}"
-                    style="position:absolute; top:0; left:0; width:100%; height:100%; border:none;"
-                    allow="camera; microphone"
-                    loading="lazy"
-                    title="Autodarts Board Manager">
-            </iframe>
-          </div>
-          <p class="hint" style="margin:6px 0 0; font-size:0.8rem;">
-            <span data-key="account.embedded_hint">Lädt nicht? <a href="{{ darts_url }}" target="_blank" style="color:#ffb347;">Im neuen Tab öffnen →</a></span>
-          </p>
 
         </div>
         {% endif %}
@@ -442,38 +422,6 @@ Provided "as is", without warranty.
             Tipp: Für Freunde/Familie ist „Stabil“ die sichere Wahl. „Aktuellste“ nimmt immer die neueste Online-Version{% if autodarts_latest_online %} (aktuell: {{ autodarts_latest_online }}){% endif %}.
           </div>
 
-          <hr style="border:none; border-top:1px solid #333; margin:14px 0;">
-
-          <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between;">
-            <div>
-              <div style="font-weight:700;"><span data-key="common.autoupdate_title">Auto-Update</span></div>
-              <div class="hint" style="margin-top:2px;">
-                <span data-key="common.status_label">Status:</span>
-                {% if autoupdate_enabled is none %}
-                  <span style="color:#ff6b6b; font-weight:700;"><span data-key="common.off">AUS</span></span> (<span data-key="sysinfo.service_missing">Service fehlt</span>)
-                {% elif autoupdate_enabled %}
-                  <span style="color:#6be26b; font-weight:700;"><span data-key="common.on">AN</span></span>
-                {% else %}
-                  <span style="color:#ff6b6b; font-weight:700;"><span data-key="common.off">AUS</span></span>
-                {% endif %}
-              </div>
-            </div>
-
-            <div class="btn-row" style="margin:0;">
-              <form method="post" action="{{ url_for('autoupdate_set', mode='on') }}" style="margin:0;">
-                <button type="submit" class="btn btn-small" {% if autoupdate_enabled %}disabled{% endif %}
-                        data-confirm-key="confirm.autoupdate_enable"
-                        onclick="return confirm('Auto-Update aktivieren?\n\nHinweis: Dadurch können Updates wieder automatisch installiert werden.');">
-                  <span data-key="common.autoupdate_on_btn">Auto-Update AN</span>
-                </button>
-              </form>
-              <form method="post" action="{{ url_for('autoupdate_set', mode='off') }}" style="margin:0;">
-                <button type="submit" class="btn btn-small" {% if not autoupdate_enabled %}disabled{% endif %}>
-                  <span data-key="common.autoupdate_off_btn">Auto-Update AUS</span>
-                </button>
-              </form>
-            </div>
-          </div>
         </div>
       </details>
     </div>
@@ -1356,7 +1304,9 @@ cp /var/log/pi_monitor_test_README.txt ~/
       api_extensions_v2_auth_reset: "{{ url_for('api_extensions_v2_auth_reset') }}",
       api_webpanel_update: "{{ url_for('api_webpanel_update_start') }}",
       api_webpanel_update_status: "{{ url_for('api_webpanel_update_status') }}",
-      api_webpanel_channel: "{{ url_for('api_webpanel_channel') }}"
+      api_webpanel_channel: "{{ url_for('api_webpanel_channel') }}",
+      api_calibration_mtime: "{{ url_for('api_calibration_mtime') }}",
+      darts_url: "{{ darts_url }}"
     };
 
     window.app_data = {

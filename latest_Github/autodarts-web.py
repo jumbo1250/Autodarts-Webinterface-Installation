@@ -392,10 +392,6 @@ DEFAULT_SETTINGS = {
     # Beispiel: "0.16.0"
     "autodarts_stable_version": "",
 
-    # Standard: Auto-Update soll AUS sein (wir deaktivieren den Service einmalig beim ersten Start nach Webpanel-Update).
-    # Wer das nicht möchte, kann hier True setzen.
-    "autoupdate_default_enabled": False,
-
     # Update-Kanal: "stable" (Standard) oder "beta" (immer aktuell, kein Versionscheck)
     "webpanel_channel": "stable",
 }
@@ -463,8 +459,6 @@ def load_settings() -> dict:
 
     stable = _sanitize_version_str(str(merged.get("autodarts_stable_version") or ""))
     merged["autodarts_stable_version"] = stable
-
-    merged["autoupdate_default_enabled"] = bool(merged.get("autoupdate_default_enabled", False))
 
     ch = str(merged.get("webpanel_channel") or "stable").strip().lower()
     merged["webpanel_channel"] = "beta" if ch == "beta" else "stable"
@@ -2820,36 +2814,6 @@ def service_is_enabled(service_name: str) -> bool:
     r = _run_systemctl(["is-enabled", service_name], timeout=SYSTEMCTL_CHECK_TIMEOUT)
     return bool(r and r.stdout.strip() == "enabled")
 
-def autodarts_autoupdate_is_enabled() -> bool | None:
-    """True/False wenn Service existiert, sonst None."""
-    if not service_exists(AUTOUPDATE_SERVICE):
-        return None
-    return service_is_enabled(AUTOUPDATE_SERVICE)
-
-def autodarts_set_autoupdate(enabled: bool) -> tuple[bool, str]:
-    """Enable/disable autodarts auto-updater service.
-
-    Wenn der Service nicht existiert:
-      - disable => OK (bereits aus)
-      - enable  => Fehler (Service fehlt)
-    """
-    if not service_exists(AUTOUPDATE_SERVICE):
-        if not enabled:
-            return True, t("autoupdate.already_disabled_missing_service", "Auto-Update ist bereits deaktiviert (Service fehlt).")
-        return False, t("autoupdate.service_missing", "{service} nicht gefunden.", service=AUTOUPDATE_SERVICE)
-    try:
-        cmd = ["systemctl", ("enable" if enabled else "disable"), "--now", AUTOUPDATE_SERVICE]
-        if os.geteuid() != 0:
-            cmd = ["sudo", "-n"] + cmd
-        r = subprocess.run(cmd, capture_output=True, text=True)
-        if r.returncode == 0:
-            return True, (t("autoupdate.enabled", "Auto-Update aktiviert.") if enabled else t("autoupdate.disabled", "Auto-Update deaktiviert."))
-        err = (r.stderr or r.stdout or "").strip()
-        short = (err.splitlines()[0] if err else "systemctl fehlgeschlagen.")
-        return False, short
-    except Exception as e:
-        return False, t("autoupdate.change_failed", "Auto-Update konnte nicht geändert werden: {error}", error=e)
-
 
 
 # ---------------- Caller enable/disable state ----------------
@@ -3546,104 +3510,6 @@ def caller_wled_connection_status() -> dict:
         status["caller_wled_auth_error"] = str(e)[:220]
     return status
 
-
-def autodarts_autoupdate_is_enabled() -> bool | None:
-    """True/False wenn Service existiert, sonst None."""
-    if not service_exists(AUTOUPDATE_SERVICE):
-        return None
-    return service_is_enabled(AUTOUPDATE_SERVICE)
-
-def autodarts_set_autoupdate(enabled: bool) -> tuple[bool, str]:
-    """Enable/disable autodarts auto-updater service.
-
-    Wenn der Service nicht existiert:
-      - disable => OK (bereits aus)
-      - enable  => Fehler (Service fehlt)
-    """
-    if not service_exists(AUTOUPDATE_SERVICE):
-        if not enabled:
-            return True, t("autoupdate.already_disabled_missing_service", "Auto-Update ist bereits deaktiviert (Service fehlt).")
-        return False, t("autoupdate.service_missing", "{service} nicht gefunden.", service=AUTOUPDATE_SERVICE)
-    try:
-        cmd = ["systemctl", ("enable" if enabled else "disable"), "--now", AUTOUPDATE_SERVICE]
-        if os.geteuid() != 0:
-            cmd = ["sudo", "-n"] + cmd
-        r = subprocess.run(cmd, capture_output=True, text=True)
-        if r.returncode == 0:
-            return True, (t("autoupdate.enabled", "Auto-Update aktiviert.") if enabled else t("autoupdate.disabled", "Auto-Update deaktiviert."))
-        err = (r.stderr or r.stdout or "").strip()
-        short = (err.splitlines()[0] if err else "systemctl fehlgeschlagen.")
-        return False, short
-    except Exception as e:
-        return False, t("autoupdate.change_failed", "Auto-Update konnte nicht geändert werden: {error}", error=e)
-
-# ---------------- Auto-Update Default (soll standardmäßig AUS sein) ----------------
-
-AUTOUPDATE_DEFAULT_MARKER = str(DATA_DIR / "autoupdate-default-applied.json")
-_AUTOUPDATE_DEFAULT_RAN = False
-_AUTOUPDATE_DEFAULT_LOCK = threading.Lock()
-
-def ensure_autoupdate_default_once() -> str | None:
-    """Deaktiviert den Autodarts Auto-Updater einmalig (Default = AUS).
-
-    Hintergrund:
-    Der offizielle Installer aktiviert Auto-Update standardmäßig. Wenn ein Release gerade
-    Probleme macht, ist das unangenehm. Daher schalten wir den Service *einmalig* beim
-    ersten Start nach Webpanel-Update aus (User kann danach wieder einschalten).
-    """
-    global _AUTOUPDATE_DEFAULT_RAN
-    if _AUTOUPDATE_DEFAULT_RAN:
-        return None
-    with _AUTOUPDATE_DEFAULT_LOCK:
-        if _AUTOUPDATE_DEFAULT_RAN:
-            return None
-        _AUTOUPDATE_DEFAULT_RAN = True
-
-    # schon erledigt?
-    try:
-        if os.path.exists(AUTOUPDATE_DEFAULT_MARKER):
-            return None
-    except Exception:
-        # Wenn wir nicht mal prüfen können, lieber nichts kaputtmachen.
-        return None
-
-    desired_default = bool(SETTINGS.get("autoupdate_default_enabled", False))
-    cur = autodarts_autoupdate_is_enabled()
-
-    changed = False
-    msg = None
-
-    if desired_default:
-        # User möchte Default-AN (wir ändern nichts, markieren nur)
-        pass
-    else:
-        # Default-AUS
-        if cur is True:
-            ok, _m = autodarts_set_autoupdate(False)
-            changed = bool(ok)
-            if changed:
-                msg = t("autoupdate.default_disabled", "Auto-Update wurde standardmäßig deaktiviert (kann bei Bedarf wieder eingeschaltet werden).")
-
-    # Marker schreiben (damit es wirklich nur einmal passiert)
-    # Wenn wir deaktivieren wollten, das aber fehlschlägt, schreiben wir keinen Marker,
-    # damit es beim nächsten Start erneut versucht wird.
-    if desired_default or cur is not True or changed:
-        try:
-            os.makedirs(os.path.dirname(AUTOUPDATE_DEFAULT_MARKER), exist_ok=True)
-        except Exception:
-            pass
-        try:
-            with open(AUTOUPDATE_DEFAULT_MARKER, "w", encoding="utf-8") as f:
-                json.dump({
-                    "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
-                    "desired_default_enabled": desired_default,
-                    "cur_before": cur,
-                    "changed": changed,
-                }, f, indent=2)
-        except Exception:
-            pass
-
-    return msg
 
 
 
@@ -7398,8 +7264,7 @@ def admin_pi5_headless(mode):
 
 @app.route("/", methods=["GET"])
 def index():
-    # Auto-Update soll standardmäßig AUS sein (einmalige Umstellung)
-    ensure_msg = ensure_autoupdate_default_once()
+    ensure_msg = None
 
     (
         ssid, ip, lan_ip,
@@ -7488,7 +7353,6 @@ def index():
     msg = request.args.get('msg', '') or (ensure_msg or '')
     open_adver = (request.args.get('open_adver') == '1')
 
-    autoupdate_enabled = autodarts_autoupdate_is_enabled()
     update_check = load_update_check()
     webpanel_version = get_webpanel_version()
     webpanel_check = load_webpanel_update_check()
@@ -7619,7 +7483,6 @@ def index():
         wifi_conn_name=wifi_conn_name,
         wifi_autoconnect_enabled=wifi_autoconnect_enabled,
         msg=msg,
-        autoupdate_enabled=autoupdate_enabled,
         update_check=update_check,
         update_available=update_available,
         wifi_interface=WIFI_INTERFACE,
@@ -8988,6 +8851,29 @@ def api_webpanel_channel():
     return jsonify({"ok": True, "channel": channel, "message": t("webpanel.channel_saved", "Update-Kanal gesetzt: {label}.", label=label)})
 
 
+@app.route("/api/calibration/mtime")
+def api_calibration_mtime():
+    cal_file = "/home/peter/.config/autodarts/calibration.json"
+    if not os.path.exists(cal_file):
+        return jsonify({"exists": False, "mtime": None, "display": None})
+    try:
+        mtime = os.path.getmtime(cal_file)
+        from datetime import datetime
+        dt = datetime.fromtimestamp(mtime)
+        return jsonify({"exists": True, "mtime": int(mtime), "display": dt.strftime("%d.%m.%Y %H:%M")})
+    except Exception as e:
+        return jsonify({"exists": False, "mtime": None, "display": None, "error": str(e)})
+
+
+@app.route("/board-manager/cam/<int:cam_id>")
+def board_manager_cam(cam_id):
+    if cam_id not in (0, 1, 2):
+        return "Ungültige Kamera-ID", 400
+    host = request.host.split(":", 1)[0]
+    darts_url = f"http://{host}:3180"
+    return render_template("board_cam.html", cam_id=cam_id, darts_url=darts_url)
+
+
 @app.route("/admin/webpanel/update", methods=["POST"])
 def admin_webpanel_update():
     # Admin muss entsperrt sein
@@ -9582,63 +9468,6 @@ def wifi_forget_saved():
         flash(t("wifi.delete_saved_connections_failed", "Konnte gespeicherte WLANs nicht löschen: {error}", error=e), "danger")
 
     return redirect(url_for("wifi"))
-@app.route("/autoupdate/toggle", methods=["POST"])
-def autoupdate_toggle():
-    """Legacy Toggle (für alte Links)."""
-    cur = autodarts_autoupdate_is_enabled()
-    if cur is None:
-        return redirect(url_for("index", msg=t("autoupdate.service_not_found", "Auto-Update Service nicht gefunden.")))
-    ok, msg = autodarts_set_autoupdate(not bool(cur))
-    return redirect(url_for("index", msg=msg))
-
-
-@app.route("/autoupdate/set/<mode>", methods=["POST"])
-def autoupdate_set(mode: str):
-    """Deterministisch ein/aus schalten."""
-    mode = (mode or "").strip().lower()
-    if mode in ("on", "enable", "1", "true"):
-        desired = True
-    elif mode in ("off", "disable", "0", "false"):
-        desired = False
-    else:
-        return redirect(url_for("index", msg=t("generic.invalid_mode", "Ungültiger Modus."), open_adver="1") + "#ad-version")
-
-    cur = autodarts_autoupdate_is_enabled()
-
-    # AUS
-    if not desired:
-        ok, msg = autodarts_set_autoupdate(False)
-        return redirect(url_for("index", msg=msg, open_adver="1") + "#ad-version")
-
-    # AN
-    if cur is True:
-        return redirect(url_for("index", msg=t("autoupdate.already_on", "Auto-Update ist bereits AN."), open_adver="1") + "#ad-version")
-    if cur is False:
-        ok, msg = autodarts_set_autoupdate(True)
-        return redirect(url_for("index", msg=msg, open_adver="1") + "#ad-version")
-
-    # Service fehlt -> via Installer (re)erstellen
-    ver = get_autodarts_version() or ""
-    ver = (ver or "").strip().lstrip("v")
-    if ver and not re.match(r"^\d+\.\d+\.\d+(?:-(?:beta|alpha)\.\d+)?$", ver):
-        ver = ""  # lieber nichts erzwingen
-
-    if ver:
-        cmd = autodarts_installer_fallback_cmd(ver)
-        req = ver
-    else:
-        cmd = autodarts_installer_fallback_cmd()
-        req = "latest"
-
-    ok, _m = start_autodarts_update_background(
-        cmd_override=cmd,
-        requested_version=req,
-        purpose="enable-autoupdate",
-        disable_autoupdate_after=False,
-    )
-    if ok:
-        return redirect(url_for("index", msg=t("autoupdate.activation_started", "Aktivierung gestartet (Installer erstellt Auto-Update Service).")))
-    return redirect(url_for("index", msg=_m))
 
 
 @app.route("/autodarts/version/install", methods=["POST"])

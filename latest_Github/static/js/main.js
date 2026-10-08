@@ -20,6 +20,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initApClientInternetUi(appUrls);
   initWebpanelUpdateUi(appUrls);
   initWebpanelChannelToggle(appUrls);
+  initCalibrationSpider(appUrls);
   initPlayercamPipewireUi();
   initVideoModalUi();
   initApConnectionNotice();
@@ -1313,6 +1314,137 @@ function initWebpanelChannelToggle(appUrls) {
       if (status) { status.textContent = tr('admin.webpanel_channel_error', 'Fehler beim Speichern.'); status.style.color = '#ff6b6b'; }
     } finally {
       toggle.disabled = false;
+    }
+  });
+}
+
+/* =========================================================
+   Kalibrierungs-Spinne (Dartscheiben-Konfigurator)
+   ========================================================= */
+function initCalibrationSpider(appUrls) {
+  const toggleBtn = document.getElementById('calibrationSpiderToggle');
+  const mtimeEl   = document.getElementById('calibrationMtimeDisplay');
+  const dartsUrl  = appUrls && appUrls.darts_url;
+  const mtimeUrl  = appUrls && appUrls.api_calibration_mtime;
+
+  if (!toggleBtn || !dartsUrl) return;
+
+  const NS = 'http://www.w3.org/2000/svg';
+  let spiderVisible = false;
+  let calibData     = null;
+  let geomData      = null;
+
+  // Letzte Kalibrierungs-Zeit laden
+  if (mtimeUrl && mtimeEl) {
+    fetch(mtimeUrl)
+      .then(r => r.json())
+      .then(d => {
+        if (d.exists && d.display) {
+          mtimeEl.textContent = tr('account.spider_last_cal', 'Letzte Kalibrierung:') + ' ' + d.display;
+        }
+      })
+      .catch(() => {});
+  }
+
+  function drawSpider(camId) {
+    const svg = document.getElementById('cam-spider-' + camId);
+    if (!svg) return;
+    const camGeo  = geomData && geomData.cams && geomData.cams[camId];
+    const camData = calibData && calibData[String(camId)];
+    if (!camData) return;
+
+    const w = camGeo ? camGeo.width  : 1280;
+    const h = camGeo ? camGeo.height : 720;
+    svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+    svg.innerHTML = '';
+
+    const rings = [
+      { pts: camData.doubleOuterPoints, stroke: '#00ff88' },
+      { pts: camData.doubleInnerPoints, stroke: '#00ff88' },
+      { pts: camData.trebleOuterPoints, stroke: '#ffaa00' },
+      { pts: camData.trebleInnerPoints, stroke: '#ffaa00' },
+    ];
+    for (const ring of rings) {
+      if (!ring.pts || !ring.pts.length) continue;
+      const poly = document.createElementNS(NS, 'polygon');
+      poly.setAttribute('points', ring.pts.map(p => p.join(',')).join(' '));
+      poly.setAttribute('fill', 'none');
+      poly.setAttribute('stroke', ring.stroke);
+      poly.setAttribute('stroke-width', '2');
+      poly.setAttribute('opacity', '0.9');
+      svg.appendChild(poly);
+    }
+
+    if (camData.bull && camData.doubleOuterPoints) {
+      const [bx, by] = camData.bull;
+      for (const [px, py] of camData.doubleOuterPoints) {
+        const line = document.createElementNS(NS, 'line');
+        line.setAttribute('x1', bx); line.setAttribute('y1', by);
+        line.setAttribute('x2', px); line.setAttribute('y2', py);
+        line.setAttribute('stroke', '#ffffff');
+        line.setAttribute('stroke-width', '1');
+        line.setAttribute('opacity', '0.35');
+        svg.appendChild(line);
+      }
+      const dot = document.createElementNS(NS, 'circle');
+      dot.setAttribute('cx', bx); dot.setAttribute('cy', by);
+      dot.setAttribute('r', '6');
+      dot.setAttribute('fill', '#ff4444');
+      dot.setAttribute('opacity', '0.9');
+      svg.appendChild(dot);
+    }
+  }
+
+  function updateCamStatus() {
+    if (!geomData || !geomData.cams) return;
+    for (let i = 0; i < 3; i++) {
+      const el  = document.getElementById('cam-status-' + i);
+      if (!el) continue;
+      const cam = geomData.cams[i];
+      if (!cam) { el.textContent = ''; continue; }
+      if (cam.calibrating) {
+        el.textContent = 'Kalibrierung läuft…'; el.style.color = '#ffaa00';
+      } else if (cam.fit_failed) {
+        el.textContent = '✗ Fehler'; el.style.color = '#ff6b6b';
+      } else if (cam.calibrated) {
+        el.textContent = '✓ kalibriert'; el.style.color = '#6be26b';
+      } else {
+        el.textContent = 'nicht kalibriert'; el.style.color = '#888';
+      }
+    }
+  }
+
+  toggleBtn.addEventListener('click', async function () {
+    if (!calibData) {
+      toggleBtn.disabled = true;
+      toggleBtn.querySelector('[data-key]') && (toggleBtn.querySelector('[data-key]').textContent = 'Lade…');
+      try {
+        const [geomRes, ellipsesRes] = await Promise.all([
+          fetch(dartsUrl + '/api/config/calibration/geometry'),
+          fetch(dartsUrl + '/api/config/calibration/ellipses')
+        ]);
+        geomData  = await geomRes.json();
+        calibData = await ellipsesRes.json();
+        updateCamStatus();
+        for (let i = 0; i < 3; i++) drawSpider(i);
+      } catch (e) {
+        toggleBtn.disabled = false;
+        toggleBtn.querySelector('[data-key]') && (toggleBtn.querySelector('[data-key]').textContent = 'Fehler beim Laden');
+        return;
+      }
+      toggleBtn.disabled = false;
+    }
+
+    spiderVisible = !spiderVisible;
+    document.querySelectorAll('.cam-spider').forEach(svg => {
+      svg.style.display = spiderVisible ? 'block' : 'none';
+    });
+    const label = toggleBtn.querySelector('[data-key]');
+    if (label) {
+      label.setAttribute('data-key', spiderVisible ? 'account.spider_hide' : 'account.spider_show');
+      label.textContent = spiderVisible
+        ? tr('account.spider_hide', 'Kalibrierung ausblenden')
+        : tr('account.spider_show', 'Kalibrierung anzeigen');
     }
   });
 }

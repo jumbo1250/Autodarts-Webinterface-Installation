@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cam {{ cam_id }} — Kalibrierung</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0b0b0b; color: #eee; font-family: sans-serif; height: 100vh; display: flex; flex-direction: column; }
+
+    #toolbar {
+      display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+      padding: 8px 14px; background: #141414; border-bottom: 1px solid #2a2a2a;
+      font-size: 0.88rem; flex-shrink: 0;
+    }
+    #toolbar strong { font-size: 1rem; }
+    #cam-status-badge {
+      font-size: 0.8rem; padding: 2px 8px; border-radius: 4px;
+      background: #1e1e1e; border: 1px solid #333;
+    }
+    #cam-mtime { color: #888; font-size: 0.78rem; }
+    #spider-toggle {
+      margin-left: auto; padding: 5px 14px; border-radius: 5px;
+      background: #222; border: 1px solid #555; color: #eee;
+      cursor: pointer; font-size: 0.85rem;
+    }
+    #spider-toggle:hover { background: #2e2e2e; }
+    #spider-toggle.active { border-color: #00ff88; color: #00ff88; }
+
+    #stage-wrap { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 10px; }
+    #stage { position: relative; max-width: 100%; max-height: 100%; }
+    #cam-stream { display: block; max-width: 100%; max-height: calc(100vh - 60px); width: auto; height: auto; }
+    #cam-svg {
+      position: absolute; inset: 0; width: 100%; height: 100%;
+      pointer-events: none; display: none;
+    }
+
+    #error-msg { display: none; color: #ff6b6b; font-size: 0.9rem; padding: 20px; text-align: center; }
+  </style>
+</head>
+<body>
+
+<div id="toolbar">
+  <strong>Cam {{ cam_id }}</strong>
+  <span id="cam-status-badge">—</span>
+  <span id="cam-mtime"></span>
+  <button id="spider-toggle" onclick="toggleSpider()">Kalibrierung anzeigen</button>
+</div>
+
+<div id="stage-wrap">
+  <div id="stage">
+    <img id="cam-stream"
+         src="{{ darts_url }}/api/streams/cams/{{ cam_id }}"
+         alt="Cam {{ cam_id }}"
+         onerror="document.getElementById('error-msg').style.display='block'; this.style.display='none';">
+    <svg id="cam-svg" viewBox="0 0 1280 720" preserveAspectRatio="none"></svg>
+  </div>
+  <div id="error-msg">Kein Signal — Stream nicht erreichbar</div>
+</div>
+
+<script>
+const DARTS_URL = {{ darts_url | tojson }};
+const CAM_ID    = {{ cam_id }};
+const NS        = 'http://www.w3.org/2000/svg';
+
+let spiderVisible = false;
+let spiderDrawn   = false;
+
+async function loadAndDrawSpider() {
+  const svg = document.getElementById('cam-svg');
+  try {
+    const [geomRes, ellipsesRes] = await Promise.all([
+      fetch(`${DARTS_URL}/api/config/calibration/geometry`),
+      fetch(`${DARTS_URL}/api/config/calibration/ellipses`)
+    ]);
+    const geom     = await geomRes.json();
+    const ellipses = await ellipsesRes.json();
+
+    const camGeo  = geom.cams && geom.cams[CAM_ID];
+    const camData = ellipses[String(CAM_ID)];
+
+    if (camGeo) {
+      svg.setAttribute('viewBox', `0 0 ${camGeo.width} ${camGeo.height}`);
+    }
+
+    updateStatusBadge(geom.cams && geom.cams[CAM_ID]);
+
+    if (!camData) return;
+
+    drawSpiderSvg(svg, camData);
+    spiderDrawn = true;
+  } catch (e) {
+    console.warn('Kalibrierungsdaten konnten nicht geladen werden:', e);
+  }
+}
+
+function drawSpiderSvg(svg, camData) {
+  svg.innerHTML = '';
+
+  const rings = [
+    { pts: camData.doubleOuterPoints, stroke: '#00ff88' },
+    { pts: camData.doubleInnerPoints, stroke: '#00ff88' },
+    { pts: camData.trebleOuterPoints, stroke: '#ffaa00' },
+    { pts: camData.trebleInnerPoints, stroke: '#ffaa00' },
+  ];
+  for (const ring of rings) {
+    if (!ring.pts || ring.pts.length === 0) continue;
+    const poly = document.createElementNS(NS, 'polygon');
+    poly.setAttribute('points', ring.pts.map(p => p.join(',')).join(' '));
+    poly.setAttribute('fill', 'none');
+    poly.setAttribute('stroke', ring.stroke);
+    poly.setAttribute('stroke-width', '2');
+    poly.setAttribute('opacity', '0.9');
+    svg.appendChild(poly);
+  }
+
+  if (camData.bull && camData.doubleOuterPoints) {
+    const [bx, by] = camData.bull;
+    for (const [px, py] of camData.doubleOuterPoints) {
+      const line = document.createElementNS(NS, 'line');
+      line.setAttribute('x1', bx); line.setAttribute('y1', by);
+      line.setAttribute('x2', px); line.setAttribute('y2', py);
+      line.setAttribute('stroke', '#ffffff');
+      line.setAttribute('stroke-width', '1');
+      line.setAttribute('opacity', '0.35');
+      svg.appendChild(line);
+    }
+    const circle = document.createElementNS(NS, 'circle');
+    circle.setAttribute('cx', bx); circle.setAttribute('cy', by);
+    circle.setAttribute('r', '8');
+    circle.setAttribute('fill', '#ff4444');
+    circle.setAttribute('opacity', '0.9');
+    svg.appendChild(circle);
+  }
+}
+
+function updateStatusBadge(cam) {
+  const badge = document.getElementById('cam-status-badge');
+  if (!cam) { badge.textContent = '—'; return; }
+  if (cam.calibrating) {
+    badge.textContent = 'Kalibrierung läuft…'; badge.style.color = '#ffaa00';
+  } else if (cam.fit_failed) {
+    badge.textContent = '✗ Kalibrierung fehlgeschlagen'; badge.style.color = '#ff6b6b';
+  } else if (cam.calibrated) {
+    badge.textContent = '✓ kalibriert'; badge.style.color = '#6be26b';
+  } else {
+    badge.textContent = 'nicht kalibriert'; badge.style.color = '#888';
+  }
+}
+
+async function loadMtime() {
+  try {
+    const res  = await fetch('/api/calibration/mtime');
+    const data = await res.json();
+    const el   = document.getElementById('cam-mtime');
+    if (data.exists && data.display) {
+      el.textContent = 'Letzte Kalibrierung: ' + data.display;
+    }
+  } catch (_) {}
+}
+
+async function toggleSpider() {
+  const btn = document.getElementById('spider-toggle');
+  const svg = document.getElementById('cam-svg');
+
+  if (!spiderDrawn) {
+    btn.textContent = 'Lade…';
+    btn.disabled = true;
+    await loadAndDrawSpider();
+    btn.disabled = false;
+  }
+
+  spiderVisible = !spiderVisible;
+  svg.style.display = spiderVisible ? 'block' : 'none';
+  btn.textContent = spiderVisible ? 'Kalibrierung ausblenden' : 'Kalibrierung anzeigen';
+  btn.classList.toggle('active', spiderVisible);
+}
+
+loadMtime();
+</script>
+</body>
+</html>
