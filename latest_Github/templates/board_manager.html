@@ -69,18 +69,40 @@
     }
     .cam-label   { color: #aaa; font-weight: 600; }
     .cam-status  { font-size: 0.72rem; color: #666; flex: 1; }
-    a.fullscreen { color: #6be26b; font-size: 0.75rem; text-decoration: none; flex-shrink: 0; }
-    a.fullscreen:hover { text-decoration: underline; }
-
     /* Stream wrapper */
     .stream-wrap {
       position: relative; background: #111; border-radius: 4px; overflow: hidden;
+      cursor: zoom-in;
     }
     .stream-wrap img {
       width: 100%; display: block;
       aspect-ratio: 16/9; object-fit: contain;
-      cursor: pointer;
+      pointer-events: none;
     }
+
+    /* Fullscreen-Overlay — selber DOM-Knoten, nur CSS */
+    .stream-wrap.fs {
+      position: fixed !important;
+      inset: 0;
+      width: 100vw !important;
+      height: 100vh !important;
+      z-index: 9900;
+      border-radius: 0;
+      cursor: default;
+    }
+    .stream-wrap.fs img {
+      width: 100%; height: 100%;
+      aspect-ratio: unset;
+      object-fit: fill; /* SVG-Koordinaten passen exakt zum Bild */
+    }
+    .fs-close {
+      display: none;
+      position: absolute; top: 14px; right: 14px; z-index: 9901;
+      padding: 7px 18px; background: rgba(0,0,0,0.75);
+      color: #eee; border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 8px; font-size: 0.9rem; cursor: pointer;
+    }
+    .stream-wrap.fs .fs-close { display: block; }
     .cam-spider {
       position: absolute; inset: 0; width: 100%; height: 100%;
       display: none; pointer-events: none;
@@ -125,11 +147,9 @@
       <div class="cam-card-header">
         <span class="cam-label">Cam{{ cam_i }}</span>
         <span id="cam-status-{{ cam_i }}" class="cam-status"></span>
-        <a href="/board-manager/cam/{{ cam_i }}" target="_blank" class="fullscreen">Vollbild</a>
       </div>
-      <div class="stream-wrap">
-        <img id="cam-img-{{ cam_i }}" src="" alt="Cam{{ cam_i }}"
-             onclick="window.open('/board-manager/cam/{{ cam_i }}', '_blank')">
+      <div id="stream-wrap-{{ cam_i }}" class="stream-wrap" onclick="openCamFs({{ cam_i }})">
+        <img id="cam-img-{{ cam_i }}" src="" alt="Cam{{ cam_i }}">
         <svg id="cam-spider-{{ cam_i }}" class="cam-spider"
              viewBox="0 0 1280 720" preserveAspectRatio="none"></svg>
         <div id="cam-overlay-{{ cam_i }}" class="cam-state-overlay">
@@ -139,6 +159,7 @@
             damit die Kamerabilder<br>angezeigt werden.
           </span>
         </div>
+        <button class="fs-close" onclick="closeCamFs(event)">✕ Schließen</button>
       </div>
     </div>
     {% endfor %}
@@ -392,6 +413,31 @@ async function toggleSpider() {
   btn.textContent = spiderVisible ? 'Kalibrierung ausblenden' : 'Kalibrierung anzeigen';
   btn.classList.toggle('active', spiderVisible);
   refreshBtn.style.display = spiderVisible ? 'inline-block' : 'none';
+}
+
+/* ====================================================
+   Cam Fullscreen — selber Stream, selber DOM-Knoten
+   ==================================================== */
+let _fsWrap = null;
+let _fsKey  = null;
+
+function openCamFs(camId) {
+  const wrap = document.getElementById('stream-wrap-' + camId);
+  if (!wrap) return;
+  if (_fsWrap === wrap) { closeCamFs(); return; }   // nochmal klicken = schließen
+  if (_fsWrap) closeCamFs();
+  _fsWrap = wrap;
+  wrap.classList.add('fs');
+  _fsKey = (e) => { if (e.key === 'Escape') closeCamFs(); };
+  document.addEventListener('keydown', _fsKey);
+}
+
+function closeCamFs(e) {
+  if (e) e.stopPropagation();
+  if (!_fsWrap) return;
+  _fsWrap.classList.remove('fs');
+  _fsWrap = null;
+  if (_fsKey) { document.removeEventListener('keydown', _fsKey); _fsKey = null; }
 }
 
 async function reloadSpider() {

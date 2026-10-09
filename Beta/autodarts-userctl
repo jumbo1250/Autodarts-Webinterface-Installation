@@ -15,15 +15,15 @@ ACTION="${1:-}"
 SERVICE="autodarts.service"
 
 if [[ -z "$ACTION" ]]; then
-    echo "Verwendung: autodarts-userctl {start|stop|restart|status|is-active|is-enabled}" >&2
+    echo "Verwendung: autodarts-userctl {start|stop|restart|status|is-active|is-enabled|show-mainpid}" >&2
     exit 1
 fi
 
 case "$ACTION" in
-    start|stop|restart|status|is-active|is-enabled|enable|disable) ;;
+    start|stop|restart|status|is-active|is-enabled|enable|disable|show-mainpid) ;;
     *)
         echo "Unbekannte Aktion: $ACTION" >&2
-        echo "Erlaubt: start stop restart status is-active is-enabled enable disable" >&2
+        echo "Erlaubt: start stop restart status is-active is-enabled enable disable show-mainpid" >&2
         exit 1
         ;;
 esac
@@ -35,6 +35,19 @@ if [[ -z "$USER_ID" ]]; then
 fi
 
 export XDG_RUNTIME_DIR="/run/user/${USER_ID}"
+
+# show-mainpid: Sonderbehandlung — MainPID aus dem User-Service lesen
+if [[ "$ACTION" == "show-mainpid" ]]; then
+    pid="$(systemctl --user -M "${USER_NAME}@.host" show "$SERVICE" -p MainPID --value 2>/dev/null || true)"
+    if [[ -z "$pid" ]] || [[ "$pid" == "0" ]]; then
+        pid="$(sudo -n -u "$USER_NAME" \
+            XDG_RUNTIME_DIR="/run/user/${USER_ID}" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${USER_ID}/bus" \
+            systemctl --user show "$SERVICE" -p MainPID --value 2>/dev/null || echo "0")"
+    fi
+    echo "${pid:-0}"
+    exit 0
+fi
 
 # Methode 1: systemctl --user via machinectl (bevorzugt, funktioniert auch ohne aktive Login-Session)
 if command -v systemctl >/dev/null 2>&1 && systemctl --user -M "${USER_NAME}@.host" "$ACTION" "$SERVICE" 2>/dev/null; then
