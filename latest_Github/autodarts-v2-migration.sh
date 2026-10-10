@@ -306,17 +306,23 @@ ensure_tui_service() {
   # Wrapper installieren — sorgt dafür dass autodarts beim Tab-Schließen endet
   cat > "$tui_wrapper" <<'TUI_WRAPPER_EOF'
 #!/usr/bin/env bash
-# Beendet autodarts -H 127.0.0.1 wenn der Browser-Tab geschlossen wird
-# (ttyd sendet SIGHUP ans Terminal bei Verbindungstrennung).
 AD_BIN="${HOME}/.local/bin/autodarts"
 pkill -u "$(id -un)" -f "${AD_BIN} -H 127.0.0.1" 2>/dev/null || true
 sleep 0.3
+_reset_terminal() {
+    printf '\033[?1000l\033[?1002l\033[?1003l\033[?1006l\033[?1015l' 2>/dev/null || true
+    printf '\033[?1049l' 2>/dev/null || true
+    printf '\033[?25h' 2>/dev/null || true
+    stty sane 2>/dev/null || true
+}
 _cleanup() {
     kill -TERM "$AD_PID" 2>/dev/null || true
     sleep 0.5
     kill -KILL "$AD_PID" 2>/dev/null || true
+    _reset_terminal
 }
 trap '_cleanup' HUP TERM INT EXIT
+_reset_terminal
 "$AD_BIN" -H 127.0.0.1 &
 AD_PID=$!
 wait "$AD_PID"
