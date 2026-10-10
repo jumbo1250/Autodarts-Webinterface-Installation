@@ -321,7 +321,7 @@ _cleanup() {
 }
 trap '_cleanup' HUP TERM INT EXIT
 _reset_terminal
-"$AD_BIN" -H 127.0.0.1 &
+"$AD_BIN" -H 127.0.0.1 <&0 >&1 2>&2 &
 AD_PID=$!
 wait "$AD_PID"
 TUI_WRAPPER_EOF
@@ -331,12 +331,12 @@ TUI_WRAPPER_EOF
   if [[ -f "$TUI_SERVICE" ]] && systemctl is-enabled --quiet autodarts-tui.service 2>/dev/null; then
     log "INFO: autodarts-tui.service bereits vorhanden"
     local _patched=0
-    # -m 1 nachträglich ergänzen falls fehlend (verhindert mehrere parallele Sitzungen)
-    if ! grep -q -- '-m 1' "$TUI_SERVICE" 2>/dev/null; then
-      log "INFO: Ergänze -m 1 in autodarts-tui.service"
-      sed -i 's|ExecStart=\(.*ttyd\) |ExecStart=\1 -m 1 |' "$TUI_SERVICE" 2>/dev/null || true
+    # -m 1 entfernen falls vorhanden (verursacht Reconnect-Probleme bei schnellem Tab-Wechsel)
+    if grep -q -- '-m 1' "$TUI_SERVICE" 2>/dev/null; then
+      log "INFO: Entferne -m 1 aus autodarts-tui.service"
+      sed -i 's| -m 1||g' "$TUI_SERVICE" 2>/dev/null || true
       _patched=1
-      log "OK: -m 1 ergänzt"
+      log "OK: -m 1 entfernt"
     fi
     # Wrapper eintragen falls noch direkter autodarts-Aufruf in ExecStart
     if ! grep -q 'autodarts-tui-wrapper' "$TUI_SERVICE" 2>/dev/null; then
@@ -367,7 +367,7 @@ Type=simple
 User=${AD_USER}
 Environment=HOME=${AD_HOME}
 WorkingDirectory=${AD_HOME}
-ExecStart=${ttyd_bin} -W -p ${PORT_TTYD} -m 1 -i 0.0.0.0 ${tui_wrapper}
+ExecStart=${ttyd_bin} -W -p ${PORT_TTYD} -i 0.0.0.0 ${tui_wrapper}
 Restart=always
 RestartSec=3
 

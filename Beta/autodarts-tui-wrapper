@@ -29,6 +29,6 @@ trap '_cleanup' HUP TERM INT EXIT
 # Terminal vor dem Start aufräumen (sauberer Zustand nach vorheriger Session)
 _reset_terminal
 
-"$AD_BIN" -H 127.0.0.1 &
+"$AD_BIN" -H 127.0.0.1 <&0 >&1 2>&2 &
 AD_PID=$!
 wait "$AD_PID"
