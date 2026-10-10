@@ -419,6 +419,11 @@ body.video-modal-open {
     .sysinfo-refresh:hover { color:#eef6ff; border-color:rgba(255,255,255,0.5); }
     .sysinfo-refresh.spinning { animation: spin 0.6s linear; }
     @keyframes spin { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
+    .btn-caller-toggle { min-width:120px; font-weight:600; transition:background 0.2s, border-color 0.2s, color 0.2s; }
+    .btn-caller-toggle.caller-on  { background:rgba(0,200,100,0.12); border-color:#00c864; color:#00c864; }
+    .btn-caller-toggle.caller-off { background:rgba(200,60,60,0.12);  border-color:#c84040; color:#ff7070; }
+    .btn-caller-toggle.caller-on:hover  { background:rgba(0,200,100,0.22); }
+    .btn-caller-toggle.caller-off:hover { background:rgba(200,60,60,0.22); }
     code {
       background: rgba(5, 12, 26, 0.72);
       padding: 2px 6px;

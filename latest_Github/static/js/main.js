@@ -370,15 +370,22 @@ function initWledUi(appUrls) {
       tr('common.unknown', 'Unbekannt')
     );
 
+    const wledDot = document.getElementById('wledServiceDot');
+    if (wledDot) {
+      wledDot.className = 'dot ' + (data.wled_service_active === true ? 'dot-green' : data.wled_service_active === false ? 'dot-red' : 'dot-gray');
+    }
+
     const callerToggleBtn = document.getElementById('callerToggleBtn');
     if (callerToggleBtn && !callerToggleBtn.classList.contains('btn-disabled')) {
       const span = callerToggleBtn.querySelector('span');
       if (span) {
         span.textContent = data.caller_enabled === false
-          ? tr('caller.enable_btn', 'Caller aktivieren')
-          : tr('caller.disable_btn', 'Caller deaktivieren');
+          ? tr('caller.status_off', 'Caller AUS')
+          : tr('caller.status_on', 'Caller AN');
       }
       callerToggleBtn.dataset.enabled = data.caller_enabled === false ? '0' : '1';
+      callerToggleBtn.classList.toggle('caller-on',  data.caller_enabled !== false);
+      callerToggleBtn.classList.toggle('caller-off', data.caller_enabled === false);
     }
 
     const btn = document.getElementById('callerWledLedRestartBtn');

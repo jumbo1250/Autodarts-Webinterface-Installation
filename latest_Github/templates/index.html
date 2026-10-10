@@ -145,11 +145,11 @@ Provided "as is", without warranty.
     </div>
     {% if cpu_pct is not none %}
       <div class="sysinfo-row">
-        <span class="sysinfo-label" data-key="sysinfo.cpu_label">CPU Last</span>
+        <span class="sysinfo-label" data-key="sysinfo.cpu_label">CPU Load</span>
         <span class="sysinfo-val" id="sysinfo-cpu">{{ cpu_pct }}%</span>
       </div>
       <div class="sysinfo-row">
-        <span class="sysinfo-label" data-key="sysinfo.cpu_actual_label">CPU %</span>
+        <span class="sysinfo-label" data-key="sysinfo.cpu_actual_label">CPU Akt.</span>
         <span class="sysinfo-val" id="sysinfo-cpu-actual">–</span>
       </div>
     {% endif %}
@@ -503,12 +503,6 @@ Provided "as is", without warranty.
               {% if extensions_v2.damaged %}Installation reparieren{% elif extensions_v2.installed %}Neu installieren{% else %}Neues System installieren{% endif %}
             </span>
           </button>
-          <a href="https://{{ request.host.split(':')[0] }}:8079" target="_blank" rel="noopener" class="btn {% if not extensions_v2.installed %}btn-disabled{% endif %}" id="extensionsV2LoginBtn" {% if not extensions_v2.installed %}aria-disabled="true" onclick="return false;"{% endif %}>
-            <span data-key="extensions_v2.login_btn">Caller-Anmeldung öffnen_fallb</span>
-          </a>
-          <button type="button" class="btn {% if not extensions_v2.installed %}btn-disabled{% endif %}" id="extensionsV2AuthResetBtn" {% if not extensions_v2.installed %}disabled{% endif %}>
-            <span data-key="extensions_v2.auth_reset_open_btn">Caller-Anmeldung resetten und öffnen</span>
-          </button>
         </div>
         <div id="extensionsV2ProgressWrap" style="display:none; margin-top:12px;">
           <div style="height:10px; border-radius:999px; overflow:hidden; background:rgba(127,127,127,.25);">
@@ -534,21 +528,37 @@ Provided "as is", without warranty.
       <p class="hint" style="margin-top:0;"><span data-key="led.bands_hint">Hier können Sie die LEDs verwalten, bzw. ein und ausschalten.</span></p>
 
       <div id="callerWledControlBox" style="border:1px solid rgba(255,255,255,.14); border-radius:12px; padding:12px 14px; margin:10px 0 14px; background:rgba(255,255,255,.025);">
-        <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center; justify-content:space-between;">
-          <div>
-            <div style="font-weight:700; margin-bottom:4px;"><span data-key="caller_wled.title">Caller/WLED</span></div>
-            <div class="hint" style="margin:0; display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
-              <span><span data-key="caller_wled.login_label">Caller/WLED Anmeldung:</span> <strong id="callerWledAuthBadge">—</strong></span>
-              <span><span data-key="caller_wled.key_label">Verbindungsschlüssel:</span> <strong id="callerWledKeyBadge">—</strong></span>
-              <span><span data-key="caller_wled.caller_service_label">Caller Dienst:</span> <strong id="callerServiceBadge">—</strong></span>
-              <span><span data-key="caller_wled.wled_service_label">WLED Dienst:</span> <strong id="callerWledWledServiceBadge">—</strong></span>
-            </div>
-          </div>
-          <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
-            <button type="button" class="btn {% if not caller_service_exists %}btn-disabled{% endif %}" id="callerToggleBtn" {% if not caller_service_exists %}disabled{% endif %}>
-              <span data-key="{% if caller_enabled %}caller.disable_btn{% else %}caller.enable_btn{% endif %}">{% if caller_enabled %}Caller deaktivieren{% else %}Caller aktivieren{% endif %}</span>
-            </button>
-            <button type="button" class="btn btn-primary {% if not wled_installed or not caller_enabled %}btn-disabled{% endif %}" id="callerWledLedRestartBtn" {% if not wled_installed or not caller_enabled %}disabled{% endif %}>
+        <div style="font-weight:700; margin-bottom:6px;"><span data-key="caller_wled.title">Caller/WLED</span></div>
+        <div class="hint" style="margin:0 0 10px; display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+          <span><span data-key="caller_wled.login_label">Anmeldung:</span> <strong id="callerWledAuthBadge">—</strong></span>
+          <span><span data-key="caller_wled.key_label">Schlüssel:</span> <strong id="callerWledKeyBadge">—</strong></span>
+          <span><span data-key="caller_wled.caller_service_label">Caller:</span> <strong id="callerServiceBadge">—</strong></span>
+          <span><span data-key="caller_wled.wled_service_label">WLED:</span> <strong id="callerWledWledServiceBadge">—</strong></span>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+          <a href="https://{{ request.host.split(':')[0] }}:8079" target="_blank" rel="noopener"
+             class="btn {% if not extensions_v2.installed %}btn-disabled{% endif %}"
+             id="extensionsV2LoginBtn"
+             {% if not extensions_v2.installed %}aria-disabled="true" onclick="return false;"{% endif %}>
+            <span data-key="extensions_v2.login_btn">Caller-Anmeldung öffnen</span>
+          </a>
+          <button type="button" class="btn {% if not extensions_v2.installed %}btn-disabled{% endif %}"
+                  id="extensionsV2AuthResetBtn" {% if not extensions_v2.installed %}disabled{% endif %}>
+            <span data-key="extensions_v2.auth_reset_open_btn">Anmeldung resetten + öffnen</span>
+          </button>
+        </div>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+          <button type="button"
+                  class="btn btn-caller-toggle {% if caller_enabled %}caller-on{% else %}caller-off{% endif %} {% if not caller_service_exists %}btn-disabled{% endif %}"
+                  id="callerToggleBtn"
+                  {% if not caller_service_exists %}disabled{% endif %}
+                  data-enabled="{{ '1' if caller_enabled else '0' }}">
+            <span data-key="{% if caller_enabled %}caller.status_on{% else %}caller.status_off{% endif %}">{% if caller_enabled %}Caller AN{% else %}Caller AUS{% endif %}</span>
+          </button>
+          <div style="display:inline-flex; align-items:center; gap:6px;">
+            <span id="wledServiceDot" class="dot dot-gray" title="WLED Dienst"></span>
+            <button type="button" class="btn btn-primary {% if not wled_installed or not caller_enabled %}btn-disabled{% endif %}"
+                    id="callerWledLedRestartBtn" {% if not wled_installed or not caller_enabled %}disabled{% endif %}>
               <span data-key="caller_wled.led_restart_btn">LED neustarten</span>
             </button>
           </div>
@@ -1276,5 +1286,22 @@ Wenn Autodarts größere Änderungen am Layout oder an CSS-Klassen macht, müsse
   <script src="{{ url_for('static', filename='js/autodarts_tools_platforms.js') }}?v=20260406"></script>
   <script src="{{ url_for('static', filename='js/caller_installer.js') }}?v=20260408"></script>
   <script src="{{ url_for('static', filename='js/extensions_v2.js') }}?v=20260806_authreset01"></script>
+
+{% if show_v2_welcome %}
+<div id="v2WelcomeOverlay" class="video-modal-overlay is-open" role="dialog" aria-modal="true" aria-labelledby="v2WelcomeTitle">
+  <div class="video-modal" style="max-width:420px;text-align:center;border:2px solid #00c864;">
+    <div style="padding:2rem 1.5rem 1.5rem;">
+      <div style="font-size:3.5rem;line-height:1;margin-bottom:0.75rem;">&#127919;</div>
+      <h2 id="v2WelcomeTitle" style="color:#00c864;font-weight:700;font-size:1.4rem;margin:0 0 0.5rem;">Autodarts 2.0 installiert!</h2>
+      <p style="color:#ccc;margin:0 0 0.25rem;font-size:0.95rem;">Gl&uuml;ckwunsch &amp; viel Spa&szlig; beim Spiel!</p>
+      <p style="color:#888;font-size:0.82rem;margin:0 0 1.5rem;">Congratulations &amp; enjoy the game!</p>
+      <button onclick="document.getElementById('v2WelcomeOverlay').classList.remove('is-open')"
+              class="btn" style="min-width:140px;font-weight:600;background:#00c864;color:#000;border-color:#00c864;">
+        Los geht's! &nbsp;/&nbsp; Let's go!
+      </button>
+    </div>
+  </div>
+</div>
+{% endif %}
 </body>
 </html>

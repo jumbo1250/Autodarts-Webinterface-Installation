@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# autodarts-tui-wrapper
+# Wird von ttyd als TUI-Kommando aufgerufen.
+# Stellt sicher dass autodarts -H 127.0.0.1 bei geschlossenem Browser-Tab
+# beendet wird (ttyd sendet HUP an das Terminal wenn der Client trennt).
+
+AD_BIN="${HOME}/.local/bin/autodarts"
+
+# Verwaiste Instanzen aus abgebrochenen Sessions bereinigen
+pkill -u "$(id -un)" -f "${AD_BIN} -H 127.0.0.1" 2>/dev/null || true
+sleep 0.3
+
+_cleanup() {
+    kill -TERM "$AD_PID" 2>/dev/null || true
+    sleep 0.5
+    kill -KILL "$AD_PID" 2>/dev/null || true
+}
+trap '_cleanup' HUP TERM INT EXIT
+
+"$AD_BIN" -H 127.0.0.1 &
+AD_PID=$!
+wait "$AD_PID"

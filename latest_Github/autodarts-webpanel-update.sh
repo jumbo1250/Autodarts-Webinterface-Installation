@@ -38,6 +38,7 @@ FILES=(
   "version.txt|${LOCAL_VER_FILE}"
   "autodarts-webpanel-update.sh|${BIN_DIR}/autodarts-webpanel-update.sh"
   "autodarts-userctl|${BIN_DIR}/autodarts-userctl"
+  "autodarts-tui-wrapper|${BIN_DIR}/autodarts-tui-wrapper"
   "autodarts-v2-migration.sh|${BIN_DIR}/autodarts-v2-migration.sh"
 )
 
@@ -145,75 +146,9 @@ run_v2_migration_if_downloaded() {
   fi
 }
 
-run_revision_chain() {
-  # ZUKUNFT: Wenn Beta in latest promoted wird, können hier Checkpoint-Skripte
-  # für alte Systeme hinterlegt werden (z.B. 1.808/autodarts-webpanel-update.sh).
-  # Bis dahin: Beta überspringt die Kette immer. Stable-Systeme laufen sie durch
-  # sobald update-revisions.conf Einträge enthält die größer als ihre lokale Version sind.
-  # Beta-Kanal: Revisionskette überspringen
-  [[ "$CHANNEL" == "beta" ]] && return 0
-
-  local conf_url="${GITHUB_RAW}/latest/update-revisions.conf"
-  local conf_tmp
-  conf_tmp="$(mktemp)"
-
-  local http_code
-  http_code="$(curl -sSL --connect-timeout 5 --max-time 30 -o "$conf_tmp" -w "%{http_code}" "$conf_url" || true)"
-  if [[ "$http_code" != "200" ]] || [[ ! -s "$conf_tmp" ]]; then
-    log "INFO: update-revisions.conf nicht erreichbar (HTTP=$http_code) -> Revisionskette skip"
-    rm -f "$conf_tmp"; return 0
-  fi
-
-  # shellcheck source=/dev/null
-  source "$conf_tmp"; rm -f "$conf_tmp"
-
-  if [[ -z "${UPDATE_REVISIONS:-}" ]]; then
-    log "INFO: UPDATE_REVISIONS nicht definiert -> Revisionskette skip"; return 0
-  fi
-
-  IFS=';' read -ra REVS <<< "$UPDATE_REVISIONS"
-  local local_ver
-  local_ver="$(cat "${LOCAL_VER_FILE}" 2>/dev/null | tr -d '\r\n' || true)"
-
-  log "===== Installierte Version: ${local_ver:-unknown} | Update-Kette: ${UPDATE_REVISIONS} ====="
-
-  for rev in "${REVS[@]}"; do
-    [[ "$rev" == "latest" ]] && continue
-
-    if [[ -n "$local_ver" ]] && ! version_gt "$rev" "$local_ver"; then
-      log "CHAIN: Checkpoint ${rev} -> skip (lokal ${local_ver} >= ${rev})"
-      continue
-    fi
-
-    log "CHAIN: Checkpoint ${rev} -> starten"
-    local cp_tmp
-    cp_tmp="$(mktemp)"
-    local cp_http
-    cp_http="$(curl -sSL --connect-timeout 5 --max-time 60 -o "$cp_tmp" -w "%{http_code}" "${GITHUB_RAW}/${rev}/autodarts-webpanel-update.sh" || true)"
-
-    if [[ "$cp_http" != "200" ]] || [[ ! -s "$cp_tmp" ]] || ! head -n 1 "$cp_tmp" | grep -q '^#!'; then
-      log "WARN: Checkpoint ${rev} Script nicht verfügbar (HTTP=$cp_http) -> skip"
-      rm -f "$cp_tmp"; continue
-    fi
-
-    sed -i "s|BASE_URL=.*|BASE_URL=\"${GITHUB_RAW}/${rev}\"|" "$cp_tmp"
-    chmod +x "$cp_tmp"
-    log "CHAIN: Führe Checkpoint ${rev} aus..."
-    if LOG_FILE="${LOG_FILE}" bash "$cp_tmp" >>"${LOG_FILE}" 2>&1; then
-      log "CHAIN: Checkpoint ${rev} -> OK"
-    else
-      log "WARN: Checkpoint ${rev} meldete Fehler (exit=$?) -> Kette läuft weiter"
-    fi
-    rm -f "$cp_tmp"
-
-    local_ver="$(cat "${LOCAL_VER_FILE}" 2>/dev/null | tr -d '\r\n' || true)"
-    log "CHAIN: Lokale Version nach Checkpoint ${rev}: ${local_ver:-unknown}"
-  done
-
-  log "===== Revisionskette abgeschlossen -> weiter mit latest ====="
-}
-
 # --- MAIN ---
+# Hinweis: Die Revisionskette wird vom Runner (autodarts-webpanel-update-runner.sh) gesteuert.
+# Dieses Script installiert nur den aktuellen Stand aus latest/.
 
 LOCK="/run/autodarts-webpanel-update.lock"
 if command -v flock >/dev/null 2>&1; then
@@ -222,9 +157,6 @@ if command -v flock >/dev/null 2>&1; then
 fi
 
 log "===== Webpanel Update START ====="
-
-# Revisionskette: alte Systeme müssen alle Checkpoints sequenziell durchlaufen
-run_revision_chain
 
 REMOTE_VER="$(curl -sSL "${BASE_URL}/version.txt" 2>/dev/null | tr -d '\r\n' || true)"
 LOCAL_VER="$(cat "${LOCAL_VER_FILE}" 2>/dev/null | tr -d '\r\n' || true)"

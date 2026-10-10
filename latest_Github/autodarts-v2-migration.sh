@@ -301,16 +301,50 @@ ensure_tui_service() {
   local ttyd_bin
   ttyd_bin="$(command -v ttyd 2>/dev/null || echo /usr/local/bin/ttyd)"
   local autodarts_cli="${AD_HOME}/.local/bin/autodarts"
+  local tui_wrapper="/usr/local/bin/autodarts-tui-wrapper"
+
+  # Wrapper installieren — sorgt dafür dass autodarts beim Tab-Schließen endet
+  cat > "$tui_wrapper" <<'TUI_WRAPPER_EOF'
+#!/usr/bin/env bash
+# Beendet autodarts -H 127.0.0.1 wenn der Browser-Tab geschlossen wird
+# (ttyd sendet SIGHUP ans Terminal bei Verbindungstrennung).
+AD_BIN="${HOME}/.local/bin/autodarts"
+pkill -u "$(id -un)" -f "${AD_BIN} -H 127.0.0.1" 2>/dev/null || true
+sleep 0.3
+_cleanup() {
+    kill -TERM "$AD_PID" 2>/dev/null || true
+    sleep 0.5
+    kill -KILL "$AD_PID" 2>/dev/null || true
+}
+trap '_cleanup' HUP TERM INT EXIT
+"$AD_BIN" -H 127.0.0.1 &
+AD_PID=$!
+wait "$AD_PID"
+TUI_WRAPPER_EOF
+  chmod +x "$tui_wrapper"
+  log "OK: autodarts-tui-wrapper installiert → ${tui_wrapper}"
 
   if [[ -f "$TUI_SERVICE" ]] && systemctl is-enabled --quiet autodarts-tui.service 2>/dev/null; then
     log "INFO: autodarts-tui.service bereits vorhanden"
+    local _patched=0
     # -m 1 nachträglich ergänzen falls fehlend (verhindert mehrere parallele Sitzungen)
     if ! grep -q -- '-m 1' "$TUI_SERVICE" 2>/dev/null; then
       log "INFO: Ergänze -m 1 in autodarts-tui.service"
       sed -i 's|ExecStart=\(.*ttyd\) |ExecStart=\1 -m 1 |' "$TUI_SERVICE" 2>/dev/null || true
+      _patched=1
+      log "OK: -m 1 ergänzt"
+    fi
+    # Wrapper eintragen falls noch direkter autodarts-Aufruf in ExecStart
+    if ! grep -q 'autodarts-tui-wrapper' "$TUI_SERVICE" 2>/dev/null; then
+      log "INFO: Ersetze direkten autodarts-Aufruf durch autodarts-tui-wrapper"
+      sed -i "s|${autodarts_cli} -H 127\.0\.0\.1|${tui_wrapper}|" "$TUI_SERVICE" 2>/dev/null || true
+      _patched=1
+      log "OK: ExecStart auf autodarts-tui-wrapper umgestellt"
+    fi
+    if [[ "$_patched" -eq 1 ]]; then
       systemctl daemon-reload 2>/dev/null || true
       systemctl restart autodarts-tui.service 2>/dev/null || true
-      log "OK: -m 1 ergänzt und autodarts-tui.service neu gestartet"
+      log "OK: autodarts-tui.service nach Patch neu gestartet"
     fi
     systemctl is-active --quiet autodarts-tui.service 2>/dev/null \
       || systemctl start autodarts-tui.service 2>/dev/null || true
@@ -329,7 +363,7 @@ Type=simple
 User=${AD_USER}
 Environment=HOME=${AD_HOME}
 WorkingDirectory=${AD_HOME}
-ExecStart=${ttyd_bin} -W -p ${PORT_TTYD} -m 1 -i 0.0.0.0 ${autodarts_cli} -H 127.0.0.1
+ExecStart=${ttyd_bin} -W -p ${PORT_TTYD} -m 1 -i 0.0.0.0 ${tui_wrapper}
 Restart=always
 RestartSec=3
 

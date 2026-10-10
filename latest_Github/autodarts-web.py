@@ -209,6 +209,8 @@ EXTENSIONS_UPDATE_SCRIPT = "/usr/local/bin/autodarts-extensions-update.sh"
 EXTENSIONS_UPDATE_LOG = "/var/log/autodarts_extensions_update.log"
 EXTENSIONS_UPDATE_STATE = "/var/lib/autodarts/extensions-update-state.json"
 EXTENSIONS_UPDATE_LAST = "/var/lib/autodarts/extensions-update-last.json"
+V2_MIGRATION_STATE_FILE = "/var/lib/autodarts/autodarts-v2-migration-state.json"
+V2_WELCOME_FLAG_FILE    = "/var/lib/autodarts/v2-welcome-shown.flag"
 EXTENSIONS_V2_INSTALL_SCRIPT = "/usr/local/bin/autodarts-extensions-v2-install.sh"
 EXTENSIONS_V2_FLAG = "/var/lib/autodarts/config/extensions-v2-installed.json"
 EXTENSIONS_V2_INSTALL_LOG = "/var/log/autodarts_extensions_v2_install.log"
@@ -2029,35 +2031,39 @@ def start_webpanel_update_background(mode: str = "update", allow_self_update: bo
 
     mode_arg = shlex.quote(mode)
 
-    # Kanal aus Settings lesen und als Env-Variable an das Update-Script weitergeben
+    # Kanal aus Settings lesen und als Env-Variable weitergeben
     _channel = str(load_settings().get("webpanel_channel") or "stable").strip().lower()
     _channel = "beta" if _channel == "beta" else "stable"
-
-    _raw_base = WEBPANEL_RAW_BASE.replace("/latest", "/Beta") if _channel == "beta" else WEBPANEL_RAW_BASE
-    remote_updater_url = _raw_base + "/autodarts-webpanel-update.sh"
     channel_env = f"AUTODARTS_WEBPANEL_CHANNEL={shlex.quote(_channel)} "
 
-    self_update_cmd = ""
+    # Runner-URL: immer aus latest/ — der Runner entscheidet selbst ob Beta oder Stable
+    _github_raw = WEBPANEL_RAW_BASE.rsplit("/", 1)[0]  # strip /latest → .../main
+    _runner_url = f"{_github_raw}/latest/autodarts-webpanel-update-runner.sh"
+
     if allow_self_update and mode == "update":
-        self_update_cmd = (
-            "tmp=$(mktemp); "
-            f"if curl -fsSL --retry 2 --connect-timeout 5 --max-time 30 {shlex.quote(remote_updater_url)} -o \"$tmp\"; then "
-            "sed -i 's/\r$//' \"$tmp\" || true; "
-            "sed -i '1s/^\xEF\xBB\xBF//' \"$tmp\" || true; "
-            "if bash -n \"$tmp\" 2>/dev/null; then "
-            f"sudo -n install -m 755 \"$tmp\" {shlex.quote(WEBPANEL_UPDATE_SCRIPT)}; "
+        # Runner frisch aus latest/ laden und direkt ausführen (kein lokales Install).
+        # Fallback auf lokales Script falls Runner nicht erreichbar oder Syntax-Fehler.
+        _run_cmd = (
+            "tmp_r=$(mktemp); "
+            f"if curl -fsSL --retry 2 --connect-timeout 5 --max-time 30 {shlex.quote(_runner_url)} -o \"$tmp_r\" "
+            "&& sed -i 's/\\r$//' \"$tmp_r\" 2>/dev/null "
+            "&& bash -n \"$tmp_r\" 2>/dev/null; then "
+            f"sudo -n {channel_env}bash \"$tmp_r\"; "
+            "else "
+            f"sudo -n {channel_env}{shlex.quote(WEBPANEL_UPDATE_SCRIPT)} {mode_arg}; "
             "fi; "
-            "fi; "
-            "rm -f \"$tmp\" || true; "
+            "rm -f \"$tmp_r\" || true"
         )
+    else:
+        # UVC-Hack und andere Spezialmodi: lokales Script direkt aufrufen
+        _run_cmd = f"sudo -n {channel_env}{shlex.quote(WEBPANEL_UPDATE_SCRIPT)} {mode_arg}"
 
     wrapper_cmd = (
         "set -euo pipefail; "
         f"lock={shlex.quote(lock_path)}; "
-        f"{self_update_cmd}"
         "rc=0; "
-        f"(exec sudo -n {channel_env}{shlex.quote(WEBPANEL_UPDATE_SCRIPT)} {mode_arg} >> {shlex.quote(WEBPANEL_UPDATE_LOG)} 2>&1) || rc=$?; "
-        f"printf '%s\n' \"$rc\" > {shlex.quote(result_path)} || true; "
+        f"({_run_cmd} >> {shlex.quote(WEBPANEL_UPDATE_LOG)} 2>&1) || rc=$?; "
+        f"printf '%s\\n' \"$rc\" > {shlex.quote(result_path)} || true; "
         'rm -f "$lock" || true; '
         "exit $rc"
     )
@@ -2086,9 +2092,8 @@ def start_webpanel_update_background(mode: str = "update", allow_self_update: bo
         fallback = (
             "nohup /bin/bash -lc "
             + shlex.quote(
-                f"{self_update_cmd}"
-                f"rc=0; (exec sudo -n {channel_env}{WEBPANEL_UPDATE_SCRIPT} {mode_arg} >> {WEBPANEL_UPDATE_LOG} 2>&1) || rc=$?; "
-                f"printf '%s\n' \"$rc\" > {shlex.quote(result_path)} || true; "
+                f"rc=0; ({_run_cmd} >> {WEBPANEL_UPDATE_LOG} 2>&1) || rc=$?; "
+                f"printf '%s\\n' \"$rc\" > {shlex.quote(result_path)} || true; "
                 f"rm -f {shlex.quote(lock_path)} || true; exit $rc"
             )
             + " &"
@@ -6933,6 +6938,25 @@ def admin_pi5_headless(mode):
     return redirect(url_for("index", msg=msg))
 
 
+def check_and_consume_v2_welcome():
+    if os.path.exists(V2_WELCOME_FLAG_FILE):
+        return False
+    try:
+        with open(V2_MIGRATION_STATE_FILE, "r", encoding="utf-8") as f:
+            state = json.load(f)
+    except Exception:
+        return False
+    if state.get("status") != "success":
+        return False
+    if state.get("result") not in ("migrated_from_v1", "fresh_install", "fresh_install_from_broken"):
+        return False
+    try:
+        open(V2_WELCOME_FLAG_FILE, "w").close()
+    except Exception:
+        pass
+    return True
+
+
 @app.route("/", methods=["GET"])
 def index():
     ensure_msg = None
@@ -7170,6 +7194,7 @@ def index():
         darts_ttyd_url=darts_ttyd_url,
         autodarts_v2_running=autodarts_v2_running,
         autodarts_ttyd_running=autodarts_ttyd_running,
+        show_v2_welcome=check_and_consume_v2_welcome(),
     )
 
 
