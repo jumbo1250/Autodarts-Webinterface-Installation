@@ -13,11 +13,9 @@ sleep 0.3
 _reset_terminal() {
     # Alle Mouse-Tracking-Modi deaktivieren (1000=normal, 1002=button, 1003=any-motion, 1006=SGR, 1015=urxvt)
     printf '\033[?1000l\033[?1002l\033[?1003l\033[?1006l\033[?1015l' 2>/dev/null || true
-    # Alternate-Screen verlassen falls autodarts darauf war
-    printf '\033[?1049l' 2>/dev/null || true
     # Cursor sichtbar machen
     printf '\033[?25h' 2>/dev/null || true
-    stty sane 2>/dev/null || true
+    # KEIN stty sane — würde pty-Einstellungen zurücksetzen und ttyd-Session unterbrechen
 }
 
 _cleanup() {

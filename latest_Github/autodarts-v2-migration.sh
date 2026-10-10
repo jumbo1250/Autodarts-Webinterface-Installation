@@ -311,9 +311,7 @@ pkill -u "$(id -un)" -f "${AD_BIN} -H 127.0.0.1" 2>/dev/null || true
 sleep 0.3
 _reset_terminal() {
     printf '\033[?1000l\033[?1002l\033[?1003l\033[?1006l\033[?1015l' 2>/dev/null || true
-    printf '\033[?1049l' 2>/dev/null || true
     printf '\033[?25h' 2>/dev/null || true
-    stty sane 2>/dev/null || true
 }
 _cleanup() {
     kill -TERM "$AD_PID" 2>/dev/null || true
