@@ -8440,6 +8440,21 @@ def api_webpanel_update_status():
     })
 
 
+# V2-CHAIN-FIX: Einmalig nach Erstinstallation von autodarts 2.0 — setzt Version zurück
+# damit der Runner die Revisionskette (1.808→latest) nachholt. ENTFERNBAR sobald
+# alle Pis mindestens einmal durch den Runner gelaufen sind.
+@app.route("/api/v2-chain-fix", methods=["POST"])
+def api_v2_chain_fix():
+    try:
+        os.makedirs(os.path.dirname(WEBPANEL_VERSION_FILE), exist_ok=True)
+        with open(WEBPANEL_VERSION_FILE, "w", encoding="utf-8") as f:
+            f.write("1.800\n")
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+    ok, msg = start_webpanel_update_background(mode="update", allow_self_update=True)
+    return jsonify({"ok": ok, "message": msg})
+
+
 @app.route("/api/webpanel/update", methods=["POST"])
 def api_webpanel_update_start():
     installed = get_webpanel_version()
