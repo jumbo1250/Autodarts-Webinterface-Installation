@@ -1295,21 +1295,27 @@ Wenn Autodarts größere Änderungen am Layout oder an CSS-Klassen macht, müsse
       <h2 id="v2WelcomeTitle" style="color:#00c864;font-weight:700;font-size:1.4rem;margin:0 0 0.5rem;">Autodarts 2.0 installiert!</h2>
       <p style="color:#ccc;margin:0 0 0.25rem;font-size:0.95rem;">Gl&uuml;ckwunsch &amp; viel Spa&szlig; beim Spiel!</p>
       <p style="color:#888;font-size:0.82rem;margin:0 0 1.5rem;">Congratulations &amp; enjoy the game!</p>
-      <button id="v2ChainFixBtn"
-              onclick="v2ChainFix()"
-              class="btn" style="min-width:140px;font-weight:600;background:#00c864;color:#000;border-color:#00c864;">
-        Systemaktualität prüfen &nbsp;/&nbsp; Check system
-      </button>
+      <div id="v2WelcomeReady">
+        <button id="v2ChainFixBtn"
+                onclick="v2ChainFix()"
+                class="btn" style="min-width:140px;font-weight:600;background:#00c864;color:#000;border-color:#00c864;">
+          Systemaktualität prüfen &nbsp;/&nbsp; Check system
+        </button>
+      </div>
+      <div id="v2WelcomeRunning" style="display:none;">
+        <p style="color:#00c864;font-weight:600;margin:0 0 0.4rem;">⏳ Update läuft im Hintergrund…</p>
+        <p style="color:#888;font-size:0.82rem;margin:0 0 1.2rem;">Das dauert ca. 1–2 Minuten.<br>Running in background, ~1–2 min.</p>
+        <button onclick="document.getElementById('v2WelcomeOverlay').classList.remove('is-open')"
+                class="btn" style="min-width:120px;background:#333;color:#eee;border-color:#555;">
+          OK
+        </button>
+      </div>
       <script>
       function v2ChainFix() {
-        var btn = document.getElementById('v2ChainFixBtn');
-        btn.disabled = true;
-        btn.textContent = '...';
-        fetch('/api/v2-chain-fix', {method:'POST'})
-          .catch(function(){})
-          .finally(function(){
-            document.getElementById('v2WelcomeOverlay').classList.remove('is-open');
-          });
+        document.getElementById('v2ChainFixBtn').disabled = true;
+        fetch('/api/v2-chain-fix', {method:'POST'}).catch(function(){});
+        document.getElementById('v2WelcomeReady').style.display = 'none';
+        document.getElementById('v2WelcomeRunning').style.display = 'block';
       }
       </script>
     </div>
