@@ -1,0 +1,404 @@
+========== DIAGNOSE Thu  8 Oct 21:12:42 CEST 2026 ==========
+========== WEBPANEL UPDATE LOG ==========
+  "status": "green",
+  "pi_online": true,
+  "forwarding_ready": true,
+  "ap_active": true,
+  "uplinks": ["wlan0","eth0"],
+  "note": "Verbundenen AP-Ger\u00e4ten steht Internet zur Verf\u00fcgung."
+}
+[2026-09-28 22:52:25] OK: AP-Internet-Fix-Script erfolgreich ausgeführt
+[2026-09-28 22:52:25] ONCE[Kernel_hold_2026-07-06_off]: skip (marker exists: /var/lib/autodarts/once-Kernel_hold_2026-07-06_off.done)
+[2026-09-28 22:52:25] ===== Webpanel Update OK =====
+OK
+[2026-10-07 19:55:32] ===== Webpanel Update START =====
+[2026-10-07 19:55:32] Local:  1.806
+[2026-10-07 19:55:32] Remote: 1.808
+[2026-10-07 19:55:32] Download: autodarts-button-led.py
+[2026-10-07 19:55:32] OK: autodarts-button-led.py geladen
+[2026-10-07 19:55:32] Download: autodarts-extensions-update.sh
+[2026-10-07 19:55:33] OK: autodarts-extensions-update.sh geladen
+[2026-10-07 19:55:33] Download: autodarts-extensions-v2-install.sh
+[2026-10-07 19:55:33] OK: autodarts-extensions-v2-install.sh geladen
+[2026-10-07 19:55:33] Download: autodarts-caller-auth-reset.sh
+[2026-10-07 19:55:33] OK: autodarts-caller-auth-reset.sh geladen
+[2026-10-07 19:55:33] Download: Autodarts_install_manual.pdf
+[2026-10-07 19:55:34] OK: Autodarts_install_manual.pdf geladen
+[2026-10-07 19:55:34] Download: GPIO_Setup.jpeg
+[2026-10-07 19:55:34] MISSING: GPIO_Setup.jpeg nicht im Repo -> skip
+[2026-10-07 19:55:34] Download: Autodarts_Installationshandbuch_v2.docx
+[2026-10-07 19:55:35] MISSING: Autodarts_Installationshandbuch_v2.docx nicht im Repo -> skip
+[2026-10-07 19:55:35] Download: version.txt
+[2026-10-07 19:55:35] OK: version.txt geladen
+[2026-10-07 19:55:35] Download: fix_ap_internet_sharing_v3.sh
+[2026-10-07 19:55:35] OK: fix_ap_internet_sharing_v3.sh geladen
+[2026-10-07 19:55:35] Download: autodarts-desktop-migration.sh
+[2026-10-07 19:55:36] OK: autodarts-desktop-migration.sh geladen
+[2026-10-07 19:55:36] Download: autodarts-poweroff-shortcut.sh
+[2026-10-07 19:55:36] OK: autodarts-poweroff-shortcut.sh geladen
+[2026-10-07 19:55:36] Download: Wallpaper.png
+[2026-10-07 19:55:37] OK: Wallpaper.png geladen
+[2026-10-07 19:55:37] Download: autodarts.png
+[2026-10-07 19:55:37] OK: autodarts.png geladen
+[2026-10-07 19:55:37] Download: autodarts-webpanel-update.sh
+[2026-10-07 19:55:38] OK: autodarts-webpanel-update.sh geladen
+[2026-10-07 19:55:38] Prüfe optionales Paket: webpanel.zip
+[2026-10-07 19:55:39] Installiere Webpanel aus webpanel.zip
+[2026-10-07 19:55:39] OK: templates/ aus ZIP ersetzt
+[2026-10-07 19:55:39] OK: static/ aus ZIP ersetzt
+[2026-10-07 19:55:39] INFO: theme/ nicht in webpanel.zip enthalten -> skip
+[2026-10-07 19:55:39] OK: configs/ aus ZIP ersetzt
+[2026-10-07 19:55:39] OK: webpanel.zip installiert
+[2026-10-07 19:55:40] Starte optionalen Desktop-Migrations-Hook: /usr/local/bin/autodarts-desktop-migration.sh
+[autodarts-desktop-migration] SKIP: /home/peter/bin/autodarts-start.sh fehlt - dieser Pi besitzt die Desktop-Startfunktion offenbar nicht.
+[2026-10-07 19:55:40] OK: Optionaler Desktop-Migrations-Hook abgeschlossen
+[2026-10-07 19:55:40] Erstelle Poweroff-Desktop-Shortcut
+OK: Poweroff-Shortcut erstellt: /home/peter/Desktop/Poweroff.desktop
+[2026-10-07 19:55:40] OK: Poweroff-Shortcut abgeschlossen
+[2026-10-07 19:55:40] OK: Autodarts Safe Updater installiert: /usr/local/bin/autodarts-safe-updater.sh
+[2026-10-07 19:55:41] OK: autodartsupdater.service nutzt nun den Safe-Updater per Drop-in.
+[2026-10-07 19:55:41] Starte Caller/WLED-Service-Reparatur (installiert schlanken Health-Watchdog)
+[2026-10-07 19:55:44] OK: Caller/WLED-Service-Reparatur abgeschlossen
+[2026-10-07 19:55:45] OK: darts-caller boot-stabilize Drop-in installiert: /etc/systemd/system/darts-caller.service.d/boot-stabilize.conf
+[2026-10-07 19:55:46] INFO: Installiere fehlende Display-Tools: lxrandr wdisplays
+Reading package lists...
+Building dependency tree...
+Reading state information...
+The following NEW packages will be installed:
+  lxrandr wdisplays
+0 upgraded, 2 newly installed, 0 to remove and 286 not upgraded.
+Need to get 96.2 kB of archives.
+After this operation, 640 kB of additional disk space will be used.
+Get:1 http://deb.debian.org/debian trixie/main arm64 lxrandr arm64 0.3.3-1 [53.1 kB]
+Get:2 http://deb.debian.org/debian trixie/main arm64 wdisplays arm64 1.1.1-1+b2 [43.1 kB]
+debconf: unable to initialize frontend: Dialog
+debconf: (Dialog frontend will not work on a dumb terminal, an emacs shell buffer, or without a controlling terminal.)
+debconf: falling back to frontend: Readline
+debconf: unable to initialize frontend: Readline
+debconf: (This frontend requires a controlling tty.)
+debconf: falling back to frontend: Teletype
+debconf: unable to initialize frontend: Teletype
+debconf: (This frontend requires a controlling tty.)
+debconf: falling back to frontend: Noninteractive
+Fetched 96.2 kB in 0s (489 kB/s)
+Selecting previously unselected package lxrandr.
+(Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 124673 files and directories currently installed.)
+Preparing to unpack .../lxrandr_0.3.3-1_arm64.deb ...
+Unpacking lxrandr (0.3.3-1) ...
+Selecting previously unselected package wdisplays.
+Preparing to unpack .../wdisplays_1.1.1-1+b2_arm64.deb ...
+Unpacking wdisplays (1.1.1-1+b2) ...
+Setting up lxrandr (0.3.3-1) ...
+Setting up wdisplays (1.1.1-1+b2) ...
+Processing triggers for desktop-file-utils (0.28-1) ...
+Processing triggers for hicolor-icon-theme (0.18-2) ...
+Processing triggers for gnome-menus (3.36.0-3) ...
+Processing triggers for man-db (2.13.1-1) ...
+Processing triggers for mailcap (3.74) ...
+[2026-10-07 19:56:01] OK: Display-Tools installiert: lxrandr wdisplays
+[2026-10-07 19:56:01] Restart autodarts-web.service
+[2026-10-07 19:56:01] Restart gpio-autodarts-button.service
+[2026-10-07 19:56:01] Starte AP-Internet-Fix-Script: /usr/local/bin/autodarts-ap-internet-fix.sh
+[webpanel_AP] Fertig.
+[webpanel_AP] Service: webpanel_AP.service
+[webpanel_AP] Dispatcher: /etc/NetworkManager/dispatcher.d/91-webpanel_AP
+[webpanel_AP] Apply-Script: /usr/local/lib/autodarts/webpanel_AP_apply.sh
+{
+  "status": "green",
+  "pi_online": true,
+  "forwarding_ready": true,
+  "ap_active": true,
+  "uplinks": ["wlan0","eth0"],
+  "note": "Verbundenen AP-Ger\u00e4ten steht Internet zur Verf\u00fcgung."
+}
+[2026-10-07 19:56:05] OK: AP-Internet-Fix-Script erfolgreich ausgeführt
+[2026-10-07 19:56:05] ONCE[Kernel_hold_2026-07-06_off]: skip (marker exists: /var/lib/autodarts/once-Kernel_hold_2026-07-06_off.done)
+[2026-10-07 19:56:05] ===== Webpanel Update OK =====
+OK
+[2026-10-08 20:49:41] ===== Webpanel Update START =====
+[2026-10-08 20:49:41] Local:  1.808
+[2026-10-08 20:49:41] Remote: 1.808
+[2026-10-08 20:49:41] Kein Update nötig (lokal aktuell oder neuer).
+UP_TO_DATE
+[2026-10-08 20:56:27] ===== Webpanel Update START =====
+[2026-10-08 20:56:27] Local:  1.808
+[2026-10-08 20:56:27] Remote: 2.000
+/usr/local/bin/autodarts-webpanel-update.sh: line 222: local: can only be used in a function
+[2026-10-08 21:00:33] ===== Webpanel Update START =====
+[2026-10-08 21:00:34] Local:  1.808
+[2026-10-08 21:00:34] Remote: 2.000
+/usr/local/bin/autodarts-webpanel-update.sh: line 222: local: can only be used in a function
+[2026-10-08 21:07:36] ===== Webpanel Update START =====
+[2026-10-08 21:07:36] Local:  1.808
+[2026-10-08 21:07:36] Remote: 2.000
+[2026-10-08 21:07:36] Download: autodarts-button-led.py
+[2026-10-08 21:07:37] OK: autodarts-button-led.py geladen
+[2026-10-08 21:07:37] Download: autodarts-extensions-update.sh
+[2026-10-08 21:07:37] OK: autodarts-extensions-update.sh geladen
+[2026-10-08 21:07:37] Download: autodarts-caller-auth-reset.sh
+[2026-10-08 21:07:38] OK: autodarts-caller-auth-reset.sh geladen
+[2026-10-08 21:07:38] Download: version.txt
+[2026-10-08 21:07:39] OK: version.txt geladen
+[2026-10-08 21:07:39] Download: autodarts-webpanel-update.sh
+[2026-10-08 21:07:39] OK: autodarts-webpanel-update.sh geladen
+[2026-10-08 21:07:39] Prüfe webpanel.zip...
+[2026-10-08 21:07:40] Installiere Webpanel aus webpanel.zip
+[2026-10-08 21:07:40] OK: templates/ aus ZIP installiert
+[2026-10-08 21:07:40] OK: static/ aus ZIP installiert
+[2026-10-08 21:07:40] OK: configs/ aus ZIP installiert
+[2026-10-08 21:07:40] OK: webpanel.zip installiert
+[2026-10-08 21:07:41] Restart autodarts-web.service
+[2026-10-08 21:07:41] ===== Webpanel Update OK =====
+OK
+========== AUTODARTS UPDATE LOG ==========
+
+
+===== Autodarts Job gestartet: 2026-04-22 22:53:33 =====
+Purpose: install-version
+Requested Version: latest
+CMD: bash <(curl -sL get.autodarts.io) -u; (sudo -n systemctl disable --now autodartsupdater.service >/dev/null 2>&1 || systemctl disable --now autodartsupdater.service >/dev/null 2>&1 || true)
+Installing latest version v1.0.7.
+Downloading and extracting 'autodarts1.0.7.linux-arm64.tar.gz' into '/home/peter/.local/opt/autodarts'.
+Making /home/peter/.local/opt/autodarts/autodarts executable.
+Creating systemd service for autodarts to start on system startup.
+We will need sudo access to do that.
+Adding the current user to the group video
+warn: The user `peter' is already a member of `video'.
+Enabling systemd service.
+Starting autodarts.
+Done.
+========== INSTALLIERTE AUTODARTS VERSIONEN ==========
+Gefunden: /home/peter/.local/opt/autodarts/autodarts
+-rwxr-xr-x 1 peter peter 19M Apr 21 09:06 /home/peter/.local/opt/autodarts/autodarts
+1.0.7
+Gefunden: /home/peter/.local/bin/autodarts
+lrwxrwxrwx 1 peter peter 42 Apr 22 22:53 /home/peter/.local/bin/autodarts -> /home/peter/.local/opt/autodarts/autodarts
+1.0.7
+========== DIENSTE INSTALLIERT ==========
+autodarts-web.service                        enabled         enabled
+autodarts-wled-reconnect-watchdog.service    static          -
+autodarts.service                            enabled         enabled
+autodartsupdater.service                     enabled         enabled
+darts-caller.service                         enabled         enabled
+darts-wled.service                           enabled         enabled
+gpio-autodarts-button.service                enabled         enabled
+========== DIENSTE STATUS ==========
+  autodarts-web.service                                       loaded    active     running         Autodarts Installations-Weboberfläche
+  autodarts-wled-reconnect-watchdog.service                   loaded    inactive   dead            Autodarts WLED reconnect watchdog
+  autodarts.service                                           loaded    active     running         Start/Stop Autodarts board service
+● autodartsupdater.service                                    loaded    failed     failed          Autodarts automatic updater.
+  darts-caller.service                                        loaded    active     running         Autodarts Extension - Darts Caller
+● darts-wled.service                                          loaded    activating start-pre start Autodarts Extension - Darts WLED
+  gpio-autodarts-button.service                               loaded    active     running         GPIO Button for Autodarts (Restart / Shutdown / AP-Toggle)
+========== AUTODARTS SERVICE ==========
+● autodarts.service - Start/Stop Autodarts board service
+     Loaded: loaded (/etc/systemd/system/autodarts.service; enabled; preset: enabled)
+     Active: active (running) since Wed 2026-10-07 19:56:45 CEST; 1 day 1h ago
+ Invocation: 43e32cd35b3f436db7389fc0bee9ed17
+   Main PID: 1140 (autodarts)
+      Tasks: 21 (limit: 3918)
+        CPU: 36min 6.659s
+     CGroup: /system.slice/autodarts.service
+             └─1140 /home/peter/.local/opt/autodarts/autodarts
+
+Oct 08 21:07:34 AutodartsServer autodarts[1140]: time="2026-10-08T21:07:34+02:00" level=info msg="Stream client disconnected" ip="192.168.1.177:64957"
+Oct 08 21:07:34 AutodartsServer autodarts[1140]: time="2026-10-08T21:07:34+02:00" level=info msg="Stream client connected" ip="192.168.1.177:65179"
+Oct 08 21:07:34 AutodartsServer autodarts[1140]: time="2026-10-08T21:07:34+02:00" level=info msg="Stream client connected" ip="192.168.1.177:65180"
+Oct 08 21:07:34 AutodartsServer autodarts[1140]: time="2026-10-08T21:07:34+02:00" level=info msg="Stream client connected" ip="192.168.1.177:65183"
+Oct 08 21:07:46 AutodartsServer autodarts[1140]: time="2026-10-08T21:07:46+02:00" level=info msg="Stream client disconnected" ip="192.168.1.177:65183"
+Oct 08 21:07:46 AutodartsServer autodarts[1140]: time="2026-10-08T21:07:46+02:00" level=info msg="Stream client disconnected" ip="192.168.1.177:65180"
+Oct 08 21:07:46 AutodartsServer autodarts[1140]: time="2026-10-08T21:07:46+02:00" level=info msg="Stream client disconnected" ip="192.168.1.177:65179"
+Oct 08 21:07:46 AutodartsServer autodarts[1140]: time="2026-10-08T21:07:46+02:00" level=info msg="Stream client connected" ip="192.168.1.177:65217"
+Oct 08 21:07:46 AutodartsServer autodarts[1140]: time="2026-10-08T21:07:46+02:00" level=info msg="Stream client connected" ip="192.168.1.177:65216"
+Oct 08 21:07:46 AutodartsServer autodarts[1140]: time="2026-10-08T21:07:46+02:00" level=info msg="Stream client connected" ip="192.168.1.177:65218"
+# /etc/systemd/system/autodarts.service
+# autodarts.service
+
+[Unit]
+Description=Start/Stop Autodarts board service
+Wants=network-online.target
+After=network.target network-online.target
+
+[Service]
+User=peter
+ExecStart=/home/peter/.local/opt/autodarts/autodarts
+Restart=on-failure
+KillSignal=SIGINT
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+========== WEBPANEL SERVICE ==========
+● autodarts-web.service - Autodarts Installations-Weboberfläche
+     Loaded: loaded (/etc/systemd/system/autodarts-web.service; enabled; preset: enabled)
+     Active: active (running) since Thu 2026-10-08 21:07:41 CEST; 5min ago
+ Invocation: ea663c0de875483a9dbe11751393e5fd
+   Main PID: 23373 (python3)
+      Tasks: 1 (limit: 3918)
+        CPU: 3.567s
+     CGroup: /system.slice/autodarts-web.service
+             └─23373 /usr/bin/python3 /usr/local/bin/autodarts-web.py
+
+Oct 08 21:11:06 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:11:06] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:11:16 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:11:16] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:11:27 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:11:27] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:11:36 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:11:36] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:11:46 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:11:46] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:11:56 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:11:56] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:12:06 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:12:06] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:12:16 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:12:16] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:12:26 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:12:26] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:12:36 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:12:36] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+# /etc/systemd/system/autodarts-web.service
+[Unit]
+Description=Autodarts Installations-Weboberfläche
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 /usr/local/bin/autodarts-web.py
+WorkingDirectory=/usr/local/bin
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+========== ALTER AUTODARTS UPDATER ==========
+enabled
+failed
+× autodartsupdater.service - Autodarts automatic updater.
+     Loaded: loaded (/etc/systemd/system/autodartsupdater.service; enabled; preset: enabled)
+    Drop-In: /etc/systemd/system/autodartsupdater.service.d
+             └─override.conf
+     Active: failed (Result: exit-code) since Wed 2026-10-07 19:56:45 CEST; 1 day 1h ago
+   Duration: 137ms
+ Invocation: 7bb708309c9c4b80a11d91b5ed1db6ec
+    Process: 1141 ExecStart=/usr/local/bin/autodarts-safe-updater.sh (code=exited, status=1/FAILURE)
+   Main PID: 1141 (code=exited, status=1/FAILURE)
+        CPU: 36ms
+
+Oct 07 19:56:45 AutodartsServer systemd[1]: Started autodartsupdater.service - Autodarts automatic updater..
+Oct 07 19:56:45 AutodartsServer autodarts-safe-updater.sh[1141]: /usr/local/bin/autodarts-safe-updater.sh: line 11: /var/log/autodarts_safe_updater.log: Permission denied
+Oct 07 19:56:45 AutodartsServer systemd[1]: autodartsupdater.service: Main process exited, code=exited, status=1/FAILURE
+Oct 07 19:56:45 AutodartsServer systemd[1]: autodartsupdater.service: Failed with result 'exit-code'.
+========== LAUFENDE PROZESSE ==========
+1140 /home/peter/.local/opt/autodarts/autodarts
+1149 /usr/bin/python3 /usr/local/bin/autodarts-button-led.py
+22609 /var/lib/autodarts/extensions/darts-caller/darts-caller -B 07abff2b-9b2f-4f67-82fd-2925acb29885 -M /var/lib/autodarts/media -E 1 -V 0 -LPB 0
+22618 /var/lib/autodarts/extensions/darts-caller/darts-caller -B 07abff2b-9b2f-4f67-82fd-2925acb29885 -M /var/lib/autodarts/media -E 1 -V 0 -LPB 0
+23373 /usr/bin/python3 /usr/local/bin/autodarts-web.py
+25489 bash /usr/local/bin/autodarts-wait-caller-ready.sh
+========== OFFENE PORTS ==========
+State  Recv-Q Send-Q Local Address:Port Peer Address:PortProcess                                                   
+LISTEN 0      128          0.0.0.0:80        0.0.0.0:*    users:(("python3",pid=23373,fd=3))                       
+LISTEN 0      4096         0.0.0.0:111       0.0.0.0:*    users:(("rpcbind",pid=606,fd=4),("systemd",pid=1,fd=147))
+LISTEN 0      128          0.0.0.0:22        0.0.0.0:*    users:(("sshd",pid=944,fd=6))                            
+LISTEN 0      4096       127.0.0.1:631       0.0.0.0:*    users:(("cupsd",pid=15693,fd=7))                         
+LISTEN 0      128          0.0.0.0:8079      0.0.0.0:*    users:(("darts-caller",pid=22618,fd=10))                 
+LISTEN 0      32         10.77.0.1:53        0.0.0.0:*    users:(("dnsmasq",pid=1003,fd=7))                        
+LISTEN 0      4096            [::]:111          [::]:*    users:(("rpcbind",pid=606,fd=6),("systemd",pid=1,fd=149))
+LISTEN 0      128             [::]:22           [::]:*    users:(("sshd",pid=944,fd=7))                            
+LISTEN 0      4096           [::1]:631          [::]:*    users:(("cupsd",pid=15693,fd=6))                         
+LISTEN 0      4096               *:3180            *:*    users:(("autodarts",pid=1140,fd=6))                      
+========== LETZTE AUTODARTS FEHLER ==========
+Oct 08 20:49:45 AutodartsServer autodarts[1140]: time="2026-10-08T20:49:45+02:00" level=info msg="Stream client disconnected" ip="192.168.1.177:64486"
+Oct 08 20:49:45 AutodartsServer autodarts[1140]: time="2026-10-08T20:49:45+02:00" level=info msg="Stream client connected" ip="192.168.1.177:64513"
+Oct 08 20:49:45 AutodartsServer autodarts[1140]: time="2026-10-08T20:49:45+02:00" level=info msg="Stream client connected" ip="192.168.1.177:64512"
+Oct 08 20:49:45 AutodartsServer autodarts[1140]: time="2026-10-08T20:49:45+02:00" level=info msg="Stream client connected" ip="192.168.1.177:64515"
+Oct 08 20:51:00 AutodartsServer autodarts[1140]: time="2026-10-08T20:51:00+02:00" level=info msg="Standby timer has elapsed. Shutting down board."
+Oct 08 20:51:00 AutodartsServer autodarts[1140]: time="2026-10-08T20:51:00+02:00" level=info msg="Board event" event=Stopping status=Stopping
+Oct 08 20:51:00 AutodartsServer autodarts[1140]: time="2026-10-08T20:51:00+02:00" level=info msg="Board event" event=Stopped status=Stopped
+Oct 08 20:51:00 AutodartsServer autodarts[1140]: time="2026-10-08T20:51:00+02:00" level=info msg="Closing cameras"
+Oct 08 20:51:00 AutodartsServer autodarts[1140]: time="2026-10-08T20:51:00+02:00" level=info msg="Stopping cameras"
+Oct 08 20:51:00 AutodartsServer autodarts[1140]: time="2026-10-08T20:51:00+02:00" level=info msg="Stopped cameras"
+Oct 08 20:51:00 AutodartsServer autodarts[1140]: time="2026-10-08T20:51:00+02:00" level=info msg="Closed cam" camId=0 deviceId=/dev/video4 module=cam
+Oct 08 20:51:00 AutodartsServer autodarts[1140]: time="2026-10-08T20:51:00+02:00" level=info msg="Closed cam" camId=1 deviceId=/dev/video0 module=cam
+Oct 08 20:51:01 AutodartsServer autodarts[1140]: time="2026-10-08T20:51:01+02:00" level=info msg="Closed cam" camId=2 deviceId=/dev/video2 module=cam
+Oct 08 20:51:01 AutodartsServer autodarts[1140]: time="2026-10-08T20:51:01+02:00" level=info msg="Closed cameras"
+Oct 08 20:56:22 AutodartsServer autodarts[1140]: time="2026-10-08T20:56:22+02:00" level=info msg="Stream client disconnected" ip="192.168.1.177:64513"
+Oct 08 20:56:22 AutodartsServer autodarts[1140]: time="2026-10-08T20:56:22+02:00" level=info msg="Stream client disconnected" ip="192.168.1.177:64512"
+Oct 08 20:56:22 AutodartsServer autodarts[1140]: time="2026-10-08T20:56:22+02:00" level=info msg="Stream client disconnected" ip="192.168.1.177:64515"
+Oct 08 20:56:22 AutodartsServer autodarts[1140]: time="2026-10-08T20:56:22+02:00" level=info msg="Stream client connected" ip="192.168.1.177:64739"
+Oct 08 20:56:22 AutodartsServer autodarts[1140]: time="2026-10-08T20:56:22+02:00" level=info msg="Stream client connected" ip="192.168.1.177:64738"
+Oct 08 20:56:22 AutodartsServer autodarts[1140]: time="2026-10-08T20:56:22+02:00" level=info msg="Stream client connected" ip="192.168.1.177:64741"
+Oct 08 20:56:30 AutodartsServer autodarts[1140]: time="2026-10-08T20:56:30+02:00" level=info msg="Stream client disconnected" ip="192.168.1.177:64741"
+Oct 08 20:56:30 AutodartsServer autodarts[1140]: time="2026-10-08T20:56:30+02:00" level=info msg="Stream client disconnected" ip="192.168.1.177:64739"
+Oct 08 20:56:30 AutodartsServer autodarts[1140]: time="2026-10-08T20:56:30+02:00" level=info msg="Stream client disconnected" ip="192.168.1.177:64738"
+Oct 08 20:56:30 AutodartsServer autodarts[1140]: time="2026-10-08T20:56:30+02:00" level=info msg="Stream client connected" ip="192.168.1.177:64765"
+Oct 08 20:56:30 AutodartsServer autodarts[1140]: time="2026-10-08T20:56:30+02:00" level=info msg="Stream client connected" ip="192.168.1.177:64766"
+Oct 08 20:56:30 AutodartsServer autodarts[1140]: time="2026-10-08T20:56:30+02:00" level=info msg="Stream client connected" ip="192.168.1.177:64768"
+Oct 08 21:00:31 AutodartsServer autodarts[1140]: time="2026-10-08T21:00:31+02:00" level=info msg="Stream client disconnected" ip="192.168.1.177:64765"
+Oct 08 21:00:31 AutodartsServer autodarts[1140]: time="2026-10-08T21:00:31+02:00" level=info msg="Stream client disconnected" ip="192.168.1.177:64768"
+Oct 08 21:00:31 AutodartsServer autodarts[1140]: time="2026-10-08T21:00:31+02:00" level=info msg="Stream client disconnected" ip="192.168.1.177:64766"
+Oct 08 21:00:31 AutodartsServer autodarts[1140]: time="2026-10-08T21:00:31+02:00" level=info msg="Stream client connected" ip="192.168.1.177:64927"
+Oct 08 21:00:31 AutodartsServer autodarts[1140]: time="2026-10-08T21:00:31+02:00" level=info msg="Stream client connected" ip="192.168.1.177:64928"
+Oct 08 21:00:31 AutodartsServer autodarts[1140]: time="2026-10-08T21:00:31+02:00" level=info msg="Stream client connected" ip="192.168.1.177:64929"
+Oct 08 21:00:37 AutodartsServer autodarts[1140]: time="2026-10-08T21:00:37+02:00" level=info msg="Stream client disconnected" ip="192.168.1.177:64928"
+Oct 08 21:00:37 AutodartsServer autodarts[1140]: time="2026-10-08T21:00:37+02:00" level=info msg="Stream client disconnected" ip="192.168.1.177:64929"
+Oct 08 21:00:37 AutodartsServer autodarts[1140]: time="2026-10-08T21:00:37+02:00" level=info msg="Stream client disconnected" ip="192.168.1.177:64927"
+Oct 08 21:00:37 AutodartsServer autodarts[1140]: time="2026-10-08T21:00:37+02:00" level=info msg="Stream client connected" ip="192.168.1.177:64956"
+Oct 08 21:00:37 AutodartsServer autodarts[1140]: time="2026-10-08T21:00:37+02:00" level=info msg="Stream client connected" ip="192.168.1.177:64957"
+Oct 08 21:00:37 AutodartsServer autodarts[1140]: time="2026-10-08T21:00:37+02:00" level=info msg="Stream client connected" ip="192.168.1.177:64959"
+Oct 08 21:07:34 AutodartsServer autodarts[1140]: time="2026-10-08T21:07:34+02:00" level=info msg="Stream client disconnected" ip="192.168.1.177:64959"
+Oct 08 21:07:34 AutodartsServer autodarts[1140]: time="2026-10-08T21:07:34+02:00" level=info msg="Stream client disconnected" ip="192.168.1.177:64956"
+Oct 08 21:07:34 AutodartsServer autodarts[1140]: time="2026-10-08T21:07:34+02:00" level=info msg="Stream client disconnected" ip="192.168.1.177:64957"
+Oct 08 21:07:34 AutodartsServer autodarts[1140]: time="2026-10-08T21:07:34+02:00" level=info msg="Stream client connected" ip="192.168.1.177:65179"
+Oct 08 21:07:34 AutodartsServer autodarts[1140]: time="2026-10-08T21:07:34+02:00" level=info msg="Stream client connected" ip="192.168.1.177:65180"
+Oct 08 21:07:34 AutodartsServer autodarts[1140]: time="2026-10-08T21:07:34+02:00" level=info msg="Stream client connected" ip="192.168.1.177:65183"
+Oct 08 21:07:46 AutodartsServer autodarts[1140]: time="2026-10-08T21:07:46+02:00" level=info msg="Stream client disconnected" ip="192.168.1.177:65183"
+Oct 08 21:07:46 AutodartsServer autodarts[1140]: time="2026-10-08T21:07:46+02:00" level=info msg="Stream client disconnected" ip="192.168.1.177:65180"
+Oct 08 21:07:46 AutodartsServer autodarts[1140]: time="2026-10-08T21:07:46+02:00" level=info msg="Stream client disconnected" ip="192.168.1.177:65179"
+Oct 08 21:07:46 AutodartsServer autodarts[1140]: time="2026-10-08T21:07:46+02:00" level=info msg="Stream client connected" ip="192.168.1.177:65217"
+Oct 08 21:07:46 AutodartsServer autodarts[1140]: time="2026-10-08T21:07:46+02:00" level=info msg="Stream client connected" ip="192.168.1.177:65216"
+Oct 08 21:07:46 AutodartsServer autodarts[1140]: time="2026-10-08T21:07:46+02:00" level=info msg="Stream client connected" ip="192.168.1.177:65218"
+========== LETZTE WEBPANEL FEHLER ==========
+Oct 08 21:07:45 AutodartsServer sudo[23475]:     root : PWD=/usr/local/bin ; USER=peter ; COMMAND=/usr/bin/env DISPLAY=:1 XDG_RUNTIME_DIR=/run/user/1000 XAUTHORITY=/home/peter/.Xauthority DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus HOME=/home/peter USER=root LOGNAME=peter /usr/bin/xrandr --query
+Oct 08 21:07:45 AutodartsServer sudo[23475]: pam_unix(sudo:session): session opened for user peter(uid=1000) by (uid=0)
+Oct 08 21:07:45 AutodartsServer sudo[23475]: pam_unix(sudo:session): session closed for user peter
+Oct 08 21:07:46 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:07:46] "GET /?admin=1&adminmsg=Webpanel:+Kein+Update+verfügbar.&adminok=1 HTTP/1.1" 200 -
+Oct 08 21:07:46 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:07:46] "GET /static/css/main.css HTTP/1.1" 200 -
+Oct 08 21:07:46 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:07:46] "GET /static/js/i18n.js HTTP/1.1" 200 -
+Oct 08 21:07:46 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:07:46] "GET /static/js/autodarts_themes.js?v=20260405 HTTP/1.1" 200 -
+Oct 08 21:07:46 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:07:46] "GET /admin/gpio-image HTTP/1.1" 304 -
+Oct 08 21:07:46 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:07:46] "GET /static/js/main.js?v=20260902_callertoggle01 HTTP/1.1" 200 -
+Oct 08 21:07:46 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:07:46] "GET /static/js/autodarts_display_modes.js HTTP/1.1" 200 -
+Oct 08 21:07:46 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:07:46] "GET /static/js/autodarts_tools_platforms.js?v=20260406 HTTP/1.1" 200 -
+Oct 08 21:07:46 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:07:46] "GET /static/bg-darts-blue.webp HTTP/1.1" 200 -
+Oct 08 21:07:46 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:07:46] "GET /static/js/caller_installer.js?v=20260408 HTTP/1.1" 200 -
+Oct 08 21:07:46 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:07:46] "GET /static/js/extensions_v2.js?v=20260806_authreset01 HTTP/1.1" 200 -
+Oct 08 21:07:46 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:07:46] "GET /static/favicon/site.webmanifest HTTP/1.1" 200 -
+Oct 08 21:07:46 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:07:46] "GET /api/calibration/mtime HTTP/1.1" 200 -
+Oct 08 21:07:46 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:07:46] "GET /api/langs HTTP/1.1" 200 -
+Oct 08 21:07:46 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:07:46] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:07:46 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:07:46] "GET /api/extensions-v2/status HTTP/1.1" 200 -
+Oct 08 21:07:46 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:07:46] "GET /static/favicon/favicon.ico HTTP/1.1" 200 -
+Oct 08 21:07:47 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:07:47] "GET /api/wled/status HTTP/1.1" 200 -
+Oct 08 21:07:56 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:07:56] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:08:06 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:08:06] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:08:16 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:08:16] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:08:26 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:08:26] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:08:36 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:08:36] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:08:46 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:08:46] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:08:56 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:08:56] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:09:06 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:09:06] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:09:16 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:09:16] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:09:26 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:09:26] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:09:36 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:09:36] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:09:46 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:09:46] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:09:56 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:09:56] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:10:06 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:10:06] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:10:16 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:10:16] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:10:26 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:10:26] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:10:36 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:10:36] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:10:46 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:10:46] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:10:56 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:10:56] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:11:06 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:11:06] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:11:16 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:11:16] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:11:27 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:11:27] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:11:36 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:11:36] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:11:46 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:11:46] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:11:56 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:11:56] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:12:06 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:12:06] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:12:16 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:12:16] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:12:26 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:12:26] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+Oct 08 21:12:36 AutodartsServer python3[23373]: 192.168.1.177 - - [08/Oct/2026 21:12:36] "GET /api/ap-client-internet-status HTTP/1.1" 200 -
+========== DIAGNOSE ENDE ==========
