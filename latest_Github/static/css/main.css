@@ -181,6 +181,29 @@
     .btn-small { padding: 6px 12px; font-size: 0.85rem; }
     .btn-disabled { opacity: 0.42; pointer-events: none; filter: grayscale(0.3); }
 
+    /* Container für alle Video-Buttons */
+    .video-button-row {
+        display: flex;
+        flex-wrap: wrap;
+        column-gap: 12px;   /* Abstand nebeneinander */
+        row-gap: 12px;      /* Abstand untereinander */
+        margin-bottom: 24px; /* Abstand zur nächsten Card */
+    }
+
+    /* Nur der erste Video-Button in Weinrot */
+    .video-button-row .video-red {
+        background: #800020 !important;
+        color: #ffffff !important;
+        border-color: #800020 !important;
+        font-weight: bold;
+    }
+
+    /* Hover-Effekt */
+    .video-button-row .video-red:hover {
+        background: #a03045 !important;
+        border-color: #a03045 !important;
+    }
+
     textarea {
       width: 100%;
       min-height: 80px;
