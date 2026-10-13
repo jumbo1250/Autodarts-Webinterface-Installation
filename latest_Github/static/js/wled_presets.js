@@ -545,6 +545,7 @@ function initWledPresets(){
     const onlineCount = state.targets.filter(ti => ti.online !== false).length;
     const selectedCount = state.targets.filter(ti => ti.selected !== false).length;
     targetsHint.textContent = `${selectedCount} ${t('wled_presets.targets_selected', 'ausgewählt')} · ${onlineCount} ${t('wled_presets.targets_online', 'erreichbar')}`;
+    brightnessOnTargetsChanged();
   }
 
   function setTargetSelected(host, selected){
@@ -1459,6 +1460,78 @@ function initWledPresets(){
   }
   targetsAllBtn.addEventListener('click', () => setAllTargets(true));
   targetsNoneBtn.addEventListener('click', () => setAllTargets(false));
+
+  // --- WLED Gesamthelligkeit ---
+  const brWrap   = document.getElementById('wledBrightnessWrap');
+  const brSlider = document.getElementById('wledBrightnessSlider');
+  const brValue  = document.getElementById('wledBrightnessValue');
+  const brError  = document.getElementById('wledBrightnessError');
+  const brApiUrl = window.WLED_PRESETS_CONFIG?.apiBrightnessUrl;
+
+  let _brTimer   = null;
+  let _brPending = null;
+
+  async function brightnessLoadFromTarget(target) {
+    if (!brWrap || !brSlider || !brApiUrl) return;
+    if (!target) { brWrap.style.display = 'none'; return; }
+    brWrap.style.display = 'block';
+    brValue.textContent  = '…';
+    brSlider.disabled    = true;
+    brError.hidden       = true;
+    try {
+      const params = new URLSearchParams({ slot: target.slot || 0, host: target.host || '' });
+      const resp = await fetch(`${brApiUrl}?${params}`, { cache: 'no-store' });
+      const json = await resp.json();
+      if (json.ok) {
+        brSlider.value      = json.percent;
+        brValue.textContent = json.percent + ' %';
+        brSlider.disabled   = false;
+      } else {
+        brValue.textContent  = '– %';
+        brError.textContent  = json.msg || 'Fehler';
+        brError.hidden       = false;
+      }
+    } catch {
+      brValue.textContent  = '– %';
+      brError.textContent  = 'WLED nicht erreichbar';
+      brError.hidden       = false;
+    }
+  }
+
+  function brightnessOnTargetsChanged() {
+    const first = getSelectedTargets()[0] || null;
+    brightnessLoadFromTarget(first);
+  }
+
+  async function brightnessSendToTargets(percent) {
+    if (!brApiUrl) return;
+    for (const target of getSelectedTargets()) {
+      try {
+        await fetch(brApiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ brightness: percent, slot: target.slot || 0, host: target.host || '' })
+        });
+      } catch {}
+    }
+  }
+
+  if (brSlider) {
+    brSlider.addEventListener('input', () => {
+      const pct = parseInt(brSlider.value, 10);
+      brValue.textContent = pct + ' %';
+      clearTimeout(_brTimer);
+      _brPending = pct;
+      _brTimer = setTimeout(() => {
+        if (_brPending !== null) { brightnessSendToTargets(_brPending); _brPending = null; }
+      }, 200);
+    });
+    brSlider.addEventListener('change', () => {
+      clearTimeout(_brTimer);
+      _brPending = null;
+      brightnessSendToTargets(parseInt(brSlider.value, 10));
+    });
+  }
 
   // --- Standard-Presets laden ---
   const loadDefaultsBtn = document.getElementById('loadDefaultsBtn');

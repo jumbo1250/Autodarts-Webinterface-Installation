@@ -7725,6 +7725,64 @@ def api_wled_presets_upload_defaults():
     })
 
 
+def _wled_resolve_simple(slot: int, fallback_host: str):
+    """Returns (host_str, ip_str_or_None) for brightness-only requests."""
+    cfg = load_wled_config()
+    host = (fallback_host or "").strip()
+    if slot and slot > 0:
+        targets = cfg.get("targets", []) or []
+        if 1 <= slot <= len(targets):
+            target_cfg = targets[slot - 1] or {}
+            cfg_host = str(target_cfg.get("host", "")).strip()
+            if cfg_host:
+                host = cfg_host
+    if not host:
+        return t("wled.no_host_found", "Kein WLED Host gefunden."), None
+    ip = resolve_host_to_ip_fast(host, timeout_s=0.8)
+    if not ip:
+        return t("wled.host_could_not_resolve", "{host} konnte nicht aufgelöst werden.", host=host), None
+    return host, ip
+
+
+@app.route("/api/wled/brightness", methods=["GET"])
+def api_wled_brightness_get():
+    slot = request.args.get("slot", 0, type=int)
+    host_fallback = request.args.get("host", "").strip()
+    host, ip = _wled_resolve_simple(slot, host_fallback)
+    if not ip:
+        return jsonify({"ok": False, "msg": host}), 503
+    try:
+        state_data = _wled_json_get(ip, "/json/state", timeout_s=2.5)
+        on = bool(state_data.get("on", False))
+        bri = int(state_data.get("bri", 0))
+        percent = 0 if not on else round(bri * 100 / 255)
+        return jsonify({"ok": True, "percent": percent, "bri": bri, "on": on, "host": host})
+    except Exception as e:
+        return jsonify({"ok": False, "msg": f"WLED nicht erreichbar: {e}"}), 503
+
+
+@app.route("/api/wled/brightness", methods=["POST"])
+def api_wled_brightness_set():
+    data = request.get_json(silent=True) or {}
+    try:
+        percent = int(data.get("brightness", -1))
+    except Exception:
+        return jsonify({"ok": False, "msg": "Ungültiger Wert."}), 400
+    if not 0 <= percent <= 100:
+        return jsonify({"ok": False, "msg": "Helligkeit muss zwischen 0 und 100 liegen."}), 400
+    slot = int(data.get("slot", 0) or 0)
+    host_fallback = str(data.get("host", "") or "").strip()
+    host, ip = _wled_resolve_simple(slot, host_fallback)
+    if not ip:
+        return jsonify({"ok": False, "msg": host}), 503
+    try:
+        payload = {"on": False} if percent == 0 else {"on": True, "bri": max(1, round(percent * 255 / 100))}
+        _wled_json_post(ip, payload, "/json/state", timeout_s=2.5)
+        return jsonify({"ok": True, "percent": percent, "host": host})
+    except Exception as e:
+        return jsonify({"ok": False, "msg": f"WLED Fehler: {e}"}), 503
+
+
 @app.route("/wled-open", methods=["GET"])
 def wled_open():
     # Slot 1 öffnen

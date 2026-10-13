@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Dartboard Manager</title>
+  <script src="{{ url_for('static', filename='js/i18n.js') }}"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -55,10 +56,17 @@
     }
     #tui-offline button:hover { background: #2e2e2e; }
 
+    /* Hinweis-Bar unten */
+    #bm-close-hint {
+      position: fixed; bottom: 38px; left: 10px; right: 0;
+      text-align: left; pointer-events: none; z-index: 20;
+      font-size: 1.5rem; font-weight: bold; color: rgba(197, 9, 9, 0.75);
+    }
+
     /* Auth-Bild: overlay rechts unten über ttyd */
     #auth-pic-overlay {
-      position: absolute; bottom: 14px; right: 14px;
-      width: 286px; max-width: 35%;
+      position: absolute; bottom: 50px; right: 150px;
+      width: 360px; max-width: 45%;
       z-index: 10; pointer-events: none;
     }
     #auth-pic-overlay img { width: 100%; display: block; }
@@ -182,6 +190,8 @@
   </div>
 
 </div>
+
+<div id="bm-close-hint" data-key="board_manager.close_hint">Nach der Konfiguration bitte den Dartboard Manager schließen, um Systemüberlastung während des Spielens zu vermeiden.</div>
 
 <script>
 // Host aus Browser-URL ableiten — niemals 127.0.0.1 hardcoden

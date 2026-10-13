@@ -29,7 +29,8 @@ Provided "as is", without warranty.
       apiSaveUrl: {{ url_for('api_wled_presets_save')|tojson }},
       apiSendUrl: {{ url_for('api_wled_presets_send')|tojson }},
       apiDeleteUrl: {{ url_for('api_wled_presets_delete')|tojson }},
-      apiUploadDefaultsUrl: {{ url_for('api_wled_presets_upload_defaults')|tojson }}
+      apiUploadDefaultsUrl: {{ url_for('api_wled_presets_upload_defaults')|tojson }},
+      apiBrightnessUrl: {{ url_for('api_wled_brightness_get')|tojson }}
     };
   </script>
   <script src="{{ url_for('static', filename='js/wled_presets.js') }}"></script>
@@ -63,6 +64,14 @@ Provided "as is", without warranty.
               <select id="targetsSelect" class="targets-select" multiple size="4"></select>
               <div id="targetsCards" class="targets-grid"></div>
               <div id="targetsHint" class="hint" style="margin-top:8px" data-key="wled_presets.targets_hint">Die Liste wird von der Hauptseite übernommen.</div>
+              <div id="wledBrightnessWrap" class="brightness-wrap" style="display:none">
+                <div class="brightness-row">
+                  <label for="wledBrightnessSlider" class="brightness-label" data-key="wled_presets.brightness_label">WLED Gesamthelligkeit</label>
+                  <span id="wledBrightnessValue" class="brightness-value">– %</span>
+                </div>
+                <input id="wledBrightnessSlider" type="range" min="0" max="100" step="1" disabled class="brightness-slider">
+                <div id="wledBrightnessError" class="brightness-error" hidden></div>
+              </div>
             </div>
           </div>
 

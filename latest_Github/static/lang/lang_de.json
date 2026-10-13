@@ -113,6 +113,7 @@
     "overlay.starting": "Starte…",
     "overlay.restart_btn": "Erneut starten",
     "common.close_btn": "Schließen",
+    "board_manager.close_hint": "Nach der Konfiguration bitte den Dartboard Manager schließen, um Systemüberlastung während des Spielens zu vermeiden.",
     "camera.live_summary": "Kamera-Auswahl & Live-Bilder",
     "admin.autodarts_update_btn": "Autodarts aktualisieren",
     "quick_admin.webpanel_label": "Webpanel:",
