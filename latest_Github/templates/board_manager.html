@@ -38,9 +38,12 @@
     /* --- Main layout --- */
     #main { flex: 1; display: flex; overflow: hidden; }
 
-    /* TUI: 2/3 */
-    #tui-panel { flex: 2; min-width: 0; position: relative; }
-    #tui-panel iframe { width: 100%; height: 100%; border: none; display: block; }
+    /* TUI-Panel: linke Spalte */
+    #tui-panel { flex: 2; min-width: 0; }
+
+    /* TUI iframe wrapper */
+    #tui-wrap { position: relative; width: 100%; height: 100%; }
+    #tui-wrap iframe { width: 100%; height: 100%; border: none; display: block; }
     #tui-offline {
       display: none; position: absolute; inset: 0;
       align-items: center; justify-content: center; flex-direction: column; gap: 12px;
@@ -51,6 +54,14 @@
       color: #eee; cursor: pointer; font-size: 0.85rem;
     }
     #tui-offline button:hover { background: #2e2e2e; }
+
+    /* Auth-Bild: overlay rechts unten über ttyd */
+    #auth-pic-overlay {
+      position: absolute; bottom: 14px; right: 14px;
+      width: 286px; max-width: 35%;
+      z-index: 10; pointer-events: none;
+    }
+    #auth-pic-overlay img { width: 100%; display: block; }
 
     /* Cam panel: 1/3, capped at 400px, min 280px */
     #cam-panel {
@@ -131,12 +142,17 @@
 
 <div id="main">
 
-  <!-- TUI via ttyd (2/3) -->
+  <!-- TUI via ttyd (2/3) + Auth-Bild (1/3) -->
   <div id="tui-panel">
-    <iframe id="tuiFrame" src="" allow="clipboard-read; clipboard-write" title="Autodarts TUI"></iframe>
-    <div id="tui-offline">
-      <span>Terminal nicht erreichbar (ttyd :7681)</span>
-      <button onclick="reloadTui()">Erneut versuchen</button>
+    <div id="tui-wrap">
+      <iframe id="tuiFrame" src="" allow="clipboard-read; clipboard-write" title="Autodarts TUI"></iframe>
+      <div id="tui-offline">
+        <span>Terminal nicht erreichbar (ttyd :7681)</span>
+        <button onclick="reloadTui()">Erneut versuchen</button>
+      </div>
+      <div id="auth-pic-overlay">
+        <img src="{{ url_for('static', filename='authent.picture.webp') }}" alt="Authentication">
+      </div>
     </div>
   </div>
 
