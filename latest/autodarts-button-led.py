@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 from gpiozero import Button, LED
 from signal import pause
-import os
-import pwd
 import subprocess
 import time
 import threading
@@ -14,15 +12,8 @@ from datetime import datetime, timedelta
 BUTTON_PIN = 17                   # GPIO für Taster (BCM 17, Pin 11)
 LED_PIN = 27                      # GPIO für LED / Signalleuchte (BCM 27, Pin 13)
 
-USERCTL = "/usr/local/bin/autodarts-userctl"  # v2 User-Service Wrapper
+SERVICE_NAME = "autodarts.service"      # Name des Autodarts-Dienstes (ggf. anpassen!)
 CAM_CFG_PATH = Path("/var/lib/autodarts/cam-config.json")
-
-# Autodarts-User ermitteln (für Diagnose-Logs im User-Kontext)
-_AD_USER = os.environ.get("AUTODARTS_USER", "peter")
-try:
-    _AD_UID = pwd.getpwnam(_AD_USER).pw_uid
-except KeyError:
-    _AD_UID = None
 # ================================================
 
 # Zeiten (Sekunden)
@@ -57,18 +48,6 @@ service_restarting = False
 shutting_down = False
 shutdown_armed = False
 running = True
-
-
-def _as_user(cmd: list) -> list:
-    """Kommando in den systemd-User-Kontext von _AD_USER wrappen (für Diagnose)."""
-    if _AD_UID is None:
-        return cmd
-    return [
-        "sudo", "-n", "-u", _AD_USER,
-        "env",
-        f"XDG_RUNTIME_DIR=/run/user/{_AD_UID}",
-        f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{_AD_UID}/bus",
-    ] + cmd
 
 
 def run_cmd(cmd, timeout=10):
@@ -117,15 +96,14 @@ def run_and_log(log_path: Path, title: str, cmd, timeout=10):
 
 
 def is_autodarts_active() -> bool:
-    """Prüfen, ob der Autodarts v2 User-Service läuft."""
-    try:
-        result = subprocess.run(
-            [USERCTL, "is-active"],
-            capture_output=True, text=True, timeout=3,
-        )
-        return result.returncode == 0
-    except Exception:
-        return False
+    """Prüfen, ob der Autodarts-Dienst läuft."""
+    result = subprocess.run(
+        ["systemctl", "is-active", SERVICE_NAME],
+        capture_output=True,
+        text=True,
+        timeout=2,
+    )
+    return result.stdout.strip() == "active"
 
 
 def is_internet_reachable() -> bool:
@@ -139,7 +117,7 @@ def is_internet_reachable() -> bool:
 
 
 def get_main_pid() -> int:
-    rc, out, _ = run_cmd([USERCTL, "show-mainpid"], timeout=5)
+    rc, out, _ = run_cmd(["systemctl", "show", SERVICE_NAME, "-p", "MainPID", "--value"], timeout=5)
     if rc != 0:
         return 0
     try:
@@ -156,14 +134,11 @@ def write_snapshot(log_path: Path, phase: str, dmesg_since: str, journal_since: 
     run_and_log(
         log_path,
         "service show",
-        _as_user(["systemctl", "--user", "show", "autodarts.service",
-                  "-p", "ActiveState", "-p", "SubState", "-p", "MainPID",
-                  "-p", "ExecMainPID", "-p", "ExecMainStatus", "-p", "Result", "-p", "StateChangeTimestamp"]),
+        ["systemctl", "show", SERVICE_NAME, "-p", "ActiveState", "-p", "SubState", "-p", "MainPID",
+         "-p", "ExecMainPID", "-p", "ExecMainStatus", "-p", "Result", "-p", "StateChangeTimestamp"],
         timeout=8,
     )
-    run_and_log(log_path, "service status",
-                _as_user(["systemctl", "--user", "status", "autodarts.service", "--no-pager", "-l"]),
-                timeout=8)
+    run_and_log(log_path, "service status", ["systemctl", "status", SERVICE_NAME, "--no-pager", "-l"], timeout=8)
 
     pid = get_main_pid()
     if pid > 0:
@@ -196,9 +171,8 @@ def write_snapshot(log_path: Path, phase: str, dmesg_since: str, journal_since: 
     )
     run_and_log(
         log_path,
-        f"journalctl autodarts.service since {journal_since}",
-        _as_user(["journalctl", "--user-unit", "autodarts.service",
-                  "--since", journal_since, "--no-pager", "-o", "short-iso"]),
+        f"journalctl {SERVICE_NAME} since {journal_since}",
+        ["journalctl", "-u", SERVICE_NAME, "--since", journal_since, "--no-pager", "-o", "short-iso"],
         timeout=12,
     )
 
@@ -225,7 +199,7 @@ def restart_autodarts():
     with log_path.open("w", encoding="utf-8", errors="ignore") as f:
         f.write("manual_autodarts_reboot\n")
         f.write(f"timestamp_iso={started.isoformat(timespec='seconds')}\n")
-        f.write(f"service=autodarts.service\n")
+        f.write(f"service={SERVICE_NAME}\n")
         f.write(f"button_pin={BUTTON_PIN}\n")
         f.write(f"led_pin={LED_PIN}\n")
         f.write(f"max_log_seconds={RESTART_MAX_LOG_SECONDS}\n")
@@ -264,16 +238,14 @@ def restart_autodarts():
     append_section(log_path, "camera_mode update", cam_info)
 
     # 3) Restart asynchron anstoßen, damit wir währenddessen weiterloggen können
-    old_pid = get_main_pid()
-    append_section(log_path, "pre-restart pid", f"old_main_pid={old_pid}\n")
     try:
         restart_proc = subprocess.Popen(
-            [USERCTL, "restart"],
+            ["systemctl", "restart", SERVICE_NAME],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
         )
-        append_section(log_path, "restart command", f"$ {USERCTL} restart\n[started asynchronously]\n")
+        append_section(log_path, "restart command", "$ systemctl restart autodarts.service\n[started asynchronously]\n")
     except Exception as e:
         append_section(log_path, "restart command", f"Fehler beim Starten von systemctl restart: {e}\n")
         service_restarting = False
@@ -282,8 +254,6 @@ def restart_autodarts():
     deadline = time.monotonic() + RESTART_MAX_LOG_SECONDS
     success = False
     restart_return_logged = False
-    new_pid = 0
-    pid_changed = False
 
     while time.monotonic() < deadline:
         write_snapshot(log_path, "restart-wait", dmesg_since, journal_since)
@@ -293,14 +263,11 @@ def restart_autodarts():
 
         active = is_autodarts_active()
         proc_done = restart_proc.poll() is not None
-        new_pid = get_main_pid() if active else 0
-        pid_changed = new_pid > 0 and (old_pid <= 0 or new_pid != old_pid)
 
         append_section(
             log_path,
             "restart state",
-            f"service_active={active}\nrestart_proc_done={proc_done}\nrestart_proc_returncode={restart_proc.poll()}\n"
-            f"old_main_pid={old_pid}\nnew_main_pid={new_pid}\npid_changed={pid_changed}\n",
+            f"service_active={active}\nrestart_proc_done={proc_done}\nrestart_proc_returncode={restart_proc.poll()}\n",
         )
 
         if proc_done and not restart_return_logged:
@@ -317,7 +284,7 @@ def restart_autodarts():
             append_section(log_path, "restart command result", body)
             restart_return_logged = True
 
-        if proc_done and restart_proc.returncode == 0 and active and pid_changed:
+        if active:
             success = True
             break
 
@@ -345,7 +312,6 @@ def restart_autodarts():
         log_path,
         "summary",
         f"log_path={log_path}\nservice_active_at_end={is_autodarts_active()}\nrestart_proc_returncode={restart_proc.poll()}\n"
-        f"old_main_pid={old_pid}\nnew_main_pid={new_pid}\npid_changed={pid_changed}\n"
         f"logged_until={datetime.now().isoformat(timespec='seconds')}\n",
     )
 
@@ -411,7 +377,7 @@ def led_manager():
         net_ok = cached_net_ok
 
         if server_ok and net_ok:
-            # Service läuft + Internet erreichbar → alles OK
+            # Service läuft + Port 3180 antwortet → alles OK
             led.on()
             time.sleep(LED_ON_SLEEP)
         else:
@@ -422,10 +388,10 @@ def led_manager():
                 led.off()
 
             if server_ok and not net_ok:
-                # Service läuft, kein Internet → langsam blinken
+                # Service läuft, Port 3180 antwortet nicht → langsam blinken
                 time.sleep(LED_BLINK_NO_NET)
             elif net_ok:
-                # Internet OK, aber Service aus → mittel blinken
+                # Port OK, aber Service aus → mittel blinken
                 time.sleep(LED_BLINK_NO_SERVER)
             else:
                 # Service aus + Port nicht erreichbar → langsam blinken
