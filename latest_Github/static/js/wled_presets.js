@@ -1466,6 +1466,7 @@ function initWledPresets(){
   const brSlider = document.getElementById('wledBrightnessSlider');
   const brValue  = document.getElementById('wledBrightnessValue');
   const brError  = document.getElementById('wledBrightnessError');
+  const brFixBtn = document.getElementById('wledBrightnessFixBtn');
   const brApiUrl = window.WLED_PRESETS_CONFIG?.apiBrightnessUrl;
 
   let _brTimer   = null;
@@ -1477,6 +1478,7 @@ function initWledPresets(){
     brWrap.style.display = 'block';
     brValue.textContent  = '…';
     brSlider.disabled    = true;
+    if (brFixBtn) brFixBtn.disabled = true;
     brError.hidden       = true;
     try {
       const params = new URLSearchParams({ slot: target.slot || 0, host: target.host || '' });
@@ -1486,6 +1488,7 @@ function initWledPresets(){
         brSlider.value      = json.percent;
         brValue.textContent = json.percent + ' %';
         brSlider.disabled   = false;
+        if (brFixBtn) brFixBtn.disabled = false;
       } else {
         brValue.textContent  = '– %';
         brError.textContent  = json.msg || 'Fehler';
@@ -1505,14 +1508,23 @@ function initWledPresets(){
 
   async function brightnessSendToTargets(percent) {
     if (!brApiUrl) return;
+    let anyBriSynced = false;
     for (const target of getSelectedTargets()) {
       try {
-        await fetch(brApiUrl, {
+        const resp = await fetch(brApiUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ brightness: percent, slot: target.slot || 0, host: target.host || '' })
         });
+        const json = await resp.json().catch(() => ({}));
+        if (json.bri_synced) anyBriSynced = true;
       } catch {}
+    }
+    if (anyBriSynced) {
+      brError.textContent = t('wled_presets.brightness_restart_hint', '✓ -BRI aktualisiert – darts-wled Neustart nötig damit es sofort gilt');
+      brError.style.color = 'var(--accent)';
+      brError.hidden = false;
+      setTimeout(() => { brError.hidden = true; brError.style.color = ''; }, 5000);
     }
   }
 
@@ -1530,6 +1542,41 @@ function initWledPresets(){
       clearTimeout(_brTimer);
       _brPending = null;
       brightnessSendToTargets(parseInt(brSlider.value, 10));
+    });
+  }
+
+  if (brFixBtn) {
+    brFixBtn.addEventListener('click', async () => {
+      const pct = parseInt(brSlider.value, 10);
+      clearTimeout(_brTimer);
+      _brPending = null;
+
+      brFixBtn.disabled    = true;
+      brFixBtn.textContent = '⏳ …';
+      brError.hidden       = true;
+
+      // 1. Helligkeit senden + -BRI in start-custom.sh speichern
+      await brightnessSendToTargets(pct);
+
+      // 2. darts-wled neu starten
+      try {
+        const resp = await fetch('/api/caller-wled/led-restart', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        const json = await resp.json().catch(() => ({}));
+        brError.textContent  = json.ok
+          ? t('wled_presets.brightness_fix_ok', '✓ Helligkeit fixiert – darts-wled läuft wieder')
+          : (json.msg || 'Neustart fehlgeschlagen');
+        brError.style.color  = json.ok ? 'var(--accent-2)' : 'var(--danger)';
+        brError.hidden       = false;
+        setTimeout(() => { brError.hidden = true; brError.style.color = ''; }, 5000);
+      } catch {
+        brError.textContent = 'Neustart fehlgeschlagen';
+        brError.style.color = 'var(--danger)';
+        brError.hidden      = false;
+        setTimeout(() => { brError.hidden = true; brError.style.color = ''; }, 4000);
+      }
+
+      brFixBtn.disabled    = false;
+      brFixBtn.textContent = t('wled_presets.brightness_fix', '⚡ Fixieren');
     });
   }
 

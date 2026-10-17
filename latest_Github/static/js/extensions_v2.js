@@ -7,9 +7,11 @@
   const progressWrap = document.getElementById('extensionsV2ProgressWrap');
   const loginBtn = document.getElementById('extensionsV2LoginBtn');
   const authResetBtn = document.getElementById('extensionsV2AuthResetBtn');
-  const boardInput = document.getElementById('extensionsV2BoardId');
-  const saveBoardBtn = document.getElementById('extensionsV2SaveBoardBtn');
-  const boardStatus = document.getElementById('extensionsV2BoardStatus');
+  const boardInput       = document.getElementById('extensionsV2BoardId');
+  const saveBoardBtn     = document.getElementById('extensionsV2SaveBoardBtn');
+  const boardStatus      = document.getElementById('extensionsV2BoardStatus');
+  const savedBoardDisplay = document.getElementById('extensionsV2SavedBoardDisplay');
+  const savedBoardValue   = document.getElementById('extensionsV2SavedBoardValue');
   const api = window.app_urls || {};
   let timer = null;
   let installationStartedHere = false;
@@ -120,6 +122,7 @@
       if (!res.ok || !data.ok) throw new Error(data.message || 'Fehler');
       boardStatus.textContent = tr('extensions_v2.board_id_saved', 'Board-ID gespeichert.');
       boardStatus.className = 'msg-ok';
+      if (savedBoardDisplay && savedBoardValue) { savedBoardValue.textContent = boardId; savedBoardDisplay.style.display = 'block'; }
       return true;
     } catch (err) {
       boardStatus.textContent = err.message || tr('extensions_v2.board_id_save_failed', 'Board-ID konnte nicht gespeichert werden.');
@@ -131,6 +134,13 @@
   }
 
   saveBoardBtn?.addEventListener('click', saveBoardId);
+
+  // Beim Laden: bereits gespeicherte Board-ID sofort anzeigen
+  const _initBoardId = boardInput?.value?.trim();
+  if (_initBoardId && savedBoardDisplay && savedBoardValue) {
+    savedBoardValue.textContent = _initBoardId;
+    savedBoardDisplay.style.display = 'block';
+  }
 
 
   authResetBtn?.addEventListener('click', async () => {

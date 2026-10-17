@@ -926,6 +926,7 @@
     "extensions_v2.board_id_hint": "The board ID is required for the new caller.",
     "extensions_v2.board_id_required": "Please enter the board ID first.",
     "extensions_v2.board_id_saved": "Board ID saved.",
+    "extensions_v2.board_id_current_label": "Currently saved board ID:",
     "extensions_v2.board_id_save_failed": "The board ID could not be saved.",
     "extensions_v2.interrupted": "The installation was interrupted or ended with an error.",
     "extensions_v2.rebooting": "Installation successful. Raspberry Pi is restarting …",

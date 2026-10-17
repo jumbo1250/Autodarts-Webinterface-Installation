@@ -7519,7 +7519,7 @@ def api_wled_presets_send():
             except Exception:
                 loaded_existing = False
 
-            _wled_json_post(ip, {"psave": preset, "n": preset_name, "ib": True, "sb": True}, "/json/state", timeout_s=1.8)
+            _wled_json_post(ip, {"psave": preset, "n": preset_name, "ib": False, "sb": True}, "/json/state", timeout_s=1.8)
 
             if loaded_existing:
                 msg = t("wled.preset_applied_and_saved", "Preset {preset} auf {host} übernommen und neu gespeichert.", preset=preset, host=host)
@@ -7530,7 +7530,6 @@ def api_wled_presets_send():
 
         default_payload = {
             "on": True,
-            "bri": 180,
             "seg": [{
                 "id": 0,
                 "col": [[255, 160, 0], [0, 0, 0], [0, 0, 0]],
@@ -7541,7 +7540,7 @@ def api_wled_presets_send():
             }],
             "psave": preset,
             "n": preset_name,
-            "ib": True,
+            "ib": False,
             "sb": True
         }
         _wled_json_post(ip, default_payload, "/json/state", timeout_s=1.8)
@@ -7778,9 +7777,27 @@ def api_wled_brightness_set():
     try:
         payload = {"on": False} if percent == 0 else {"on": True, "bri": max(1, round(percent * 255 / 100))}
         _wled_json_post(ip, payload, "/json/state", timeout_s=2.5)
-        return jsonify({"ok": True, "percent": percent, "host": host})
     except Exception as e:
         return jsonify({"ok": False, "msg": f"WLED Fehler: {e}"}), 503
+
+    # Sync -BRI in start-custom.sh so darts-wled uses the same value after restart
+    bri_synced = False
+    if percent > 0:
+        try:
+            ok_load, _, rows, _ = load_wled_presets_state()
+            if ok_load and rows:
+                bri_val = str(max(1, round(percent * 255 / 100)))
+                for row in rows:
+                    if row.get("typeId") == "brightness" and row.get("kind") == "option_int":
+                        row["value"] = bri_val
+                        bri_synced = True
+                        break
+                if bri_synced:
+                    save_wled_presets_state(rows)
+        except Exception:
+            pass
+
+    return jsonify({"ok": True, "percent": percent, "host": host, "bri_synced": bri_synced})
 
 
 @app.route("/wled-open", methods=["GET"])

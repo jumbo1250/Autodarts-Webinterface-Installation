@@ -75,7 +75,6 @@
   },
   "10": {
     "on": true,
-    "bri": 255,
     "transition": 7,
     "n": "180!",
     "mainseg": 1,
