@@ -239,6 +239,19 @@ Provided "as is", without warranty.
       <a href="{{ url_for('ap_config') }}" class="btn btn-small">
         <span data-key="hero.ap_config_btn">Access-Point (Mini PC-WLAN) auswählen</span>
       </a>
+      <button type="button" class="btn btn-small" onclick="document.getElementById('ledGpioModal').removeAttribute('hidden');document.getElementById('ledGpioModal').setAttribute('aria-hidden','false');">
+        <span data-key="hero.led_gpio_btn">LED Statusanzeige Gehäuse</span>
+      </button>
+    </div>
+
+    <!-- LED GPIO Modal -->
+    <div id="ledGpioModal" hidden aria-hidden="true" style="position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;" onclick="this.setAttribute('hidden','');this.setAttribute('aria-hidden','true');">
+      <div style="position:relative;max-width:90vw;max-height:90vh;" onclick="event.stopPropagation()">
+        <button type="button" onclick="document.getElementById('ledGpioModal').setAttribute('hidden','');document.getElementById('ledGpioModal').setAttribute('aria-hidden','true');"
+          style="position:absolute;top:-14px;right:-14px;background:#222;border:1px solid #555;color:#eee;border-radius:50%;width:32px;height:32px;font-size:1.1rem;cursor:pointer;line-height:1;">&times;</button>
+        <p style="color:#aaa;font-size:0.85rem;margin:0 0 8px;text-align:center;" data-key="led_gpio_modal.title">LED Statusanzeige – GPIO Belegung</p>
+        <img src="{{ url_for('static', filename='LED_GPIO.webp') }}" style="max-width:100%;max-height:80vh;display:block;border-radius:6px;" alt="LED GPIO">
+      </div>
     </div>
 
 <div class="video-button-row">
