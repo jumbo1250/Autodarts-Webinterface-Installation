@@ -357,6 +357,8 @@ def shutdown_pi():
     """>=3s gedrückt UND losgelassen: Pi sauber runterfahren, LED schnell blinken bis Shutdown greift."""
     global shutting_down
     shutting_down = True
+    subprocess.run(["pkill", "chromium-browser"], capture_output=True)
+    subprocess.run(["pkill", "chromium"], capture_output=True)
     subprocess.run(
         ["shutdown", "-h", "now"],
         capture_output=True
