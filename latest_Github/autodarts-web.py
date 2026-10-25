@@ -9825,5 +9825,35 @@ def api_ping():
     return resp
 
 
+@app.route("/api/identify", methods=["GET", "OPTIONS"])
+def api_identify():
+    try:
+        with open("/etc/machine-id") as f:
+            mid = f.read().strip()
+        panel_id = "adp-" + mid[:6]
+    except Exception:
+        panel_id = "adp-000000"
+
+    try:
+        import socket
+        name = socket.gethostname()
+    except Exception:
+        name = "autodarts-pi"
+
+    resp = jsonify({
+        "app": "autodarts-webpanel",
+        "id": panel_id,
+        "name": name,
+    })
+    resp.headers["Cache-Control"]                         = "no-store"
+    resp.headers["Access-Control-Allow-Origin"]          = "*"
+    resp.headers["Access-Control-Allow-Private-Network"] = "true"
+    resp.headers["Access-Control-Allow-Methods"]         = "GET, OPTIONS"
+    if request.method == "OPTIONS":
+        resp.data = b""
+        resp.status_code = 204
+    return resp
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=80)

@@ -193,6 +193,7 @@ Provided "as is", without warranty.
         <div class="ad-status ad-off"><span data-key="header.autodarts_inactive">Autodarts: INAKTIV</span></div>
       {% endif %}
       <div id="lang_header">
+      <a href="{{ url_for('audio') }}" class="btn" style="font-size:1.4rem; padding:4px 10px; line-height:1;" title="Audio">🔊</a>
       <select id="lang_dropdown"></select>
       <button type="button" class="btn btn-small" id="set_lang"><span data-key="header.set_language_btn">Sprache festlegen</span></button>
         </div>
@@ -239,9 +240,6 @@ Provided "as is", without warranty.
       <button type="button" class="btn btn-small" onclick="document.getElementById('ledGpioModal').style.display='flex';">
         <span data-key="hero.led_gpio_btn">LED Statusanzeige Gehäuse</span>
       </button>
-      <a href="{{ url_for('audio') }}" class="btn btn-small">
-        <span data-key="hero.audio_btn">🔊 Audio</span>
-      </a>
     </div>
 
     <!-- LED GPIO Modal -->
