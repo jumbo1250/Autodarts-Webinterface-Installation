@@ -248,6 +248,7 @@ WEBPANEL_UI_FALLBACK_VERSION = "1.20"
 
 DEFAULT_SETTINGS = {
     "admin_password": "1234",
+    "autodarts_auto_update": False,
     "ap_ssid_choices": [f"Autodartsinstall{i}" for i in range(1, 11)],
     # Wenn leer/fehlt, versuchen wir es automatisch über systemd/Dateipfade zu finden
     "autodarts_update_cmd": "",
@@ -1220,7 +1221,6 @@ def get_index_stats_cached():
 
     autodarts_active = is_autodarts_active()
     autodarts_version = get_autodarts_version()
-    autodarts_v2_1_plus = _version_gte(autodarts_version or "", "2.1.0")
     cpu_pct, mem_used, mem_total, temp_c = get_system_stats()
     current_ap_ssid = get_ap_ssid()
     ping_uplink_iface = get_ping_uplink_interface()
@@ -7112,9 +7112,14 @@ def index():
         net_ok, ping_uplink_label,
         current_ap_ssid,
     ) = get_index_stats_cached()
+    autodarts_v2_1_plus = _version_gte(autodarts_version or "", "2.1.0")
     wifi_signal = None  # Signalstärke wird nur auf Knopfdruck geladen
     ad_restarted = request.args.get("ad_restarted") == "1"
     wifi_conn_name, wifi_autoconnect_enabled = get_active_wifi_autoconnect_state()
+
+    autodarts_auto_update = bool(SETTINGS.get("autodarts_auto_update", False))
+    if autodarts_auto_update and not autodarts_update_is_running():
+        start_autodarts_update_background()
 
 
 
@@ -7300,6 +7305,7 @@ def index():
         autodarts_active=autodarts_active,
         autodarts_version=autodarts_version,
         autodarts_v2_1_plus=autodarts_v2_1_plus,
+        autodarts_auto_update=autodarts_auto_update,
         camera_mode=camera_mode,
         autodarts_notice=ad_restarted,
         wifi_ok=wifi_ok,
@@ -8750,9 +8756,10 @@ def api_calibration_mtime():
         return jsonify({"exists": False, "mtime": None, "display": None, "error": str(e)})
 
 
+@app.route("/schnellkonfiguration")
 @app.route("/board-manager")
-def board_manager():
-    return render_template("board_manager.html")
+def schnellkonfiguration():
+    return render_template("schnellkonfiguration.html")
 
 
 @app.route("/board-manager/cam/<int:cam_id>")
@@ -9967,6 +9974,23 @@ def api_ping():
         resp.data = b""
         resp.status_code = 204
     return resp
+
+
+@app.route("/api/autodarts/autoupdate", methods=["POST"])
+def api_autodarts_autoupdate_toggle():
+    settings = load_settings()
+    current = bool(settings.get("autodarts_auto_update", False))
+    new_val = not current
+    settings["autodarts_auto_update"] = new_val
+    try:
+        with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
+            json.dump(settings, f, indent=2)
+        refresh_settings_if_needed.__wrapped__() if hasattr(refresh_settings_if_needed, "__wrapped__") else None
+        global SETTINGS
+        SETTINGS = load_settings()
+    except Exception as e:
+        return jsonify({"ok": False, "message": str(e)}), 500
+    return jsonify({"ok": True, "auto_update": new_val})
 
 
 @app.route("/api/autodarts/update", methods=["POST"])

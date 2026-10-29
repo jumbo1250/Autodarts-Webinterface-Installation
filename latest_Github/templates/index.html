@@ -97,6 +97,19 @@ Provided "as is", without warranty.
       <div class="hint" style="margin-top:4px;">
         <span data-key="quick_admin.autodarts_label">Autodarts:</span> <strong id="adInstalledVersion">{{ autodarts_version or 'unbekannt' }}</strong>
       </div>
+      <div style="margin-top:8px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+        <span class="hint" style="margin:0;" data-key="quick_admin.autodarts_autoupdate_label">Auto-Update:</span>
+        <label style="display:flex; align-items:center; gap:6px; cursor:pointer; user-select:none;">
+          <input type="checkbox" id="adAutoUpdateToggle"
+                 {% if autodarts_auto_update %}checked{% endif %}
+                 style="width:16px; height:16px; cursor:pointer; accent-color:#4ade80;"
+                 onchange="toggleAdAutoUpdate(this)">
+          <span id="adAutoUpdateLabel" class="hint" style="margin:0; color:{% if autodarts_auto_update %}#4ade80{% else %}#aaa{% endif %};">
+            {% if autodarts_auto_update %}<span data-key="quick_admin.autodarts_autoupdate_on">AN</span>{% else %}<span data-key="quick_admin.autodarts_autoupdate_off">AUS</span>{% endif %}
+          </span>
+        </label>
+        <span id="adAutoUpdateStatus" class="hint" style="margin:0;"></span>
+      </div>
       <div id="webpanelUpdateStatus" class="hint" style="margin-top:6px; display:none;" aria-live="polite"></div>
       <div id="adUpdateStatus" class="hint" style="margin-top:4px; display:none;" aria-live="polite"></div>
       <div style="margin-top:8px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
@@ -388,7 +401,7 @@ Provided "as is", without warranty.
 
         <div class="btn-row">
           {% if autodarts_v2_running %}
-            <a href="{{ url_for('board_manager') }}" class="btn"><span data-key="account.board_manager_btn_tui">Schnellkonfiguration (TUI)</span></a>
+            <a href="{{ url_for('schnellkonfiguration') }}" class="btn"><span data-key="account.board_manager_btn_tui">Schnellkonfiguration (TUI)</span></a>
             {% if autodarts_v2_1_plus %}
               <a href="{{ darts_url }}" class="btn btn-primary" target="_blank" rel="noopener"><span data-key="account.board_manager_btn_official">Dartboard Manager</span></a>
             {% else %}
@@ -1233,6 +1246,7 @@ cp /var/log/pi_monitor_test_README.txt ~/
       api_webpanel_update_status: "{{ url_for('api_webpanel_update_status') }}",
       api_autodarts_update: "{{ url_for('api_autodarts_update_start') }}",
       api_autodarts_update_status: "{{ url_for('api_autodarts_update_status') }}",
+      api_autodarts_autoupdate: "{{ url_for('api_autodarts_autoupdate_toggle') }}",
       api_webpanel_channel: "{{ url_for('api_webpanel_channel') }}",
       api_calibration_mtime: "{{ url_for('api_calibration_mtime') }}",
       darts_url: "{{ darts_url }}"
@@ -1334,6 +1348,61 @@ Wenn Autodarts größere Änderungen am Layout oder an CSS-Klassen macht, müsse
 </div>
 
 <script>
+// ── Autodarts Auto-Update Toggle ─────────────────────────────────────────────
+function toggleAdAutoUpdate(checkbox) {
+  const statusEl = document.getElementById('adAutoUpdateStatus');
+  const labelEl  = document.getElementById('adAutoUpdateLabel');
+  fetch(window.app_urls.api_autodarts_autoupdate, { method: 'POST', cache: 'no-store' })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (!d.ok) { checkbox.checked = !checkbox.checked; return; }
+      const on = d.auto_update;
+      checkbox.checked = on;
+      labelEl.style.color = on ? '#4ade80' : '#aaa';
+      labelEl.innerHTML = on
+        ? '<span data-key="quick_admin.autodarts_autoupdate_on">AN</span>'
+        : '<span data-key="quick_admin.autodarts_autoupdate_off">AUS</span>';
+      if (typeof applyDefaultLanguage === 'function') applyDefaultLanguage();
+      if (on) {
+        if (statusEl) statusEl.textContent = '';
+        autoStartAdUpdate();
+      }
+    })
+    .catch(function() { checkbox.checked = !checkbox.checked; });
+}
+
+function autoStartAdUpdate() {
+  const status = document.getElementById('adUpdateStatus');
+  if (status) { status.style.display = ''; status.textContent = (typeof t === 'function') ? t('quick_admin.autodarts_update_running', 'Autodarts-Update läuft…') : 'Autodarts-Update läuft…'; }
+  const btn = document.getElementById('adUpdateBtn');
+  if (btn) { btn.disabled = true; btn.classList.add('btn-disabled'); }
+  fetch(window.app_urls.api_autodarts_update, { method: 'POST', cache: 'no-store' })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.ok) {
+        _adUpdatePollTimer = setTimeout(pollAdUpdate, 3000);
+      } else {
+        if (status) status.style.display = 'none';
+        if (btn) { btn.disabled = false; btn.classList.remove('btn-disabled'); }
+        showAdUpdateModal(false, d.message || 'Fehler', null, null, null);
+      }
+    })
+    .catch(function() {
+      if (status) status.style.display = 'none';
+      if (btn) { btn.disabled = false; btn.classList.remove('btn-disabled'); }
+    });
+}
+
+{% if autodarts_auto_update %}
+// Auto-Update ist aktiv — beim Seitenstart automatisch prüfen
+document.addEventListener('DOMContentLoaded', function() {
+  // Kurz warten damit die Seite fertig gerendert ist
+  setTimeout(function() {
+    autoStartAdUpdate();
+  }, 1500);
+});
+{% endif %}
+
 // ── Autodarts Update ──────────────────────────────────────────────────────────
 let _adUpdatePollTimer = null;
 
