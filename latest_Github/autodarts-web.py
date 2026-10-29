@@ -215,6 +215,7 @@ AUTODARTS_UPDATE_LOG    = "/var/log/autodarts_ad_update.log"
 AUTODARTS_UPDATE_STATE  = "/var/lib/autodarts/autodarts-update-state.json"
 AUTODARTS_UPDATE_LOCK   = "/var/lib/autodarts/autodarts-update-lock.json"
 AUTODARTS_UPDATE_RESULT = "/var/lib/autodarts/autodarts-update-result.txt"
+AUTODARTS_AUTO_UPDATE_STAMP = "/tmp/autodarts_auto_update.stamp"
 V2_MIGRATION_STATE_FILE = "/var/lib/autodarts/autodarts-v2-migration-state.json"
 V2_WELCOME_FLAG_FILE    = "/var/lib/autodarts/v2-welcome-shown.flag"
 EXTENSIONS_V2_INSTALL_SCRIPT = "/usr/local/bin/autodarts-extensions-v2-install.sh"
@@ -7123,11 +7124,15 @@ def index():
         if autodarts_update_is_running():
             autodarts_update_just_started = True  # läuft noch → pollen
         else:
-            _au_state = load_autodarts_update_state()
-            _au_last  = _au_state.get("last_auto_trigger", 0)
-            if time.time() - _au_last >= 3600:
-                _au_state["last_auto_trigger"] = time.time()
-                save_autodarts_update_state(_au_state)
+            try:
+                stamp_age = time.time() - os.path.getmtime(AUTODARTS_AUTO_UPDATE_STAMP)
+            except OSError:
+                stamp_age = 9999
+            if stamp_age >= 3600:
+                try:
+                    open(AUTODARTS_AUTO_UPDATE_STAMP, "w").close()
+                except Exception:
+                    pass
                 start_autodarts_update_background()
                 autodarts_update_just_started = True
 
