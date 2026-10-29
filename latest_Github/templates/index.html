@@ -407,6 +407,7 @@ Provided "as is", without warranty.
               <span class="hint" style="display:inline-flex; align-items:center; margin-left:4px;" data-key="account.board_manager_needs_update">Dartboard Manager: Autodarts ≥ 2.1.0 erforderlich</span>
             {% endif %}
           {% endif %}
+          <button type="button" class="btn" onclick="restartAutodarts(this)"><span data-key="account.autodarts_restart_btn">Autodarts neu starten</span></button>
         </div>
       </div>
     </div>
@@ -1246,6 +1247,7 @@ cp /var/log/pi_monitor_test_README.txt ~/
       api_autodarts_update: "{{ url_for('api_autodarts_update_start') }}",
       api_autodarts_update_status: "{{ url_for('api_autodarts_update_status') }}",
       api_autodarts_autoupdate: "{{ url_for('api_autodarts_autoupdate_toggle') }}",
+      api_autodarts_restart: "{{ url_for('api_autodarts_restart') }}",
       api_webpanel_channel: "{{ url_for('api_webpanel_channel') }}",
       api_calibration_mtime: "{{ url_for('api_calibration_mtime') }}",
       darts_url: "{{ darts_url }}"
@@ -1488,6 +1490,25 @@ function showAdUpdateModal(success, msg, verBefore, verAfter, logTail) {
   }
 
   modal.style.display = 'flex';
+}
+
+function restartAutodarts(btn) {
+  var confirmMsg = (typeof t === 'function') ? t('account.autodarts_restart_confirm', 'Autodarts jetzt neu starten?') : 'Autodarts jetzt neu starten?';
+  if (!confirm(confirmMsg)) return;
+  if (btn) { btn.disabled = true; btn.classList.add('btn-disabled'); }
+  fetch(window.app_urls.api_autodarts_restart, { method: 'POST', cache: 'no-store' })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.ok) {
+        setTimeout(function() { location.reload(); }, 5000);
+      } else {
+        alert('Fehler: ' + (d.message || 'unbekannt'));
+        if (btn) { btn.disabled = false; btn.classList.remove('btn-disabled'); }
+      }
+    })
+    .catch(function() {
+      if (btn) { btn.disabled = false; btn.classList.remove('btn-disabled'); }
+    });
 }
 
 function closeAdUpdateModal() {

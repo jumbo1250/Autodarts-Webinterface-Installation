@@ -10009,6 +10009,15 @@ def api_autodarts_autoupdate_toggle():
     return jsonify({"ok": True, "auto_update": new_val})
 
 
+@app.route("/api/autodarts/restart", methods=["POST"])
+def api_autodarts_restart():
+    result = _run_systemctl(["restart", "autodarts"], timeout=15)
+    if result is None or result.returncode != 0:
+        msg = (result.stderr.strip() if result else "timeout")
+        return jsonify({"ok": False, "message": msg}), 500
+    return jsonify({"ok": True})
+
+
 @app.route("/api/autodarts/update", methods=["POST"])
 def api_autodarts_update_start():
     ok, msg = start_autodarts_update_background()

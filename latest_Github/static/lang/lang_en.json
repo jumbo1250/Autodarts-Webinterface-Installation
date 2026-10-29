@@ -143,6 +143,8 @@
     "quick_admin.autodarts_update_running": "Autodarts update running…",
     "quick_admin.autodarts_update_done": "Autodarts update completed",
     "quick_admin.autodarts_update_failed": "Autodarts update failed",
+    "account.autodarts_restart_btn": "Restart Autodarts",
+    "account.autodarts_restart_confirm": "Restart Autodarts now?",
     "quick_admin.autodarts_autoupdate_label": "Auto-Update:",
     "quick_admin.autodarts_autoupdate_on": "ON",
     "quick_admin.autodarts_autoupdate_off": "OFF",
