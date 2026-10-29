@@ -10038,15 +10038,17 @@ def api_set_hostname():
         return jsonify({"ok": False, "message": "Ungültiger Hostname"}), 400
     try:
         old = subprocess.run(["hostname"], capture_output=True, text=True).stdout.strip()
-        subprocess.run(["sudo", "-n", "hostnamectl", "set-hostname", name], check=True, capture_output=True)
+        # /etc/hostname direkt schreiben — zuverlässiger als hostnamectl
+        with open("/etc/hostname", "w") as f:
+            f.write(name + "\n")
+        subprocess.run(["hostname", name], capture_output=True)
+        # /etc/hosts aktualisieren
         with open("/etc/hosts", "r") as f:
             hosts = f.read()
         hosts = re.sub(r'\b' + re.escape(old) + r'\b', name, hosts)
-        proc = subprocess.run(["sudo", "-n", "tee", "/etc/hosts"],
-                               input=hosts, capture_output=True, text=True)
-        if proc.returncode != 0:
-            return jsonify({"ok": False, "message": proc.stderr.strip()}), 500
-        subprocess.run(["sudo", "-n", "systemd-run", "--no-block", "--on-active=3",
+        with open("/etc/hosts", "w") as f:
+            f.write(hosts)
+        subprocess.run(["systemd-run", "--no-block", "--on-active=3",
                         "systemctl", "reboot"], capture_output=True)
     except Exception as e:
         return jsonify({"ok": False, "message": str(e)}), 500
