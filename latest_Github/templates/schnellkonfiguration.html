@@ -171,7 +171,7 @@
     {% for cam_i in [0, 1, 2] %}
     <div class="cam-card">
       <div class="cam-card-header">
-        <span class="cam-label">Cam{{ cam_i }}</span>
+        <span class="cam-label">Cam{{ cam_i + 1 }}</span>
         <span id="cam-status-{{ cam_i }}" class="cam-status"></span>
       </div>
       <div id="stream-wrap-{{ cam_i }}" class="stream-wrap" onclick="openCamFs({{ cam_i }})">
