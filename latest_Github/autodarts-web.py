@@ -249,7 +249,7 @@ WEBPANEL_UI_FALLBACK_VERSION = "1.20"
 
 DEFAULT_SETTINGS = {
     "admin_password": "1234",
-    "autodarts_auto_update": False,
+    "autodarts_auto_update": True,
     "ap_ssid_choices": [f"Autodartsinstall{i}" for i in range(1, 11)],
     # Wenn leer/fehlt, versuchen wir es automatisch über systemd/Dateipfade zu finden
     "autodarts_update_cmd": "",
