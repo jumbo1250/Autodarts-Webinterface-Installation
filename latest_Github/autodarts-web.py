@@ -7322,6 +7322,7 @@ def index():
         autodarts_v2_1_plus=autodarts_v2_1_plus,
         autodarts_auto_update=autodarts_auto_update,
         autodarts_update_just_started=autodarts_update_just_started,
+        autodarts_autostart_enabled=get_autodarts_autostart_enabled(),
         camera_mode=camera_mode,
         autodarts_notice=ad_restarted,
         wifi_ok=wifi_ok,
@@ -8773,7 +8774,6 @@ def api_calibration_mtime():
 
 
 @app.route("/schnellkonfiguration")
-@app.route("/board-manager")
 def schnellkonfiguration():
     return render_template("schnellkonfiguration.html")
 
@@ -9263,6 +9263,26 @@ def _get_ad_user_ctx():
         return state.get("ad_user", "peter"), state.get("ad_uid", "1000")
     except Exception:
         return "peter", "1000"
+
+
+def _run_as_ad_user(cmd_args, timeout=10):
+    user, uid = _get_ad_user_ctx()
+    return subprocess.run(
+        ["sudo", "-u", user, "env",
+         f"XDG_RUNTIME_DIR=/run/user/{uid}",
+         f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus",
+         f"HOME=/home/{user}",
+         ] + cmd_args,
+        capture_output=True, text=True, timeout=timeout
+    )
+
+
+def get_autodarts_autostart_enabled() -> bool:
+    try:
+        r = _run_as_ad_user(["systemctl", "--user", "is-enabled", "autodarts.service"], timeout=5)
+        return r.returncode == 0
+    except Exception:
+        return False
 
 
 def _run_pipewire(cmd_args, timeout=10):
@@ -10007,6 +10027,22 @@ def api_autodarts_autoupdate_toggle():
     except Exception as e:
         return jsonify({"ok": False, "message": str(e)}), 500
     return jsonify({"ok": True, "auto_update": new_val})
+
+
+@app.route("/api/autodarts/autostart", methods=["POST"])
+def api_autodarts_autostart_toggle():
+    user, uid = _get_ad_user_ctx()
+    currently = get_autodarts_autostart_enabled()
+    try:
+        if not currently:
+            subprocess.run(["loginctl", "enable-linger", user], capture_output=True, timeout=5)
+            _run_as_ad_user(["systemctl", "--user", "enable", "autodarts.service"], timeout=10)
+        else:
+            _run_as_ad_user(["systemctl", "--user", "disable", "autodarts.service"], timeout=10)
+    except Exception as e:
+        return jsonify({"ok": False, "message": str(e)}), 500
+    enabled = get_autodarts_autostart_enabled()
+    return jsonify({"ok": True, "enabled": enabled})
 
 
 @app.route("/api/autodarts/restart", methods=["POST"])

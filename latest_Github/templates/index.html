@@ -406,6 +406,12 @@ Provided "as is", without warranty.
             {% endif %}
           {% endif %}
           <button type="button" class="btn" onclick="restartAutodarts(this)"><span data-key="account.autodarts_restart_btn">Autodarts neu starten</span></button>
+          <button type="button" id="adAutostartBtn"
+                  class="btn {% if not autodarts_autostart_enabled %}btn-danger{% endif %}"
+                  onclick="toggleAdAutostart(this)">
+            <span data-key="account.autodarts_autostart_btn">Autostart</span>
+            <span id="adAutostartState" style="font-weight:700; margin-left:4px;">{% if autodarts_autostart_enabled %}AN{% else %}AUS{% endif %}</span>
+          </button>
         </div>
       </div>
     </div>
@@ -1246,6 +1252,7 @@ cp /var/log/pi_monitor_test_README.txt ~/
       api_autodarts_update_status: "{{ url_for('api_autodarts_update_status') }}",
       api_autodarts_autoupdate: "{{ url_for('api_autodarts_autoupdate_toggle') }}",
       api_autodarts_restart: "{{ url_for('api_autodarts_restart') }}",
+      api_autodarts_autostart: "{{ url_for('api_autodarts_autostart_toggle') }}",
       api_webpanel_channel: "{{ url_for('api_webpanel_channel') }}",
       api_calibration_mtime: "{{ url_for('api_calibration_mtime') }}",
       darts_url: "{{ darts_url }}"
@@ -1488,6 +1495,25 @@ function showAdUpdateModal(success, msg, verBefore, verAfter, logTail) {
   }
 
   modal.style.display = 'flex';
+}
+
+function toggleAdAutostart(btn) {
+  btn.disabled = true;
+  fetch(window.app_urls.api_autodarts_autostart, { method: 'POST', cache: 'no-store' })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      btn.disabled = false;
+      if (!d.ok) { alert('Fehler: ' + (d.message || 'unbekannt')); return; }
+      var stateEl = document.getElementById('adAutostartState');
+      if (d.enabled) {
+        btn.classList.remove('btn-danger');
+        if (stateEl) stateEl.textContent = 'AN';
+      } else {
+        btn.classList.add('btn-danger');
+        if (stateEl) stateEl.textContent = 'AUS';
+      }
+    })
+    .catch(function() { btn.disabled = false; });
 }
 
 function restartAutodarts(btn) {
