@@ -1393,13 +1393,16 @@ function autoStartAdUpdate() {
     });
 }
 
-{% if autodarts_auto_update %}
-// Auto-Update ist aktiv — beim Seitenstart automatisch prüfen
+{% if autodarts_update_just_started %}
+// Backend hat das Auto-Update gerade gestartet — nur Status pollen, kein erneuter POST
 document.addEventListener('DOMContentLoaded', function() {
-  // Kurz warten damit die Seite fertig gerendert ist
   setTimeout(function() {
-    autoStartAdUpdate();
-  }, 1500);
+    const status = document.getElementById('adUpdateStatus');
+    if (status) { status.style.display = ''; status.textContent = (typeof t === 'function') ? t('quick_admin.autodarts_update_running', 'Autodarts-Update läuft…') : 'Autodarts-Update läuft…'; }
+    const btn = document.getElementById('adUpdateBtn');
+    if (btn) { btn.disabled = true; btn.classList.add('btn-disabled'); }
+    _adUpdatePollTimer = setTimeout(pollAdUpdate, 2000);
+  }, 1000);
 });
 {% endif %}
 

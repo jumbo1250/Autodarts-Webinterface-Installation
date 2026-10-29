@@ -7118,13 +7118,18 @@ def index():
     wifi_conn_name, wifi_autoconnect_enabled = get_active_wifi_autoconnect_state()
 
     autodarts_auto_update = bool(SETTINGS.get("autodarts_auto_update", False))
-    if autodarts_auto_update and not autodarts_update_is_running():
-        _au_state = load_autodarts_update_state()
-        _au_last  = _au_state.get("last_auto_trigger", 0)
-        if time.time() - _au_last >= 3600:
-            _au_state["last_auto_trigger"] = time.time()
-            save_autodarts_update_state(_au_state)
-            start_autodarts_update_background()
+    autodarts_update_just_started = False
+    if autodarts_auto_update:
+        if autodarts_update_is_running():
+            autodarts_update_just_started = True  # läuft noch → pollen
+        else:
+            _au_state = load_autodarts_update_state()
+            _au_last  = _au_state.get("last_auto_trigger", 0)
+            if time.time() - _au_last >= 3600:
+                _au_state["last_auto_trigger"] = time.time()
+                save_autodarts_update_state(_au_state)
+                start_autodarts_update_background()
+                autodarts_update_just_started = True
 
 
 
@@ -7311,6 +7316,7 @@ def index():
         autodarts_version=autodarts_version,
         autodarts_v2_1_plus=autodarts_v2_1_plus,
         autodarts_auto_update=autodarts_auto_update,
+        autodarts_update_just_started=autodarts_update_just_started,
         camera_mode=camera_mode,
         autodarts_notice=ad_restarted,
         wifi_ok=wifi_ok,
