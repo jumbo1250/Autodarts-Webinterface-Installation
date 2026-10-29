@@ -116,7 +116,7 @@
     "overlay.starting": "Starte…",
     "overlay.restart_btn": "Erneut starten",
     "common.close_btn": "Schließen",
-    "board_manager.close_hint": "Nach der Konfiguration bitte die Schnellkonfiguration schließen, um Systemüberlastung während des Spielens zu vermeiden.",
+    "board_manager.close_hint": "Nach der Konfiguration bitte die Schnellkonfiguration schließen,<br>um Systemüberlastung während des Spielens zu vermeiden.",
     "hero.led_gpio_btn": "LED Statusanzeige Gehäuse",
     "led_gpio_modal.title": "LED Statusanzeige – GPIO Belegung",
     "hero.audio_btn": "🔊 Audio",

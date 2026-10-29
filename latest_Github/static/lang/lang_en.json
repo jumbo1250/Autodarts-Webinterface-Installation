@@ -116,7 +116,7 @@
     "overlay.starting": "Starting…",
     "overlay.restart_btn": "Start again",
     "common.close_btn": "Close",
-    "board_manager.close_hint": "After configuration, please close the Quick Config to avoid system overload during play.",
+    "board_manager.close_hint": "After configuration, please close the Quick Config<br>to avoid system overload during play.",
     "hero.led_gpio_btn": "LED Status Indicator Housing",
     "led_gpio_modal.title": "LED Status Indicator – GPIO Pinout",
     "hero.audio_btn": "🔊 Audio",
