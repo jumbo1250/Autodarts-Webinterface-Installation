@@ -10,7 +10,7 @@
     "quick_admin.reboot_btn": "Neustart",
     "quick_admin.shutdown_btn": "Shutdown",
     "quick_admin.webpanel_check_btn": "Webpanel prüfen",
-    "quick_admin.webpanel_update_btn": "Update installieren",
+    "quick_admin.webpanel_update_btn": "Webpanel updaten",
     "quick_admin.webpanel_update_running": "Update läuft…",
     "quick_admin.webpanel_update_progress": "Update wird installiert. Das Webpanel startet dabei kurz neu…",
     "quick_admin.webpanel_update_reconnect": "Webpanel startet neu… Verbindung wird wiederhergestellt.",

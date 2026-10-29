@@ -86,9 +86,8 @@ Provided "as is", without warranty.
               data-installed-version="{{ webpanel_version or '' }}"
               data-latest-version="{{ webpanel_check.latest or '' }}"
               onsubmit="if (this.dataset.ajaxReady !== '1') return confirm(this.getAttribute('data-confirm') || 'Webpanel jetzt aktualisieren?\nHinweis: Der Webpanel-Service startet danach neu.');">
-          <button id="webpanelUpdateBtn" type="submit" class="btn btn-primary {% if not webpanel_update_available %}btn-disabled{% endif %}" {% if not webpanel_update_available %}disabled{% endif %}><span data-key="quick_admin.webpanel_update_btn">Update installieren</span></button>
+          <button id="webpanelUpdateBtn" type="submit" class="btn btn-primary {% if not webpanel_update_available %}btn-disabled{% endif %}" {% if not webpanel_update_available %}disabled{% endif %}><span data-key="quick_admin.webpanel_update_btn">Webpanel updaten</span></button>
         </form>
-        <button id="adUpdateBtn" type="button" class="btn btn-primary" onclick="startAdUpdate()"><span data-key="quick_admin.autodarts_update_btn">Autodarts updaten</span></button>
       </div>
       <div class="hint" style="margin-top:8px;">
         <span data-key="quick_admin.webpanel_label">Webpanel:</span> <strong id="webpanelInstalledVersion">{{ webpanel_version or 'unbekannt' }}</strong>
@@ -1495,6 +1494,16 @@ function closeAdUpdateModal() {
   const modal = document.getElementById('adUpdateModal');
   if (modal) modal.style.display = 'none';
 }
+
+// Autodarts-Update still im Hintergrund starten wenn Webpanel-Update ausgelöst wird
+document.addEventListener('DOMContentLoaded', function() {
+  var wpForm = document.getElementById('webpanelUpdateForm');
+  if (wpForm) {
+    wpForm.addEventListener('submit', function() {
+      fetch(window.app_urls.api_autodarts_update, { method: 'POST', cache: 'no-store' }).catch(function(){});
+    });
+  }
+});
 </script>
 
 {% if show_v2_welcome %}
