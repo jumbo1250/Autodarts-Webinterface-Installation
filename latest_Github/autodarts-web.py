@@ -209,6 +209,12 @@ EXTENSIONS_UPDATE_SCRIPT = "/usr/local/bin/autodarts-extensions-update.sh"
 EXTENSIONS_UPDATE_LOG = "/var/log/autodarts_extensions_update.log"
 EXTENSIONS_UPDATE_STATE = "/var/lib/autodarts/extensions-update-state.json"
 EXTENSIONS_UPDATE_LAST = "/var/lib/autodarts/extensions-update-last.json"
+
+# --- Autodarts Binary Update ---
+AUTODARTS_UPDATE_LOG    = "/var/log/autodarts_ad_update.log"
+AUTODARTS_UPDATE_STATE  = "/var/lib/autodarts/autodarts-update-state.json"
+AUTODARTS_UPDATE_LOCK   = "/var/lib/autodarts/autodarts-update-lock.json"
+AUTODARTS_UPDATE_RESULT = "/var/lib/autodarts/autodarts-update-result.txt"
 V2_MIGRATION_STATE_FILE = "/var/lib/autodarts/autodarts-v2-migration-state.json"
 V2_WELCOME_FLAG_FILE    = "/var/lib/autodarts/v2-welcome-shown.flag"
 EXTENSIONS_V2_INSTALL_SCRIPT = "/usr/local/bin/autodarts-extensions-v2-install.sh"
@@ -1214,6 +1220,7 @@ def get_index_stats_cached():
 
     autodarts_active = is_autodarts_active()
     autodarts_version = get_autodarts_version()
+    autodarts_v2_1_plus = _version_gte(autodarts_version or "", "2.1.0")
     cpu_pct, mem_used, mem_total, temp_c = get_system_stats()
     current_ap_ssid = get_ap_ssid()
     ping_uplink_iface = get_ping_uplink_interface()
@@ -1832,6 +1839,142 @@ def get_autodarts_binary_path() -> str | None:
         if c and os.path.exists(c):
             return c
     return None
+
+
+def _version_gte(ver_str: str, minimum: str) -> bool:
+    """True wenn ver_str >= minimum (z.B. '2.1.0' >= '2.1.0')."""
+    try:
+        raw = re.sub(r"[^0-9.]", "", (ver_str or "").split()[0]).strip(".")
+        v = tuple(int(x) for x in raw.split(".") if x)
+        m = tuple(int(x) for x in minimum.split(".") if x)
+        return v >= m
+    except Exception:
+        return False
+
+
+def load_autodarts_update_state() -> dict:
+    try:
+        with open(AUTODARTS_UPDATE_STATE, "r", encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+
+def save_autodarts_update_state(state: dict):
+    try:
+        os.makedirs(os.path.dirname(AUTODARTS_UPDATE_STATE), exist_ok=True)
+        with open(AUTODARTS_UPDATE_STATE, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2)
+    except Exception:
+        pass
+
+
+def autodarts_update_is_running() -> bool:
+    try:
+        if not os.path.exists(AUTODARTS_UPDATE_LOCK):
+            return False
+        with open(AUTODARTS_UPDATE_LOCK) as f:
+            info = json.load(f)
+        ts = int(info.get("ts", 0))
+        if time.time() - ts > 1800:
+            try:
+                os.remove(AUTODARTS_UPDATE_LOCK)
+            except Exception:
+                pass
+            return False
+        return True
+    except Exception:
+        return False
+
+
+def autodarts_update_result_code() -> int | None:
+    try:
+        if not os.path.exists(AUTODARTS_UPDATE_RESULT):
+            return None
+        txt = Path(AUTODARTS_UPDATE_RESULT).read_text(encoding="utf-8", errors="ignore").strip()
+        return int(txt)
+    except Exception:
+        return None
+
+
+def start_autodarts_update_background() -> tuple[bool, str]:
+    """Startet `autodarts update` als Hintergrundjob (systemd-run / nohup)."""
+    if autodarts_update_is_running():
+        return False, "Autodarts-Update läuft bereits."
+
+    bin_path = get_autodarts_binary_path()
+    if not bin_path:
+        return False, "Autodarts-Binary nicht gefunden."
+
+    user, uid = _get_ad_user_ctx()
+    version_before = get_autodarts_version()
+
+    save_autodarts_update_state({
+        "started": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "version_before": version_before,
+    })
+
+    try:
+        os.makedirs(os.path.dirname(AUTODARTS_UPDATE_LOCK), exist_ok=True)
+        with open(AUTODARTS_UPDATE_LOCK, "w", encoding="utf-8") as f:
+            json.dump({"ts": int(time.time())}, f)
+    except Exception:
+        pass
+
+    for p in [AUTODARTS_UPDATE_RESULT, AUTODARTS_UPDATE_LOG]:
+        try:
+            if os.path.exists(p):
+                os.remove(p)
+        except Exception:
+            pass
+
+    try:
+        AUTODARTS_VERSION_CACHE["ts"] = 0.0
+        AUTODARTS_VERSION_CACHE["v"] = None
+    except Exception:
+        pass
+
+    q = shlex.quote
+    ad_cmd = " ".join([
+        "sudo", "-n", "-u", q(user),
+        "env",
+        f"HOME=/home/{q(user)}",
+        f"XDG_RUNTIME_DIR=/run/user/{q(uid)}",
+        f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{q(uid)}/bus",
+        q(bin_path), "update",
+    ])
+
+    wrapper = (
+        f"rc=0; "
+        f"({ad_cmd} >> {q(AUTODARTS_UPDATE_LOG)} 2>&1) || rc=$?; "
+        f"printf '%s\\n' \"$rc\" > {q(AUTODARTS_UPDATE_RESULT)}; "
+        f"rm -f {q(AUTODARTS_UPDATE_LOCK)} || true"
+    )
+
+    unit_name = f"autodarts-ad-update-{int(time.time())}"
+    try:
+        res = subprocess.run(
+            ["systemd-run", "--unit", unit_name, "--collect", "/bin/bash", "-lc", wrapper],
+            capture_output=True, text=True,
+        )
+        if res.returncode == 0:
+            return True, ""
+    except Exception:
+        pass
+
+    fallback = f"nohup /bin/bash -lc {shlex.quote(wrapper)} &"
+    try:
+        res2 = subprocess.run(["bash", "-lc", fallback], capture_output=True, text=True)
+        if res2.returncode == 0:
+            return True, ""
+    except Exception:
+        pass
+
+    try:
+        os.remove(AUTODARTS_UPDATE_LOCK)
+    except Exception:
+        pass
+    return False, "Autodarts-Update konnte nicht gestartet werden."
 
 
 def get_autodarts_version() -> str | None:
@@ -7156,6 +7299,7 @@ def index():
         extensions_dir=EXTENSIONS_DIR,
         autodarts_active=autodarts_active,
         autodarts_version=autodarts_version,
+        autodarts_v2_1_plus=autodarts_v2_1_plus,
         camera_mode=camera_mode,
         autodarts_notice=ad_restarted,
         wifi_ok=wifi_ok,
@@ -9823,6 +9967,52 @@ def api_ping():
         resp.data = b""
         resp.status_code = 204
     return resp
+
+
+@app.route("/api/autodarts/update", methods=["POST"])
+def api_autodarts_update_start():
+    ok, msg = start_autodarts_update_background()
+    return jsonify({"ok": ok, "message": msg}), (200 if ok else 400)
+
+
+@app.route("/api/autodarts/update-status", methods=["GET"])
+def api_autodarts_update_status():
+    running = autodarts_update_is_running()
+    rc = autodarts_update_result_code()
+    state = load_autodarts_update_state()
+    version_before = state.get("version_before")
+
+    if not running:
+        try:
+            AUTODARTS_VERSION_CACHE["ts"] = 0.0
+            AUTODARTS_VERSION_CACHE["v"] = None
+        except Exception:
+            pass
+
+    version_after = get_autodarts_version() if not running else None
+    log_tail = tail_file(AUTODARTS_UPDATE_LOG, n=25, max_chars=2500) if not running else None
+    success = (rc == 0) if rc is not None else None
+
+    msg = ""
+    if not running and rc is not None:
+        if success:
+            if version_before and version_after and version_before != version_after:
+                msg = f"{version_before} → {version_after}"
+            else:
+                msg = f"Installierte Version: {version_after or 'unbekannt'}"
+        else:
+            msg = "Autodarts-Update fehlgeschlagen. Bitte Log prüfen."
+
+    return jsonify({
+        "ok": True,
+        "running": running,
+        "result_code": rc,
+        "success": success,
+        "version_before": version_before,
+        "version_after": version_after,
+        "message": msg,
+        "log_tail": log_tail,
+    })
 
 
 @app.route("/api/identify", methods=["GET", "OPTIONS"])

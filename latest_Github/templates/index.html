@@ -88,12 +88,17 @@ Provided "as is", without warranty.
               onsubmit="if (this.dataset.ajaxReady !== '1') return confirm(this.getAttribute('data-confirm') || 'Webpanel jetzt aktualisieren?\nHinweis: Der Webpanel-Service startet danach neu.');">
           <button id="webpanelUpdateBtn" type="submit" class="btn btn-primary {% if not webpanel_update_available %}btn-disabled{% endif %}" {% if not webpanel_update_available %}disabled{% endif %}><span data-key="quick_admin.webpanel_update_btn">Update installieren</span></button>
         </form>
+        <button id="adUpdateBtn" type="button" class="btn btn-primary" onclick="startAdUpdate()"><span data-key="quick_admin.autodarts_update_btn">Autodarts updaten</span></button>
       </div>
       <div class="hint" style="margin-top:8px;">
         <span data-key="quick_admin.webpanel_label">Webpanel:</span> <strong id="webpanelInstalledVersion">{{ webpanel_version or 'unbekannt' }}</strong>
         {% if webpanel_check.latest %}<span data-key="quick_admin.last_check_label">· letzter Check:</span> <strong id="webpanelLatestVersion">{{ webpanel_check.latest }}</strong>{% endif %}
       </div>
+      <div class="hint" style="margin-top:4px;">
+        <span data-key="quick_admin.autodarts_label">Autodarts:</span> <strong id="adInstalledVersion">{{ autodarts_version or 'unbekannt' }}</strong>
+      </div>
       <div id="webpanelUpdateStatus" class="hint" style="margin-top:6px; display:none;" aria-live="polite"></div>
+      <div id="adUpdateStatus" class="hint" style="margin-top:4px; display:none;" aria-live="polite"></div>
       <div style="margin-top:8px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
         <span class="hint" style="margin:0;" data-key="admin.webpanel_channel_label">Update-Kanal:</span>
         <label style="display:flex; align-items:center; gap:6px; cursor:pointer; user-select:none;">
@@ -383,7 +388,12 @@ Provided "as is", without warranty.
 
         <div class="btn-row">
           {% if autodarts_v2_running %}
-            <a href="{{ url_for('board_manager') }}" class="btn"><span data-key="account.board_manager_btn">Dartboard einstellen</span></a>
+            <a href="{{ url_for('board_manager') }}" class="btn"><span data-key="account.board_manager_btn_tui">Schnellkonfiguration (TUI)</span></a>
+            {% if autodarts_v2_1_plus %}
+              <a href="{{ darts_url }}" class="btn btn-primary" target="_blank" rel="noopener"><span data-key="account.board_manager_btn_official">Dartboard Manager</span></a>
+            {% else %}
+              <span class="hint" style="display:inline-flex; align-items:center; margin-left:4px;" data-key="account.board_manager_needs_update">Dartboard Manager: Autodarts ≥ 2.1.0 erforderlich</span>
+            {% endif %}
           {% endif %}
         </div>
       </div>
@@ -1221,6 +1231,8 @@ cp /var/log/pi_monitor_test_README.txt ~/
       api_extensions_v2_auth_reset: "{{ url_for('api_extensions_v2_auth_reset') }}",
       api_webpanel_update: "{{ url_for('api_webpanel_update_start') }}",
       api_webpanel_update_status: "{{ url_for('api_webpanel_update_status') }}",
+      api_autodarts_update: "{{ url_for('api_autodarts_update_start') }}",
+      api_autodarts_update_status: "{{ url_for('api_autodarts_update_status') }}",
       api_webpanel_channel: "{{ url_for('api_webpanel_channel') }}",
       api_calibration_mtime: "{{ url_for('api_calibration_mtime') }}",
       darts_url: "{{ darts_url }}"
@@ -1305,6 +1317,113 @@ Wenn Autodarts größere Änderungen am Layout oder an CSS-Klassen macht, müsse
   <script src="{{ url_for('static', filename='js/autodarts_tools_platforms.js') }}?v=20260406"></script>
   <script src="{{ url_for('static', filename='js/caller_installer.js') }}?v=20260408"></script>
   <script src="{{ url_for('static', filename='js/extensions_v2.js') }}?v=20260806_authreset01"></script>
+
+<!-- Autodarts Update Result Popup -->
+<div id="adUpdateModal" style="display:none; position:fixed; inset:0; z-index:9000; background:rgba(0,0,0,0.72); align-items:center; justify-content:center;">
+  <div style="background:#1a1a1a; border:1px solid #444; border-radius:12px; padding:24px; max-width:520px; width:92%; max-height:80vh; overflow-y:auto; box-shadow:0 8px 32px rgba(0,0,0,0.6);">
+    <h3 id="adUpdateModalTitle" style="margin:0 0 12px; color:#eee; font-size:1.1rem;"></h3>
+    <p id="adUpdateModalMsg" style="margin:0 0 10px; color:#aaa; white-space:pre-line; font-size:0.92rem;"></p>
+    <details id="adUpdateModalDetails" style="display:none; margin-bottom:12px;">
+      <summary style="cursor:pointer; color:#888; font-size:0.82rem; user-select:none;">Konsolenausgabe anzeigen</summary>
+      <pre id="adUpdateModalLog" style="margin-top:8px; background:#111; border:1px solid #333; border-radius:6px; padding:10px; font-size:0.75rem; color:#aaa; max-height:200px; overflow-y:auto; white-space:pre-wrap; word-break:break-all;"></pre>
+    </details>
+    <div style="display:flex; justify-content:flex-end;">
+      <button type="button" class="btn" onclick="closeAdUpdateModal()">OK</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Autodarts Update ──────────────────────────────────────────────────────────
+let _adUpdatePollTimer = null;
+
+function startAdUpdate() {
+  const confirmMsg = (typeof t === 'function')
+    ? t('quick_admin.autodarts_update_confirm', 'Soll Autodarts auf Updates geprüft und gegebenenfalls aktualisiert werden?')
+    : 'Soll Autodarts auf Updates geprüft und gegebenenfalls aktualisiert werden?';
+  if (!confirm(confirmMsg)) return;
+
+  const btn    = document.getElementById('adUpdateBtn');
+  const status = document.getElementById('adUpdateStatus');
+  if (btn)    { btn.disabled = true; btn.classList.add('btn-disabled'); }
+  if (status) { status.style.display = ''; status.textContent = (typeof t === 'function') ? t('quick_admin.autodarts_update_running', 'Autodarts-Update läuft…') : 'Autodarts-Update läuft…'; }
+
+  fetch(window.app_urls.api_autodarts_update, { method: 'POST', cache: 'no-store' })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (!d.ok) {
+        if (btn)    { btn.disabled = false; btn.classList.remove('btn-disabled'); }
+        if (status) { status.style.display = 'none'; }
+        showAdUpdateModal(false, d.message || 'Fehler beim Starten.', null, null, null);
+        return;
+      }
+      _adUpdatePollTimer = setTimeout(pollAdUpdate, 3000);
+    })
+    .catch(function() {
+      if (btn)    { btn.disabled = false; btn.classList.remove('btn-disabled'); }
+      if (status) { status.style.display = 'none'; }
+    });
+}
+
+function pollAdUpdate() {
+  if (_adUpdatePollTimer) { clearTimeout(_adUpdatePollTimer); _adUpdatePollTimer = null; }
+  fetch(window.app_urls.api_autodarts_update_status, { cache: 'no-store' })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.running) {
+        _adUpdatePollTimer = setTimeout(pollAdUpdate, 3000);
+        return;
+      }
+      const btn    = document.getElementById('adUpdateBtn');
+      const status = document.getElementById('adUpdateStatus');
+      if (btn)    { btn.disabled = false; btn.classList.remove('btn-disabled'); }
+      if (status) { status.style.display = 'none'; }
+      if (d.version_after) {
+        const el = document.getElementById('adInstalledVersion');
+        if (el) el.textContent = d.version_after;
+      }
+      showAdUpdateModal(d.success === true, d.message, d.version_before, d.version_after, d.log_tail);
+    })
+    .catch(function() {
+      _adUpdatePollTimer = setTimeout(pollAdUpdate, 5000);
+    });
+}
+
+function showAdUpdateModal(success, msg, verBefore, verAfter, logTail) {
+  const modal = document.getElementById('adUpdateModal');
+  if (!modal) return;
+
+  const titleEl   = document.getElementById('adUpdateModalTitle');
+  const msgEl     = document.getElementById('adUpdateModalMsg');
+  const detailsEl = document.getElementById('adUpdateModalDetails');
+  const logEl     = document.getElementById('adUpdateModalLog');
+
+  titleEl.textContent = success
+    ? ((typeof t === 'function') ? t('quick_admin.autodarts_update_done', 'Autodarts-Update abgeschlossen') : 'Autodarts-Update abgeschlossen')
+    : ((typeof t === 'function') ? t('quick_admin.autodarts_update_failed', 'Autodarts-Update fehlgeschlagen') : 'Autodarts-Update fehlgeschlagen');
+  titleEl.style.color = success ? '#4ade80' : '#f87171';
+
+  let msgText = msg || '';
+  if (!msgText && verBefore && verAfter) {
+    msgText = verBefore !== verAfter ? (verBefore + ' → ' + verAfter) : ('Version: ' + verAfter);
+  }
+  msgEl.textContent = msgText;
+
+  if (logTail) {
+    detailsEl.style.display = '';
+    logEl.textContent = logTail;
+  } else {
+    detailsEl.style.display = 'none';
+  }
+
+  modal.style.display = 'flex';
+}
+
+function closeAdUpdateModal() {
+  const modal = document.getElementById('adUpdateModal');
+  if (modal) modal.style.display = 'none';
+}
+</script>
 
 {% if show_v2_welcome %}
 <div id="v2WelcomeOverlay" class="video-modal-overlay is-open" role="dialog" aria-modal="true" aria-labelledby="v2WelcomeTitle">
