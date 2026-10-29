@@ -78,16 +78,14 @@ Provided "as is", without warranty.
         <form method="post" action="{{ url_for('admin_shutdown') }}" data-confirm-key="confirm.admin_shutdown" onsubmit="return confirm('Wollen Sie den Mini PC wirklich herunterfahren?');">
           <button type="submit" class="btn"><span data-key="quick_admin.shutdown_btn">Shutdown</span></button>
         </form>
-        <form method="post" action="{{ url_for('admin_webpanel_check') }}">
-          <button type="submit" class="btn"><span data-key="quick_admin.webpanel_check_btn">Webpanel prüfen</span></button>
-        </form>
         <form id="webpanelUpdateForm" method="post" action="{{ url_for('admin_webpanel_update') }}"
               data-confirm-key="confirm.webpanel_update"
               data-installed-version="{{ webpanel_version or '' }}"
               data-latest-version="{{ webpanel_check.latest or '' }}"
               onsubmit="if (this.dataset.ajaxReady !== '1') return confirm(this.getAttribute('data-confirm') || 'Webpanel jetzt aktualisieren?\nHinweis: Der Webpanel-Service startet danach neu.');">
-          <button id="webpanelUpdateBtn" type="submit" class="btn btn-primary {% if not webpanel_update_available %}btn-disabled{% endif %}" {% if not webpanel_update_available %}disabled{% endif %}><span data-key="quick_admin.webpanel_update_btn">Webpanel updaten</span></button>
+          <button id="webpanelUpdateBtn" type="submit" class="btn btn-primary"><span data-key="quick_admin.webpanel_update_btn">Webpanel updaten</span></button>
         </form>
+        <button id="adUpdateBtn" type="button" class="btn btn-primary" onclick="startAdUpdate()"><span data-key="quick_admin.autodarts_update_btn">Autodarts updaten</span></button>
       </div>
       <div class="hint" style="margin-top:8px;">
         <span data-key="quick_admin.webpanel_label">Webpanel:</span> <strong id="webpanelInstalledVersion">{{ webpanel_version or 'unbekannt' }}</strong>
