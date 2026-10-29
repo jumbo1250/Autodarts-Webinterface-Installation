@@ -10011,10 +10011,15 @@ def api_autodarts_autoupdate_toggle():
 
 @app.route("/api/autodarts/restart", methods=["POST"])
 def api_autodarts_restart():
-    result = _run_systemctl(["restart", "autodarts"], timeout=15)
-    if result is None or result.returncode != 0:
-        msg = (result.stderr.strip() if result else "timeout")
-        return jsonify({"ok": False, "message": msg}), 500
+    try:
+        result = subprocess.run(
+            ["/usr/local/bin/autodarts-userctl", "restart"],
+            capture_output=True, text=True, timeout=15
+        )
+        if result.returncode != 0:
+            return jsonify({"ok": False, "message": result.stderr.strip()}), 500
+    except Exception as e:
+        return jsonify({"ok": False, "message": str(e)}), 500
     return jsonify({"ok": True})
 
 
