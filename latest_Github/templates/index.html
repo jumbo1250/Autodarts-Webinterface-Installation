@@ -1530,8 +1530,8 @@ function saveHostname() {
   var inp = document.getElementById('hostnameInput');
   var err = document.getElementById('hostnameError');
   var name = inp ? inp.value.trim() : '';
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9\-]{0,61}[a-zA-Z0-9]?$/.test(name)) {
-    if (err) { err.textContent = 'Ungültiger Name. Nur Buchstaben, Zahlen, Bindestriche.'; err.style.display = ''; }
+  if (!/^[a-zA-Z0-9]{1,63}$/.test(name)) {
+    if (err) { err.textContent = 'Nur Buchstaben und Zahlen erlaubt.'; err.style.display = ''; }
     return;
   }
   fetch(window.app_urls.api_hostname, {

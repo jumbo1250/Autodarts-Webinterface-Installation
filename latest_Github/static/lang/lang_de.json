@@ -148,7 +148,7 @@
     "account.autodarts_autostart_btn": "Autostart",
     "hero.hostname_btn": "Gerätename ändern",
     "hostname_modal.title": "Gerätename ändern",
-    "hostname_modal.hint": "Nur Buchstaben, Zahlen und Bindestriche. Danach startet der Pi neu.",
+    "hostname_modal.hint": "Nur Buchstaben und Zahlen. Danach startet der Pi neu.",
     "hostname_modal.save_btn": "Speichern & Neustart",
     "quick_admin.autodarts_autoupdate_label": "Auto-Update:",
     "quick_admin.autodarts_autoupdate_on": "AN",

@@ -10034,7 +10034,7 @@ def api_autodarts_autoupdate_toggle():
 def api_set_hostname():
     data = request.get_json(silent=True) or {}
     name = (data.get("hostname") or "").strip()
-    if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9\-]{0,61}[a-zA-Z0-9]?$', name):
+    if not re.match(r'^[a-zA-Z0-9]{1,63}$', name):
         return jsonify({"ok": False, "message": "Ungültiger Hostname"}), 400
     try:
         old = subprocess.run(["hostname"], capture_output=True, text=True).stdout.strip()
