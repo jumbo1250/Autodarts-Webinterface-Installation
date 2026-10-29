@@ -10029,6 +10029,31 @@ def api_autodarts_autoupdate_toggle():
     return jsonify({"ok": True, "auto_update": new_val})
 
 
+@app.route("/api/device/hostname", methods=["POST"])
+def api_set_hostname():
+    import re
+    data = request.get_json(silent=True) or {}
+    name = (data.get("hostname") or "").strip()
+    if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9\-]{0,61}[a-zA-Z0-9]?$', name):
+        return jsonify({"ok": False, "message": "Ungültiger Hostname"}), 400
+    try:
+        old = subprocess.run(["hostname"], capture_output=True, text=True).stdout.strip()
+        subprocess.run(["hostnamectl", "set-hostname", name], check=True, capture_output=True)
+        # /etc/hosts aktualisieren
+        with open("/etc/hosts", "r") as f:
+            hosts = f.read()
+        hosts = re.sub(r'(\b)' + re.escape(old) + r'(\b)', name, hosts)
+        tmp = "/etc/hosts.tmp"
+        with open(tmp, "w") as f:
+            f.write(hosts)
+        os.replace(tmp, "/etc/hosts")
+        subprocess.run(["sudo", "-n", "systemd-run", "--no-block", "--on-active=3",
+                        "systemctl", "reboot"], capture_output=True)
+    except Exception as e:
+        return jsonify({"ok": False, "message": str(e)}), 500
+    return jsonify({"ok": True})
+
+
 @app.route("/api/autodarts/autostart", methods=["POST"])
 def api_autodarts_autostart_toggle():
     user, uid = _get_ad_user_ctx()

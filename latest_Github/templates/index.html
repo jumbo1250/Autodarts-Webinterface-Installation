@@ -255,6 +255,25 @@ Provided "as is", without warranty.
       <button type="button" class="btn btn-small" onclick="document.getElementById('ledGpioModal').style.display='flex';">
         <span data-key="hero.led_gpio_btn">LED Statusanzeige Gehäuse</span>
       </button>
+      <button type="button" class="btn btn-small" onclick="openHostnameModal()">
+        <span data-key="hero.hostname_btn">Gerätename ändern</span>
+      </button>
+    </div>
+
+    <!-- Hostname Modal -->
+    <div id="hostnameModal" style="display:none;position:fixed;inset:0;z-index:9100;background:rgba(0,0,0,0.85);align-items:center;justify-content:center;" onclick="this.style.display='none';">
+      <div style="background:#1a1a1a;border:1px solid #333;border-radius:10px;padding:24px;min-width:300px;max-width:90vw;" onclick="event.stopPropagation()">
+        <p style="color:#eee;font-weight:700;margin:0 0 6px;" data-key="hostname_modal.title">Gerätename ändern</p>
+        <p class="hint" style="margin:0 0 14px;" data-key="hostname_modal.hint">Nur Buchstaben, Zahlen und Bindestriche. Danach startet der Pi neu.</p>
+        <input id="hostnameInput" type="text" maxlength="63"
+               style="width:100%;box-sizing:border-box;background:#111;border:1px solid #444;color:#eee;padding:8px 10px;border-radius:6px;font-size:1rem;margin-bottom:12px;"
+               placeholder="z.B. autodarts-peter">
+        <div style="display:flex;gap:8px;justify-content:flex-end;">
+          <button type="button" class="btn" onclick="document.getElementById('hostnameModal').style.display='none';" data-key="common.cancel">Abbrechen</button>
+          <button type="button" class="btn btn-primary" onclick="saveHostname()" data-key="hostname_modal.save_btn">Speichern &amp; Neustart</button>
+        </div>
+        <p id="hostnameError" style="color:#f87171;font-size:0.82rem;margin:8px 0 0;display:none;"></p>
+      </div>
     </div>
 
     <!-- LED GPIO Modal -->
@@ -410,7 +429,7 @@ Provided "as is", without warranty.
                   class="btn {% if not autodarts_autostart_enabled %}btn-danger{% endif %}"
                   onclick="toggleAdAutostart(this)">
             <span data-key="account.autodarts_autostart_btn">Autostart</span>
-            <span id="adAutostartState" style="font-weight:700; margin-left:4px;">{% if autodarts_autostart_enabled %}AN{% else %}AUS{% endif %}</span>
+            <span id="adAutostartState" style="font-weight:700; margin-left:4px;">{% if autodarts_autostart_enabled %}ON{% else %}OFF{% endif %}</span>
           </button>
         </div>
       </div>
@@ -1253,6 +1272,7 @@ cp /var/log/pi_monitor_test_README.txt ~/
       api_autodarts_autoupdate: "{{ url_for('api_autodarts_autoupdate_toggle') }}",
       api_autodarts_restart: "{{ url_for('api_autodarts_restart') }}",
       api_autodarts_autostart: "{{ url_for('api_autodarts_autostart_toggle') }}",
+      api_hostname: "{{ url_for('api_set_hostname') }}",
       api_webpanel_channel: "{{ url_for('api_webpanel_channel') }}",
       api_calibration_mtime: "{{ url_for('api_calibration_mtime') }}",
       darts_url: "{{ darts_url }}"
@@ -1497,6 +1517,36 @@ function showAdUpdateModal(success, msg, verBefore, verAfter, logTail) {
   modal.style.display = 'flex';
 }
 
+function openHostnameModal() {
+  var inp = document.getElementById('hostnameInput');
+  var err = document.getElementById('hostnameError');
+  if (inp) inp.value = window.location.hostname;
+  if (err) err.style.display = 'none';
+  document.getElementById('hostnameModal').style.display = 'flex';
+  if (inp) setTimeout(function(){ inp.focus(); inp.select(); }, 100);
+}
+
+function saveHostname() {
+  var inp = document.getElementById('hostnameInput');
+  var err = document.getElementById('hostnameError');
+  var name = inp ? inp.value.trim() : '';
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9\-]{0,61}[a-zA-Z0-9]?$/.test(name)) {
+    if (err) { err.textContent = 'Ungültiger Name. Nur Buchstaben, Zahlen, Bindestriche.'; err.style.display = ''; }
+    return;
+  }
+  fetch(window.app_urls.api_hostname, {
+    method: 'POST', cache: 'no-store',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ hostname: name })
+  }).then(function(r){ return r.json(); }).then(function(d){
+    if (!d.ok) {
+      if (err) { err.textContent = d.message || 'Fehler'; err.style.display = ''; }
+    } else {
+      document.getElementById('hostnameModal').style.display = 'none';
+    }
+  }).catch(function(){ if (err) { err.textContent = 'Verbindungsfehler'; err.style.display = ''; } });
+}
+
 function toggleAdAutostart(btn) {
   btn.disabled = true;
   fetch(window.app_urls.api_autodarts_autostart, { method: 'POST', cache: 'no-store' })
@@ -1507,10 +1557,10 @@ function toggleAdAutostart(btn) {
       var stateEl = document.getElementById('adAutostartState');
       if (d.enabled) {
         btn.classList.remove('btn-danger');
-        if (stateEl) stateEl.textContent = 'AN';
+        if (stateEl) stateEl.textContent = 'ON';
       } else {
         btn.classList.add('btn-danger');
-        if (stateEl) stateEl.textContent = 'AUS';
+        if (stateEl) stateEl.textContent = 'OFF';
       }
     })
     .catch(function() { btn.disabled = false; });
