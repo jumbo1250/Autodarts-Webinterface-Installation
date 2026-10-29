@@ -7323,7 +7323,6 @@ def index():
         autodarts_auto_update=autodarts_auto_update,
         autodarts_update_just_started=autodarts_update_just_started,
         autodarts_autostart_enabled=get_autodarts_autostart_enabled(),
-        device_hostname=subprocess.run(["hostname"], capture_output=True, text=True).stdout.strip(),
         camera_mode=camera_mode,
         autodarts_notice=ad_restarted,
         wifi_ok=wifi_ok,
@@ -10028,31 +10027,6 @@ def api_autodarts_autoupdate_toggle():
     except Exception as e:
         return jsonify({"ok": False, "message": str(e)}), 500
     return jsonify({"ok": True, "auto_update": new_val})
-
-
-@app.route("/api/device/hostname", methods=["POST"])
-def api_set_hostname():
-    data = request.get_json(silent=True) or {}
-    name = (data.get("hostname") or "").strip()
-    if not re.match(r'^[a-zA-Z0-9]{1,63}$', name):
-        return jsonify({"ok": False, "message": "Ungültiger Hostname"}), 400
-    try:
-        old = subprocess.run(["hostname"], capture_output=True, text=True).stdout.strip()
-        # /etc/hostname direkt schreiben — zuverlässiger als hostnamectl
-        with open("/etc/hostname", "w") as f:
-            f.write(name + "\n")
-        subprocess.run(["hostname", name], capture_output=True)
-        # /etc/hosts aktualisieren
-        with open("/etc/hosts", "r") as f:
-            hosts = f.read()
-        hosts = re.sub(r'\b' + re.escape(old) + r'\b', name, hosts)
-        with open("/etc/hosts", "w") as f:
-            f.write(hosts)
-        subprocess.run(["systemd-run", "--no-block", "--on-active=3",
-                        "systemctl", "reboot"], capture_output=True)
-    except Exception as e:
-        return jsonify({"ok": False, "message": str(e)}), 500
-    return jsonify({"ok": True})
 
 
 @app.route("/api/autodarts/autostart", methods=["POST"])
