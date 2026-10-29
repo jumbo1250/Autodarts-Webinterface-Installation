@@ -1520,7 +1520,7 @@ function showAdUpdateModal(success, msg, verBefore, verAfter, logTail) {
 function openHostnameModal() {
   var inp = document.getElementById('hostnameInput');
   var err = document.getElementById('hostnameError');
-  if (inp) inp.value = window.location.hostname;
+  if (inp) inp.value = '{{ device_hostname }}';
   if (err) err.style.display = 'none';
   document.getElementById('hostnameModal').style.display = 'flex';
   if (inp) setTimeout(function(){ inp.focus(); inp.select(); }, 100);
