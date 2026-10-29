@@ -7119,7 +7119,12 @@ def index():
 
     autodarts_auto_update = bool(SETTINGS.get("autodarts_auto_update", False))
     if autodarts_auto_update and not autodarts_update_is_running():
-        start_autodarts_update_background()
+        _au_state = load_autodarts_update_state()
+        _au_last  = _au_state.get("last_auto_trigger", 0)
+        if time.time() - _au_last >= 3600:
+            _au_state["last_auto_trigger"] = time.time()
+            save_autodarts_update_state(_au_state)
+            start_autodarts_update_background()
 
 
 
