@@ -7082,7 +7082,31 @@ def admin_pi5_headless(mode):
     return redirect(url_for("index", msg=msg))
 
 
-def check_and_consume_v2_welcome():
+# --- WHY these two popups exist (do not remove this comment) ---
+#
+# Old systems have Autodarts 1.0 + an old webpanel updater that does NOT know about
+# the revision chain (update-revisions.conf). When such a system runs the first webpanel
+# update, the old updater installs the new webpanel — but the revision chain never runs
+# because the old updater doesn't know about it (it just copies "latest" without checkpoints).
+#
+# The fix is a two-step process, driven by these two popups:
+#
+#   Popup 1 — "Autodarts 2.0 installiert!" (this one, v2WelcomeOverlay):
+#     Shows after the v2 migration completes. The button calls /api/v2-chain-fix, which
+#     resets the local webpanel version to 1.800 and triggers a fresh update run.
+#
+#   Popup 2 — shown after the update finishes:
+#     Now the NEW updater is running and recognises the revision chain. It walks through
+#     all missing checkpoints (e.g. V1.809 → latest) so nothing is skipped.
+#
+# Without these popups, old systems would never re-run the chain and would silently
+# miss required migration steps. The popups are not cosmetic — they are the mechanism.
+#
+# Flag rule: the flag is written when the user CLICKS the button (in /api/v2-chain-fix),
+# NOT on render. This way a browser refresh before clicking does not eat the popup.
+
+def check_v2_welcome():
+    """Returns True if the v2 welcome popup should be shown. Does NOT set the flag."""
     if os.path.exists(V2_WELCOME_FLAG_FILE):
         return False
     try:
@@ -7094,10 +7118,6 @@ def check_and_consume_v2_welcome():
         return False
     if state.get("result") not in ("migrated_from_v1", "fresh_install", "fresh_install_from_broken"):
         return False
-    try:
-        open(V2_WELCOME_FLAG_FILE, "w").close()
-    except Exception:
-        pass
     return True
 
 
@@ -7361,7 +7381,7 @@ def index():
         darts_ttyd_url=darts_ttyd_url,
         autodarts_v2_running=autodarts_v2_running,
         autodarts_ttyd_running=autodarts_ttyd_running,
-        show_v2_welcome=check_and_consume_v2_welcome(),
+        show_v2_welcome=check_v2_welcome(),
     )
 
 
@@ -8687,12 +8707,19 @@ def api_webpanel_update_status():
 # alle Pis mindestens einmal durch den Runner gelaufen sind.
 @app.route("/api/v2-chain-fix", methods=["POST"])
 def api_v2_chain_fix():
+    # Reset version so the updater runner walks the revision chain from 1.800 onward.
     try:
         os.makedirs(os.path.dirname(WEBPANEL_VERSION_FILE), exist_ok=True)
         with open(WEBPANEL_VERSION_FILE, "w", encoding="utf-8") as f:
             f.write("1.800\n")
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+    # User clicked the button → popup was seen → set the flag so it never shows again.
+    try:
+        os.makedirs(os.path.dirname(V2_WELCOME_FLAG_FILE), exist_ok=True)
+        open(V2_WELCOME_FLAG_FILE, "w").close()
+    except Exception:
+        pass
     ok, msg = start_webpanel_update_background(mode="update", allow_self_update=True)
     return jsonify({"ok": ok, "message": msg})
 
