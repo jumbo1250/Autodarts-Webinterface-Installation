@@ -479,6 +479,9 @@ async function reloadSpider() {
     document.querySelectorAll('.cam-spider').forEach(svg => {
       svg.style.display = 'block';
     });
+    const toggleBtn = document.getElementById('spiderToggleBtn');
+    toggleBtn.textContent = 'Kalibrierung ausblenden';
+    toggleBtn.disabled = false;
   }
 }
 </script>
