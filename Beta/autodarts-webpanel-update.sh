@@ -40,6 +40,8 @@ FILES=(
   "autodarts-userctl|${BIN_DIR}/autodarts-userctl"
   "autodarts-tui-wrapper|${BIN_DIR}/autodarts-tui-wrapper"
   "autodarts-v2-migration.sh|${BIN_DIR}/autodarts-v2-migration.sh"
+  "webpanel_AP_apply.sh|/usr/local/lib/autodarts/webpanel_AP_apply.sh"
+  "91-webpanel_AP|/etc/NetworkManager/dispatcher.d/91-webpanel_AP"
 )
 
 ts()  { date +"[%Y-%m-%d %H:%M:%S]"; }
@@ -232,6 +234,8 @@ for entry in "${FILES[@]}"; do
 done
 
 chmod 777 "${BIN_DIR}" "${DATA_DIR}" "${STATE_DIR}" 2>/dev/null || true
+# NM-Dispatcher dürfen nicht world-writable sein (NM verweigert sonst die Ausführung)
+find /etc/NetworkManager/dispatcher.d/ -maxdepth 1 -type f -exec chmod 755 {} + 2>/dev/null || true
 
 run_v2_migration_if_downloaded
 

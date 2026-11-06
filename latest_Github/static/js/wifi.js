@@ -58,12 +58,17 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  async function loadWifi() {
+  async function loadWifi(rescan) {
     if (!pick) return;
     pick.innerHTML = `<option>${t('wifi.searching_networks', 'Suche WLANs…')}</option>`;
+    if (refreshBtn) {
+      refreshBtn.disabled = true;
+      refreshBtn.textContent = '⏳';
+    }
 
     try {
-      const r = await fetch('/api/wifi/scan', { cache: 'no-store' });
+      const url = rescan ? '/api/wifi/scan?trigger=1' : '/api/wifi/scan';
+      const r = await fetch(url, { cache: 'no-store' });
       const j = await r.json();
       if (!j.ok) {
         throw new Error(j.msg || t('wifi.scan_failed', 'Scan fehlgeschlagen'));
@@ -73,9 +78,13 @@ document.addEventListener('DOMContentLoaded', () => {
       const nets = j.networks || [];
 
       if (nets.length === 0) {
-        pick.innerHTML = `<option value="">${t('wifi.no_ssids_found', '(Keine SSIDs gefunden – ggf. Refresh oder manuell)')}</option>`;
-        setManualMode(true);
-        if (manual) manual.checked = true;
+        pick.innerHTML = `<option value="">${t('wifi.no_ssids_found', '(Keine WLANs gefunden – nochmal Refresh versuchen)')}</option>`;
+        setManualMode(false);
+        if (manual) manual.checked = false;
+        if (refreshBtn) {
+          refreshBtn.disabled = false;
+          refreshBtn.textContent = t('wifi.refresh', 'Refresh');
+        }
         return;
       }
 
@@ -107,12 +116,15 @@ document.addEventListener('DOMContentLoaded', () => {
       setManualMode(false);
       if (manual) manual.checked = false;
     } catch (e) {
-      setManualMode(true);
-      if (manual) manual.checked = true;
       if (pick) {
         pick.innerHTML = `<option value="">${t('wifi.scan_failed_manual', '(Scan fehlgeschlagen – manuell eingeben)')}</option>`;
       }
       console.log(e);
+    } finally {
+      if (refreshBtn) {
+        refreshBtn.disabled = false;
+        refreshBtn.textContent = t('wifi.refresh', 'Refresh');
+      }
     }
   }
 
@@ -127,7 +139,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   if (refreshBtn) {
-    refreshBtn.addEventListener('click', loadWifi);
+    refreshBtn.addEventListener('click', () => loadWifi(true));
   }
 	
 	

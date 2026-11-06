@@ -60,7 +60,7 @@ Provided "as is", without warranty.
     {% endif %}
 
     <div class="btn-row" style="margin-top:14px;">
-      <a href="{{ url_for('audio') }}" class="btn btn-small" data-key="audio.refresh_btn">↺ Aktualisieren</a>
+      <a href="{{ url_for('audio.audio') }}" class="btn btn-small" data-key="audio.refresh_btn">↺ Aktualisieren</a>
     </div>
   </div>
 
@@ -91,6 +91,18 @@ Provided "as is", without warranty.
 
     <p id="audioMsg" class="hint" style="margin-top:10px; min-height:1.2em;"></p>
   </div>
+
+  {% if not pipewire_alsa_installed %}
+  <div class="card">
+    <h2 data-key="audio.rpi4_title">🔧 Raspberry Pi 4 Audio-Fix</h2>
+    <p class="hint" data-key="audio.rpi4_hint">Testton funktioniert nicht? Die ALSA-PipeWire-Bridge (pipewire-alsa) fehlt.</p>
+    <div class="btn-row" style="margin-top:10px;">
+      <button type="button" class="btn btn-small btn-primary" id="installPipewireBtn"
+              data-key="audio.install_pipewire_btn">pipewire-alsa installieren</button>
+    </div>
+    <p id="installMsg" class="hint" style="margin-top:10px; min-height:1.2em;"></p>
+  </div>
+  {% endif %}
 
   <div class="btn-row" style="margin-top:8px;">
     <a href="{{ url_for('index') }}" class="btn" data-key="common.back">Zurück</a>
@@ -153,6 +165,40 @@ function activateSink(sinkId) {
     })
     .catch(() => showMsg('Fehler', false));
 }
+
+{% if not pipewire_alsa_installed %}
+const installBtn = document.getElementById('installPipewireBtn');
+const installMsg = document.getElementById('installMsg');
+installBtn.addEventListener('click', function() {
+  installBtn.disabled = true;
+  installBtn.textContent = '⏳ ...';
+  fetch('{{ url_for("audio.api_audio_install_pipewire_alsa") }}', { method: 'POST' })
+    .then(r => r.json())
+    .then(d => {
+      const tw = typeof window.t === 'function' ? window.t : (k, fb) => fb;
+      if (d.already) {
+        installMsg.textContent = '✓ ' + tw('audio.install_already', 'Bereits installiert.');
+        installMsg.style.color = '#4ade80';
+      } else if (d.ok) {
+        installMsg.textContent = '✓ ' + tw('audio.install_started', 'Installation gestartet – bitte 20–30 Sek. warten, dann Testton erneut versuchen.');
+        installMsg.style.color = '#4ade80';
+      } else {
+        installMsg.textContent = d.msg || 'Fehler';
+        installMsg.style.color = '#f87171';
+        installBtn.disabled = false;
+        installBtn.textContent = tw('audio.install_pipewire_btn', 'pipewire-alsa installieren');
+      }
+    })
+    .catch(() => {
+      installMsg.textContent = 'Fehler';
+      installMsg.style.color = '#f87171';
+      installBtn.disabled = false;
+      installBtn.textContent = typeof window.t === 'function'
+        ? window.t('audio.install_pipewire_btn', 'pipewire-alsa installieren')
+        : 'pipewire-alsa installieren';
+    });
+});
+{% endif %}
 </script>
 </body>
 </html>

@@ -28,85 +28,473 @@ Provided "as is", without warranty.
   <div class="container">
     <h1 data-key="wifi.title.config">WLAN Konfiguration (USB-Dongle)</h1>
 
-    <div class="card">
-      <p>{{ current_info | safe }}</p>
-
-      {% if message %}
-        <p class="{{ 'msg-ok' if success else 'msg-bad' }}">{{ message }}</p>
-      {% endif %}
-
-      {% if show_wifi_reboot_popup %}
-        <div
-          id="wifiRebootModal"
-          class="wifi-modal-backdrop"
-          data-countdown="{{ wifi_reboot_countdown_seconds|default(10) }}"
-          data-cancel-url="{{ url_for('wifi_reboot_cancel') }}"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="wifiRebootTitle"
-        >
-          <div class="wifi-modal">
-            <h2 id="wifiRebootTitle">Erfolgreich verbunden</h2>
-            <p class="wifi-modal-main" id="wifiRebootMain">
-              Das System wechselt gleich auf einen stabilen WLAN-Kanal und startet danach neu.
-            </p>
-            <p class="wifi-modal-help" id="wifiRebootHelp">
-              Bis zum Neustart bleibt diese Verbindung bestehen. Danach bitte wieder mit „Autodartsinstall1“ verbinden.
-            </p>
-            <div class="wifi-countdown">
-              Neustart in <strong id="wifiRebootCountdown">{{ wifi_reboot_countdown_seconds|default(10) }}</strong> Sekunden
-            </div>
-            <button type="button" class="btn btn-danger" id="wifiRebootCancel">Neustart abbrechen</button>
-            <p class="wifi-modal-note">Beim Abbrechen wird nur der Neustart verhindert. Der WLAN-Kanal wechselt trotzdem kurz.</p>
-            <p id="wifiRebootCancelMsg" class="wifi-modal-cancel-msg" style="display:none;"></p>
-          </div>
-        </div>
-      {% endif %}
-
-      <p id="workmsg" class="msg-info" style="display:none;" data-key="wifi.workmsg">
-        Verbindung wird hergestellt … bitte warten (kann 10–30 Sekunden dauern).
+    <!-- Direktverbindung aktiv (kein AP, direkte WLAN-Verbindung über wlan_ap) -->
+    {% if direct_connected %}
+    <div class="card" style="margin-bottom:8px; border:2px solid #4ade80;">
+      <p class="msg-ok" style="margin:0;">
+        ✅ <strong data-key="wifi.direct_connected_title">Direktverbindung aktiv</strong><br>
+        <span data-key="wifi.direct_connected_network">Aktuell verbunden mit Netzwerk:</span> <strong>{{ direct_ssid }}</strong>
+        {% if direct_ip %} · <span data-key="wifi.direct_connected_ip">IP:</span> <strong>{{ direct_ip }}</strong>{% endif %}
       </p>
+      <div style="margin-top:10px;">
+        <button type="button" class="btn btn-small" id="directChangeBtn" data-key="wifi.direct_change_btn">Verbindung ändern</button>
+      </div>
+    </div>
+    {% endif %}
 
-      <form method="post" id="wifiForm">
-        <label for="ssidPick" data-key="wifi.select_label">WLAN auswählen</label>
-        <div class="row">
-          <select id="ssidPick" aria-label="WLAN auswählen"></select>
-          <button type="button" class="btn" id="wifiRefresh" data-key="wifi.refresh">Refresh</button>
-        </div>
-        <label class="row small">
-          <input type="checkbox" id="ssidManual">
-          <span data-key="wifi.manual_ssid">SSID manuell eingeben (Hidden/unsichtbar)</span>
-        </label>
+    <!-- No-stick notice (sichtbar wenn kein Dongle + AP aktiv) -->
+    <div id="noStickNotice" class="card" style="margin-bottom:8px;{{ ' display:none;' if (dongle_present or not ap_active) else '' }}">
+      <p class="msg-bad" style="margin:0;">
+        <strong data-key="wifi.no_stick_title">Kein WLAN-Stick erkannt</strong><br>
+        <span data-key="wifi.no_stick_info">Eine WLAN-Verbindung ist nur mit einem WLAN-USB-Stick möglich.</span>
+      </p>
+    </div>
 
-        <label for="ssid" id="ssidLabel" data-key="wifi.ssid_label">WLAN Name (SSID)</label>
-        <input type="text" id="ssid" name="ssid" required>
+    <!-- WiFi Form Wrapper (Stick-Verbindung) – deaktiviert wenn kein Dongle -->
+    <div id="wifiFormWrap" style="{{ 'opacity:0.4; pointer-events:none;' if not dongle_present else '' }}">
+      <div class="card">
+        <p>{{ current_info | safe }}</p>
 
-        <label for="password" data-key="wifi.password_label">WLAN Passwort</label>
-        <input type="password" id="password" name="password">
-		
-		<label class="check" for="showPassword">
-		  <input type="checkbox" id="showPassword" name="showPassword">
-		  <span class="check-box"></span>
-		  <span class="check-label" data-key="wifi.show_password">Passwort anzeigen</span>
-		</label>
-		
-        <p class="hint">
-          <span data-key="wifi.hint.pros_interface">Für Profis: Interface =</span>
-          <code>{{ wifi_interface }}</code>,
-          <span data-key="wifi.hint.connection">Verbindung =</span>
-          <code>{{ wifi_connection_name }}</code><br>
-          <span data-key="wifi.hint.retry_notice">
-            Hinweis: Bei bestimmten Gerätefehlern wird die Verbindung automatisch ein zweites Mal versucht
-            (inkl. kurzem WLAN-Dongle-Reset).
-          </span>
+        {% if message %}
+          <p class="{{ 'msg-ok' if success else 'msg-bad' }}">{{ message }}</p>
+        {% endif %}
+
+        {% if show_wifi_reboot_popup %}
+          <div
+            id="wifiRebootModal"
+            class="wifi-modal-backdrop"
+            data-countdown="{{ wifi_reboot_countdown_seconds|default(10) }}"
+            data-cancel-url="{{ url_for('network.wifi_reboot_cancel') }}"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="wifiRebootTitle"
+          >
+            <div class="wifi-modal">
+              <h2 id="wifiRebootTitle">Erfolgreich verbunden</h2>
+              <p class="wifi-modal-main" id="wifiRebootMain">
+                Das System wechselt gleich auf einen stabilen WLAN-Kanal und startet danach neu.
+              </p>
+              <p class="wifi-modal-help" id="wifiRebootHelp">
+                Bis zum Neustart bleibt diese Verbindung bestehen. Danach bitte wieder mit „Autodartsinstall1" verbinden.
+              </p>
+              <div class="wifi-countdown">
+                Neustart in <strong id="wifiRebootCountdown">{{ wifi_reboot_countdown_seconds|default(10) }}</strong> Sekunden
+              </div>
+              <button type="button" class="btn btn-danger" id="wifiRebootCancel">Neustart abbrechen</button>
+              <p class="wifi-modal-note">Beim Abbrechen wird nur der Neustart verhindert. Der WLAN-Kanal wechselt trotzdem kurz.</p>
+              <p id="wifiRebootCancelMsg" class="wifi-modal-cancel-msg" style="display:none;"></p>
+            </div>
+          </div>
+        {% endif %}
+
+        <p id="workmsg" class="msg-info" style="display:none;" data-key="wifi.workmsg">
+          Verbindung wird hergestellt … bitte warten (kann 10–30 Sekunden dauern).
         </p>
 
-        <div class="btn-row">
-          <button type="submit" class="btn btn-primary" data-key="wifi.connect">Verbinden</button>
-          <a href="{{ url_for('index') }}" class="btn" data-key="common.back">Zurück</a>
+        <form method="post" id="wifiForm">
+          <label for="ssidPick" data-key="wifi.select_label">WLAN auswählen</label>
+          <div class="row">
+            <select id="ssidPick" aria-label="WLAN auswählen"></select>
+            <button type="button" class="btn" id="wifiRefresh" data-key="wifi.refresh">Refresh</button>
+          </div>
+          <label class="row small">
+            <input type="checkbox" id="ssidManual">
+            <span data-key="wifi.manual_ssid">SSID manuell eingeben (Hidden/unsichtbar)</span>
+          </label>
+
+          <label for="ssid" id="ssidLabel" data-key="wifi.ssid_label">WLAN Name (SSID)</label>
+          <input type="text" id="ssid" name="ssid" required>
+
+          <label for="password" data-key="wifi.password_label">WLAN Passwort</label>
+          <input type="password" id="password" name="password">
+
+          <label class="check" for="showPassword">
+            <input type="checkbox" id="showPassword" name="showPassword">
+            <span class="check-box"></span>
+            <span class="check-label" data-key="wifi.show_password">Passwort anzeigen</span>
+          </label>
+
+          <p class="hint">
+            <span data-key="wifi.hint.pros_interface">Für Profis: Interface =</span>
+            <code>{{ wifi_interface }}</code>,
+            <span data-key="wifi.hint.connection">Verbindung =</span>
+            <code>{{ wifi_connection_name }}</code><br>
+            <span data-key="wifi.hint.retry_notice">
+              Hinweis: Bei bestimmten Gerätefehlern wird die Verbindung automatisch ein zweites Mal versucht
+              (inkl. kurzem WLAN-Dongle-Reset).
+            </span>
+          </p>
+
+          <div class="btn-row">
+            <button type="submit" class="btn btn-primary" data-key="wifi.connect">Verbinden</button>
+            <a href="{{ url_for('index') }}" class="btn" data-key="common.back">Zurück</a>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Direktverbindung (kein Stick) – sichtbar wenn AP aus und noch keine direkte Verbindung -->
+    <div id="directConnectSection" style="{{ '' if (not dongle_present and not ap_active and not direct_connected) else 'display:none;' }}">
+      <div class="card">
+        <h2 data-key="wifi.direct_title">Direktverbindung einrichten</h2>
+        <p class="hint" data-key="wifi.direct_hint">
+          Wähle ein Netzwerk und gib das Passwort ein. Der Pi startet dann neu und verbindet sich direkt.
+        </p>
+        <p class="hint" style="color:#f4b942;">
+          <span data-key="wifi.direct_success_hint_pre">Bei Erfolg: Pi über <strong>autodarts.local</strong> erreichbar. Bei Fehler: AP</span>
+          <strong>{{ ap_ssid }}</strong>
+          <span data-key="wifi.direct_success_hint_post">kommt nach ~30 Sek automatisch zurück.</span>
+        </p>
+
+        <label data-key="wifi.direct_ssid_label">Netzwerk auswählen</label>
+        <div class="row">
+          <select id="directSsidPick" aria-label="Netzwerk auswählen"></select>
+          <button type="button" class="btn" id="directWifiRefresh" data-key="wifi.refresh">Refresh</button>
         </div>
-      </form>
+        <label class="row small">
+          <input type="checkbox" id="directSsidManual">
+          <span data-key="wifi.direct_manual_ssid">SSID manuell eingeben (Hidden/unsichtbar)</span>
+        </label>
+
+        <label for="directSsid" id="directSsidLabel" data-key="wifi.direct_ssid_label">WLAN Name (SSID)</label>
+        <input type="text" id="directSsid">
+
+        <label for="directPassword" data-key="wifi.direct_password_label">WLAN Passwort</label>
+        <input type="password" id="directPassword">
+
+        <label class="check" for="directShowPassword">
+          <input type="checkbox" id="directShowPassword">
+          <span class="check-box"></span>
+          <span class="check-label" data-key="wifi.show_password">Passwort anzeigen</span>
+        </label>
+
+        <div class="btn-row" style="margin-top:14px;">
+          <button type="button" class="btn btn-primary" id="directSaveBtn" data-key="wifi.direct_save_btn">Speichern &amp; Neustart</button>
+          <button type="button" class="btn" id="directCancelBtn" data-key="common.back">Abbrechen</button>
+        </div>
+        <p id="directMsg" style="margin-top:10px; min-height:1.2em; font-size:0.9em;"></p>
+      </div>
+    </div>
+
+    <!-- AP Toggle Card (unten, Profi-Bereich) -->
+    <div class="card" id="apCard" style="margin-top:16px; font-size:0.9em; opacity:0.85;">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+        <div>
+          <span style="color:#888;" data-key="wifi.ap_title">Access Point</span>
+          <span id="apStateLabel" style="margin-left:6px; font-weight:bold; color:{{ '#4ade80' if ap_active else '#f87171' }};">
+            {% if ap_active %}<span data-key="wifi.ap_on">AN</span>{% else %}<span data-key="wifi.ap_off">AUS</span>{% endif %}
+          </span>
+          <span style="margin-left:6px; color:#666;">{{ ap_ssid }}</span>
+        </div>
+        <button type="button" id="apToggleBtn"
+                class="btn btn-small {{ 'btn-danger' if ap_active else 'btn-primary' }}">
+          {% if ap_active %}
+            <span data-key="wifi.ap_turn_off">AP ausschalten</span>
+          {% else %}
+            <span data-key="wifi.ap_turn_on">AP einschalten</span>
+          {% endif %}
+        </button>
+      </div>
+      <div id="apOffWarning" style="{{ 'display:none;' if (ap_active or dongle_present) else '' }} margin-top:10px; color:{{ '#4ade80' if direct_connected else '#f87171' }};">
+        {% if direct_connected %}
+          ✅ <span data-key="wifi.ap_off_direct_connected">Pi ist direkt mit dem Heimnetzwerk verbunden:</span>
+          <strong>{{ direct_ssid }}</strong>
+        {% else %}
+          ⚠️ <span data-key="wifi.ap_off_warning">Access Point ist deaktiviert! Raspberry Pi ist nur noch über direktes WLAN erreichbar.</span>
+        {% endif %}
+      </div>
+      <p id="apToggleMsg" style="margin-top:6px; min-height:1.2em; font-size:0.9em;"></p>
+    </div>
+
+  </div>
+
+  <!-- AP Deaktivieren – Bestätigungs-Modal -->
+  <div id="apTurnOffModal" class="wifi-modal-backdrop" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="apTurnOffTitle">
+    <div class="wifi-modal">
+      <h2 id="apTurnOffTitle" data-key="wifi.ap_confirm_title">Access Point deaktivieren?</h2>
+      <p data-key="wifi.ap_confirm_text">
+        Wenn du den Access Point deaktivierst, verlierst du die Verbindung über das AP-WLAN. Stelle sicher, dass du eine andere Möglichkeit hast, den Pi zu erreichen – auf eigene Gefahr!
+      </p>
+      <p><strong>AP-SSID:</strong> {{ ap_ssid }}</p>
+      <div class="btn-row" style="margin-top:16px;">
+        <button type="button" class="btn btn-danger" id="apTurnOffConfirm" data-key="wifi.ap_confirm_yes">Ja, deaktivieren</button>
+        <button type="button" class="btn" id="apTurnOffCancel" data-key="wifi.ap_confirm_cancel">Abbrechen</button>
+      </div>
     </div>
   </div>
+
+<script>
+(function() {
+  var apActive = {{ 'true' if ap_active else 'false' }};
+  var donglePresent = {{ 'true' if dongle_present else 'false' }};
+  var AP_SSID = "{{ ap_ssid|e }}";
+
+  var apToggleBtn = document.getElementById('apToggleBtn');
+  var apTurnOffModal = document.getElementById('apTurnOffModal');
+  var apToggleMsg = document.getElementById('apToggleMsg');
+
+  apToggleBtn.addEventListener('click', function() {
+    if (apActive) {
+      apTurnOffModal.style.display = 'flex';
+      var confirmBtn = document.getElementById('apTurnOffConfirm');
+      confirmBtn.disabled = true;
+      setTimeout(function() { confirmBtn.disabled = false; }, 400);
+    } else {
+      doApToggle('on');
+    }
+  });
+
+  document.getElementById('apTurnOffCancel').addEventListener('click', function() {
+    apTurnOffModal.style.display = 'none';
+  });
+
+  document.getElementById('apTurnOffConfirm').addEventListener('click', function() {
+    apTurnOffModal.style.display = 'none';
+    if (!donglePresent) {
+      // Kein Stick: AP bleibt noch an, Direktverbindungs-Formular aufklappen
+      showDirectConnect();
+    } else {
+      // Stick vorhanden: AP sofort ausschalten
+      doApToggle('off');
+    }
+  });
+
+  function doApToggle(state) {
+    apToggleBtn.disabled = true;
+    apToggleBtn.textContent = '⏳ ...';
+    apToggleMsg.textContent = '';
+    var fd = new FormData();
+    fd.append('state', state);
+    fetch('/api/wifi/ap-toggle', { method: 'POST', body: fd })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.ok) {
+          apActive = (state === 'on');
+          updateAPUI(apActive);
+        } else {
+          var tw = typeof window.t === 'function' ? window.t : function(k, fb) { return fb; };
+          apToggleBtn.disabled = false;
+          apToggleBtn.textContent = apActive
+            ? tw('wifi.ap_turn_off', 'AP ausschalten')
+            : tw('wifi.ap_turn_on', 'AP einschalten');
+          apToggleMsg.textContent = d.msg || 'Fehler';
+          apToggleMsg.style.color = '#f87171';
+        }
+      })
+      .catch(function() {
+        var tw = typeof window.t === 'function' ? window.t : function(k, fb) { return fb; };
+        if (state === 'off') {
+          // Verbindungsverlust beim AP-Ausschalten ist normal (war am AP verbunden)
+          apActive = false;
+          updateAPUI(false);
+          apToggleMsg.textContent = tw('wifi.ap_turned_off_ok', 'AP deaktiviert. Verbinde dich über dein Heimnetzwerk.');
+          apToggleMsg.style.color = '#4ade80';
+        } else {
+          apToggleBtn.disabled = false;
+          apToggleBtn.textContent = tw('wifi.ap_turn_on', 'AP einschalten');
+          apToggleMsg.textContent = tw('wifi.ap_toggle_error', 'Fehler – bitte Seite neu laden.');
+          apToggleMsg.style.color = '#f87171';
+        }
+      });
+  }
+
+  function showDirectConnect() {
+    document.getElementById('noStickNotice').style.display = 'none';
+    document.getElementById('directConnectSection').style.display = '';
+    if (typeof window._directWifiScan === 'function') {
+      window._directWifiScan();
+    }
+  }
+
+  function updateAPUI(isActive) {
+    var tw = typeof window.t === 'function' ? window.t : function(k, fb) { return fb; };
+    var stateLabel = document.getElementById('apStateLabel');
+    var warn = document.getElementById('apOffWarning');
+    var noStick = document.getElementById('noStickNotice');
+    var formWrap = document.getElementById('wifiFormWrap');
+
+    apToggleBtn.disabled = false;
+
+    if (isActive) {
+      stateLabel.textContent = tw('wifi.ap_on', 'AN');
+      stateLabel.style.color = '#4ade80';
+      apToggleBtn.textContent = tw('wifi.ap_turn_off', 'AP ausschalten');
+      apToggleBtn.classList.add('btn-danger');
+      apToggleBtn.classList.remove('btn-primary');
+      warn.style.display = 'none';
+      if (!donglePresent) {
+        formWrap.style.opacity = '0.4';
+        formWrap.style.pointerEvents = 'none';
+        document.getElementById('directConnectSection').style.display = 'none';
+        noStick.style.display = '';
+      }
+    } else {
+      stateLabel.textContent = tw('wifi.ap_off', 'AUS');
+      stateLabel.style.color = '#f87171';
+      apToggleBtn.textContent = tw('wifi.ap_turn_on', 'AP einschalten');
+      apToggleBtn.classList.add('btn-primary');
+      apToggleBtn.classList.remove('btn-danger');
+        // Warning nur wenn kein Dongle verfügbar (sonst irreführend)
+      warn.style.display = donglePresent ? 'none' : '';
+      if (donglePresent) {
+        formWrap.style.opacity = '';
+        formWrap.style.pointerEvents = '';
+      }
+    }
+  }
+})();
+
+// --- Direktverbindung (kein Stick) ---
+(function() {
+  var AP_SSID = "{{ ap_ssid|e }}";
+  var directSsidPick = document.getElementById('directSsidPick');
+  var directSsidManual = document.getElementById('directSsidManual');
+  var directSsidInput = document.getElementById('directSsid');
+  var directSsidLabel = document.getElementById('directSsidLabel');
+  var directPassword = document.getElementById('directPassword');
+  var directShowPw = document.getElementById('directShowPassword');
+  var directSaveBtn = document.getElementById('directSaveBtn');
+  var directCancelBtn = document.getElementById('directCancelBtn');
+  var directMsg = document.getElementById('directMsg');
+  var directRefreshBtn = document.getElementById('directWifiRefresh');
+
+  function scanDirect(rescan) {
+    var tw = typeof window.t === 'function' ? window.t : function(k, fb) { return fb; };
+    directSsidPick.innerHTML = '<option value="">' + tw('wifi.searching_networks', 'Suche WLANs…') + '</option>';
+    if (directRefreshBtn) { directRefreshBtn.disabled = true; directRefreshBtn.textContent = '⏳'; }
+    var url = rescan ? '/api/wifi/scan?trigger=1' : '/api/wifi/scan';
+    fetch(url)
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        directSsidPick.innerHTML = '';
+        if (!d.ok) {
+          directSsidPick.innerHTML = '<option value="">' + tw('wifi.scan_failed', 'Scan fehlgeschlagen') + '</option>';
+          return;
+        }
+        if (!d.networks || !d.networks.length) {
+          directSsidPick.innerHTML = '<option value="">' + tw('wifi.no_ssids_found', '(Keine WLANs gefunden – nochmal Refresh versuchen)') + '</option>';
+          return;
+        }
+        var firstSsid = null;
+        d.networks.forEach(function(n) {
+          if (n.ssid === AP_SSID) return;
+          var opt = document.createElement('option');
+          opt.value = n.ssid;
+          var sec = (n.security && n.security !== tw('wifi.security_open', 'open')) ? ' 🔒' : '';
+          var sig = n.signal != null ? ' (' + n.signal + '%)' : '';
+          opt.textContent = (n.in_use ? '✓ ' : '') + n.ssid + sig + sec;
+          directSsidPick.appendChild(opt);
+          if (!firstSsid) firstSsid = n.ssid;
+        });
+        if (!directSsidPick.options.length) {
+          directSsidPick.innerHTML = '<option value="">' + tw('wifi.no_ssids_found', '(Keine WLANs gefunden – nochmal Refresh versuchen)') + '</option>';
+          return;
+        }
+        // Auto-select best network so dropdown doesn't look empty
+        if (firstSsid) {
+          directSsidPick.value = firstSsid;
+          directSsidInput.value = firstSsid;
+        }
+      })
+      .catch(function() {
+        directSsidPick.innerHTML = '<option value="">' + tw('wifi.scan_failed', 'Scan fehlgeschlagen') + '</option>';
+      })
+      .finally(function() {
+        if (directRefreshBtn) { directRefreshBtn.disabled = false; directRefreshBtn.textContent = tw('wifi.refresh', 'Refresh'); }
+      });
+  }
+
+  directRefreshBtn.addEventListener('click', function() { scanDirect(true); });
+
+  directSsidPick.addEventListener('change', function() {
+    if (this.value) directSsidInput.value = this.value;
+  });
+
+  // Initialer Zustand: Auswahl-Modus (manuelle Eingabe versteckt)
+  directSsidInput.style.display = 'none';
+  directSsidLabel.style.display = 'none';
+
+  directSsidManual.addEventListener('change', function() {
+    var manual = this.checked;
+    directSsidPick.style.display = manual ? 'none' : '';
+    directRefreshBtn.style.display = manual ? 'none' : '';
+    directSsidInput.style.display = manual ? '' : 'none';
+    directSsidLabel.style.display = manual ? '' : 'none';
+    if (manual) directSsidInput.value = '';
+  });
+
+  directShowPw.addEventListener('change', function() {
+    directPassword.type = this.checked ? 'text' : 'password';
+  });
+
+  directCancelBtn.addEventListener('click', function() {
+    document.getElementById('directConnectSection').style.display = 'none';
+    document.getElementById('noStickNotice').style.display = '';
+  });
+
+  directSaveBtn.addEventListener('click', function() {
+    var tw = typeof window.t === 'function' ? window.t : function(k, fb) { return fb; };
+    var ssid = directSsidManual.checked
+      ? directSsidInput.value.trim()
+      : (directSsidPick.value || directSsidInput.value).trim();
+
+    if (!ssid) {
+      directMsg.textContent = tw('wifi.enter_ssid', 'Bitte WLAN-Namen (SSID) eingeben.');
+      directMsg.style.color = '#f87171';
+      return;
+    }
+
+    directSaveBtn.disabled = true;
+    directSaveBtn.textContent = tw('wifi.direct_saving', 'Wird gespeichert…');
+    directMsg.textContent = '';
+
+    var fd = new FormData();
+    fd.append('ssid', ssid);
+    fd.append('password', directPassword.value);
+
+    fetch('/api/wifi/save-direct-connect', { method: 'POST', body: fd })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.ok) {
+          directSaveBtn.textContent = tw('wifi.direct_rebooting', 'Pi wird neu gestartet…');
+          directMsg.textContent = '⏳ '
+            + tw('wifi.direct_rebooting_wait', 'Bitte ~60 Sek. warten. Bei Erfolg: Pi unter autodarts.local erreichbar. Bei Fehler: AP')
+            + ' ' + "{{ ap_ssid|e }}" + ' '
+            + tw('wifi.direct_success_hint_post', 'kommt nach ~30 Sek automatisch zurück.');
+          directMsg.style.color = '#4ade80';
+        } else {
+          directSaveBtn.disabled = false;
+          directSaveBtn.textContent = tw('wifi.direct_save_btn', 'Speichern & Neustart');
+          directMsg.textContent = d.msg || 'Fehler';
+          directMsg.style.color = '#f87171';
+        }
+      })
+      .catch(function() {
+        directSaveBtn.disabled = false;
+        directSaveBtn.textContent = tw('wifi.direct_save_btn', 'Speichern & Neustart');
+        directMsg.textContent = 'Fehler';
+        directMsg.style.color = '#f87171';
+      });
+  });
+
+  // "Verbindung ändern"-Button (sichtbar wenn Direktverbindung bereits aktiv)
+  var changeBtn = document.getElementById('directChangeBtn');
+  if (changeBtn) {
+    changeBtn.addEventListener('click', function() {
+      document.getElementById('directConnectSection').style.display = '';
+      changeBtn.style.display = 'none';
+      scanDirect(true);
+    });
+  }
+
+  // Auto-Scan wenn Sektion beim Laden bereits sichtbar (AP war schon aus)
+  if (document.getElementById('directConnectSection').style.display !== 'none') {
+    scanDirect(false);
+  }
+
+  // showDirectConnect() ruft das ohne rescan auf (schnell); Refresh-Button macht echten Rescan
+  window._directWifiScan = function() { scanDirect(false); };
+})();
+</script>
 </body>
 </html>

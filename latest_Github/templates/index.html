@@ -208,7 +208,7 @@ Provided "as is", without warranty.
         <div class="ad-status ad-off"><span data-key="header.autodarts_inactive">Autodarts: INAKTIV</span></div>
       {% endif %}
       <div id="lang_header">
-      <a href="{{ url_for('audio') }}" class="btn" style="font-size:1.4rem; padding:4px 10px; line-height:1;" title="Audio">🔊</a>
+      <a href="{{ url_for('audio.audio') }}" class="btn" style="font-size:1.4rem; padding:4px 10px; line-height:1;" title="Audio">🔊</a>
       <select id="lang_dropdown"></select>
       <button type="button" class="btn btn-small" id="set_lang"><span data-key="header.set_language_btn">Sprache festlegen</span></button>
         </div>
@@ -235,7 +235,18 @@ Provided "as is", without warranty.
     {% endif %}
     <div class="subtitle">by Peter Rottmann v.{{ webpanel_version or '1.20' }} (Multi-WLED)</div>
 
-    {% if not wifi_ok and not lan_ok %}
+    {% if direct_connected %}
+      <div style="background:#14532d; border:2px solid #4ade80; color:#dcfce7;
+                  padding:12px 16px; border-radius:10px; margin-bottom:18px;">
+        <strong style="font-size:1.1rem;">
+          ✅ <span data-key="hero.direct_connected_title">Direktverbindung aktiv</span>
+        </strong>
+        <p style="margin:6px 0 0; font-size:0.9rem;">
+          <span data-key="hero.direct_connected_network">Verbunden mit Netzwerk:</span> <strong>{{ direct_ssid }}</strong>
+          {% if direct_ip %} · <span data-key="hero.direct_connected_ip">IP:</span> <strong>{{ direct_ip }}</strong>{% endif %}
+        </p>
+      </div>
+    {% elif not wifi_ok and not lan_ok %}
       <div style="background:#7f1d1d; border:2px solid #f87171; color:#fee2e2;
                   padding:12px 16px; border-radius:10px; margin-bottom:18px;">
         <strong style="font-size:1.1rem;">
@@ -249,7 +260,7 @@ Provided "as is", without warranty.
     {% endif %}
 
     <div class="btn-row" style="margin-bottom: 16px;">
-      <a href="{{ url_for('ap_config') }}" class="btn btn-small">
+      <a href="{{ url_for('network.ap_config') }}" class="btn btn-small">
         <span data-key="hero.ap_config_btn">Access-Point (Mini PC-WLAN) auswählen</span>
       </a>
       <button type="button" class="btn btn-small" onclick="document.getElementById('ledGpioModal').style.display='flex';">
@@ -329,7 +340,7 @@ Provided "as is", without warranty.
         Falls bei Ihnen kein WLAN vorhanden ist, können Sie alternativ ein LAN-Kabel verwenden.</span>
       </p>
       <div class="btn-row">
-        <a href="{{ url_for('wifi') }}" class="btn btn-primary"><span data-key="wifi.setup_btn">WLAN-Verbindung einrichten / ändern</span></a>
+        <a href="{{ url_for('network.wifi') }}" class="btn btn-primary"><span data-key="wifi.setup_btn">WLAN-Verbindung einrichten / ändern</span></a>
         <button type="button" id="pingBtn" class="btn"><span data-key="wifi.ping_btn">Verbindungstest (30 Pakete)</span></button>
       </div>
       <div class="hint" style="margin-top:6px;">{% if net_ok %}{{ ping_uplink_label }}{% else %}<span data-key="wifi.no_uplink_hint">Verbindungstest: Kein Uplink (nur Access Point oder nicht verbunden).</span>{% endif %}</div>
@@ -346,13 +357,13 @@ Provided "as is", without warranty.
             <span data-key="wifi.autoconnect_label">Autoconnect:</span> <strong>{% if wifi_autoconnect_enabled is none %}<span data-key="common.unknown">unbekannt</span>{% elif wifi_autoconnect_enabled %}<span data-key="common.on">AN</span>{% else %}<span data-key="common.off">AUS</span>{% endif %}</strong>
           </p>
           <div class="btn-row" style="margin-top:10px;">
-            <form method="post" action="{{ url_for('wifi_autoconnect', mode='off') }}" style="margin:0;">
+            <form method="post" action="{{ url_for('network.wifi_autoconnect', mode='off') }}" style="margin:0;">
               <button type="submit" class="btn {% if wifi_autoconnect_enabled is not none and not wifi_autoconnect_enabled %}btn-primary btn-disabled{% endif %}"><span data-key="wifi.autoconnect_off_btn">Autoconnect AUS</span></button>
             </form>
-            <form method="post" action="{{ url_for('wifi_autoconnect', mode='on') }}" style="margin:0;">
+            <form method="post" action="{{ url_for('network.wifi_autoconnect', mode='on') }}" style="margin:0;">
               <button type="submit" class="btn {% if wifi_autoconnect_enabled %}btn-primary btn-disabled{% endif %}"><span data-key="wifi.autoconnect_on_btn">Autoconnect AN</span></button>
             </form>
-            <form method="post" action="{{ url_for('wifi_forget_saved') }}"
+            <form method="post" action="{{ url_for('network.wifi_forget_saved') }}"
                   data-confirm-key="confirm.wifi_forget_saved"
                   onsubmit="return confirm('Wirklich ALLE gespeicherten WLAN-Verbindungen löschen (außer Autodarts-AP)?\n\nWenn du gerade über WLAN verbunden bist, kann die Verbindung sofort weg sein!');"
                   style="margin:0;">
@@ -398,7 +409,7 @@ Provided "as is", without warranty.
 
         <div class="btn-row">
           {% if autodarts_v2_running %}
-            <a href="{{ url_for('schnellkonfiguration') }}" class="btn"><span data-key="account.board_manager_btn_tui">Schnellkonfiguration (TUI)</span></a>
+            <a href="{{ url_for('camera.schnellkonfiguration') }}" class="btn"><span data-key="account.board_manager_btn_tui">Schnellkonfiguration (TUI)</span></a>
             {% if autodarts_v2_1_plus %}
               <a href="{{ darts_url }}" class="btn btn-primary" target="_blank" rel="noopener"><span data-key="account.board_manager_btn_official">Dartboard Manager</span></a>
             {% else %}
@@ -434,13 +445,13 @@ Provided "as is", without warranty.
 
       <div class="btn-row">
         {% if not camera_mode %}
-          <form method="post" action="{{ url_for('camera_mode_start') }}"
+          <form method="post" action="{{ url_for('camera.camera_mode_start') }}"
                 data-confirm-key="confirm.camera_mode_start"
                 onsubmit="return confirm('Während der Kamera-Einstellung wird Autodarts kurz pausiert. Fortfahren?');">
             <button type="submit" class="btn btn-primary"><span data-key="camera.start_btn">Kamera einstellen starten</span></button>
           </form>
         {% else %}
-          <form method="post" action="{{ url_for('camera_mode_end') }}">
+          <form method="post" action="{{ url_for('camera.camera_mode_end') }}">
             <button type="submit" class="btn btn-danger"><span data-key="camera.end_btn">Autodarts wieder starten</span></button>
           </form>
         {% endif %}
@@ -461,7 +472,7 @@ Provided "as is", without warranty.
         <summary>{% if camera_mode %}<span data-key="camera.live_summary">Kamera-Auswahl & Live-Bilder</span>{% else %}<span data-key="camera.show_selection_summary">Kamera-Auswahl anzeigen</span>{% endif %}</summary>
 
         {% if camera_mode %}
-          <form method="post" action="{{ url_for('set_cams') }}" style="margin-top:12px;">
+          <form method="post" action="{{ url_for('camera.set_cams') }}" style="margin-top:12px;">
             <div class="btn-row">
               <button type="submit" class="btn btn-small btn-primary"><span data-key="camera.search_btn">Kameras suchen</span></button>
             </div>
@@ -483,7 +494,7 @@ Provided "as is", without warranty.
                   </div>
 
                   <div class="btn-row" style="margin:0;">
-                    <form method="post" action="{{ url_for('set_cam_slot', slot_id=slot.slot) }}" style="margin:0; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                    <form method="post" action="{{ url_for('camera.set_cam_slot', slot_id=slot.slot) }}" style="margin:0; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
                       <select name="camera_id">
                         {% for cam in cam_inventory %}
                           <option value="{{ cam.id }}" {% if cam.id == slot.camera_id %}selected{% endif %}>{{ cam.label }}</option>
@@ -492,10 +503,10 @@ Provided "as is", without warranty.
                       <button type="submit" class="btn btn-small"><span data-key="camera.assign_btn">Zuordnen</span></button>
                     </form>
 
-                    <a href="{{ url_for('cam_view', cam_id=slot.slot) }}" target="_blank" class="btn btn-small btn-primary">
+                    <a href="{{ url_for('camera.cam_view', cam_id=slot.slot) }}" target="_blank" class="btn btn-small btn-primary">
                       kamera_{{ slot.slot }} öffnen
                     </a>
-                    <a href="{{ url_for('cam_focus', cam_id=slot.slot) }}" target="_blank" class="btn btn-small btn-precision-focus">
+                    <a href="{{ url_for('camera.cam_focus', cam_id=slot.slot) }}" target="_blank" class="btn btn-small btn-precision-focus">
                       <span data-key="camera.precision_focus_btn">Präzisions-Fokus</span>
                     </a>
                   </div>
@@ -1230,7 +1241,7 @@ cp /var/log/pi_monitor_test_README.txt ~/
       api_wled_status: "{{ url_for('api_wled_status') }}",
       api_caller_wled_led_restart: "{{ url_for('api_caller_wled_led_restart') }}",
       api_caller_toggle: "{{ url_for('api_caller_toggle') }}",
-      api_wifi_signal: "{{ url_for('api_wifi_signal') }}",
+      api_wifi_signal: "{{ url_for('network.api_wifi_signal') }}",
       api_langs: "/api/langs",
       api_lang_default: "/api/lang/default",
       api_autodarts_theme_select: "{{ url_for('api_autodarts_theme_select') }}",
@@ -1241,7 +1252,7 @@ cp /var/log/pi_monitor_test_README.txt ~/
       api_autodarts_display_mode: "{{ url_for('api_autodarts_display_mode') }}",
       api_autodarts_display_backend: "{{ url_for('api_autodarts_display_backend') }}",
       api_autodarts_open_display_settings: "{{ url_for('api_autodarts_open_display_settings') }}",
-      api_ap_client_internet_status: "{{ url_for('api_ap_client_internet_status') }}",
+      api_ap_client_internet_status: "{{ url_for('network.api_ap_client_internet_status') }}",
       api_extensions_v2_status: "{{ url_for('api_extensions_v2_status') }}",
       api_extensions_v2_install: "{{ url_for('api_extensions_v2_install') }}",
       api_extensions_v2_board_id: "{{ url_for('api_extensions_v2_board_id') }}",
@@ -1254,7 +1265,7 @@ cp /var/log/pi_monitor_test_README.txt ~/
       api_autodarts_restart: "{{ url_for('api_autodarts_restart') }}",
       api_autodarts_autostart: "{{ url_for('api_autodarts_autostart_toggle') }}",
       api_webpanel_channel: "{{ url_for('api_webpanel_channel') }}",
-      api_calibration_mtime: "{{ url_for('api_calibration_mtime') }}",
+      api_calibration_mtime: "{{ url_for('camera.api_calibration_mtime') }}",
       darts_url: "{{ darts_url }}"
     };
 

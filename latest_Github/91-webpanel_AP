@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IFACE="${1:-}"
+ACTION="${2:-}"
+
+case "${ACTION}" in
+  up|dhcp4-change|connectivity-change|reapply|hostname)
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+
+if [ "${IFACE}" != "wlan0" ] && [ "${IFACE}" != "wlan_ap" ]; then
+  exit 0
+fi
+
+# wlan_ap als WLAN-Client (Direktverbindung ohne Stick) – AP-Script nicht triggern
+if [ "${IFACE}" = "wlan_ap" ] && [ -n "${CONNECTION_ID:-}" ] && [ "${CONNECTION_ID}" != "Autodarts-AP" ]; then
+  exit 0
+fi
+
+export AP_IF="wlan_ap"
+export AP_CONN="Autodarts-AP"
+export UPLINK_IF="wlan0"
+export EXTRA_UPLINK_IFS="eth0"
+
+sleep 2
+/usr/local/lib/autodarts/webpanel_AP_apply.sh >/dev/null 2>&1 || true
