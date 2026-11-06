@@ -223,7 +223,7 @@ PY
 
     if nmcli -w 20 connection up "${NOSTICK_CONN}" >/dev/null 2>&1; then
         echo "[webpanel_AP] Direktverbindung erfolgreich: ${ssid}"
-        rm -f "${WIFI_CONNECT_JSON}"
+        # JSON NICHT löschen – bleibt als persistente Konfiguration für Reboot/Dispatcher-Rerun
         write_status "green" "true" "false" "false" "[]" \
             "$(json_escape "Direkt mit Heimnetz verbunden: ${ssid}")"
         exit 0
@@ -236,6 +236,13 @@ PY
     nmcli connection up "${AP_CONN}" >/dev/null 2>&1 || true
     sleep 3
 }
+
+# Wenn NOSTICK bereits aktiv auf AP-Interface läuft → Direktverbindung ist stabil → kein Eingriff
+if nmcli -t -f NAME,DEVICE connection show --active 2>/dev/null \
+        | grep -q "^${NOSTICK_CONN}:${AP_IF}$"; then
+    echo "[webpanel_AP] Direktverbindung bereits aktiv – kein Eingriff"
+    exit 0
+fi
 
 # Aufräumen: eventuelle NOSTICK-Verbindung vom unterbrochenen Vorversuch entfernen
 nmcli connection delete "${NOSTICK_CONN}" >/dev/null 2>&1 || true

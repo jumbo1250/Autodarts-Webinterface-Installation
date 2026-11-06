@@ -588,6 +588,29 @@ def api_wifi_ap_toggle():
     state = (request.form.get("state") or "").strip().lower()
     if state not in ("on", "off"):
         return jsonify(ok=False, msg="Invalid state"), 400
+
+    if state == "on":
+        # Direktverbindungs-Modus beenden: JSON + NOSTICK-Verbindung löschen
+        json_path = "/var/lib/autodarts/wifi_connect_no_stick.json"
+        try:
+            os.remove(json_path)
+        except OSError:
+            pass
+        try:
+            subprocess.run(
+                ["nmcli", "connection", "delete", "Autodarts-WiFi-NoStick"],
+                capture_output=True, timeout=5,
+            )
+        except Exception:
+            pass
+        try:
+            subprocess.run(
+                ["nmcli", "connection", "modify", AP_CONNECTION_NAME, "connection.autoconnect", "yes"],
+                capture_output=True, timeout=5,
+            )
+        except Exception:
+            pass
+
     action = "up" if state == "on" else "down"
     cmd = ["nmcli", "connection", action, AP_CONNECTION_NAME]
     if os.geteuid() != 0:
