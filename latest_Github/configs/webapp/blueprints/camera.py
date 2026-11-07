@@ -98,6 +98,11 @@ def _camera_stream_context(cam_id: int):
         save_cam_config(cam_config)
 
     subprocess.run(["pkill", "-f", "mjpg_streamer"], capture_output=True, text=True)
+    # Warten bis mjpg_streamer wirklich beendet ist und /dev/videoX freigegeben hat
+    for _ in range(15):
+        if subprocess.run(["pgrep", "-f", "mjpg_streamer"], capture_output=True).returncode != 0:
+            break
+        time.sleep(0.2)
 
     port = STREAM_BASE_PORT + (cam_id - 1)
 
@@ -288,8 +293,14 @@ def set_cam_slot(slot_id: int):
 
 @camera_bp.route("/camera-mode/start", methods=["POST"])
 def camera_mode_start():
-    """Kamera-Einstellung starten: Nur bei gefundener Kamera in den Einstellmodus wechseln."""
+    """Kamera-Einstellung starten: Autodarts zuerst stoppen, dann Kameras erkennen."""
     cfg = load_cam_config()
+
+    # Erst stoppen damit Camera-Devices freigegeben werden, dann detecten
+    subprocess.run(["/usr/local/bin/autodarts-userctl", "stop"], capture_output=True, text=True)
+    subprocess.run(["pkill", "-f", "mjpg_streamer"], capture_output=True, text=True)
+    time.sleep(1.5)
+
     cameras = detect_camera_inventory(MAX_CAMERAS)
     slots = _normalize_camera_slots(cameras, cfg.get("camera_slots"))
     cfg["camera_inventory"] = cameras
@@ -300,10 +311,7 @@ def camera_mode_start():
     if not cameras:
         _set_camera_mode_state(cfg, False)
         save_cam_config(cfg)
-        return redirect(url_for("index", msg=t("camera.none_connected", "Keine Kamera erkannt. Bitte Kamera anschlie�?en und erneut versuchen.")))
-
-    subprocess.run(["/usr/local/bin/autodarts-userctl", "stop"], capture_output=True, text=True)
-    subprocess.run(["pkill", "-f", "mjpg_streamer"], capture_output=True, text=True)
+        return redirect(url_for("index", msg=t("camera.none_connected", "Keine Kamera erkannt. Bitte Kamera anschließen und erneut versuchen.")))
 
     _set_camera_mode_state(cfg, True)
     save_cam_config(cfg)
