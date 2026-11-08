@@ -775,10 +775,12 @@ Provided "as is", without warranty.
   <p class="hint" style="margin-top:0;"><span data-key="caller.card_intro">Kein manuelles ZIP-Entpacken nötig: Der Raspberry-Button lädt die ZIP direkt aus dem Internet und entpackt alles automatisch in den Desktop-Ordner.</span></p>
   <p class="hint"><strong><span data-key="caller.pi_label">Raspberry:</span></strong> <span data-key="caller.pi_hint">„Auf diesem Raspberry installieren“ arbeitet immer auf dem Gerät, auf dem dieses Webpanel läuft – auch wenn du das Panel gerade von Handy, Tablet oder Laptop geöffnet hast.</span></p>
   <p class="hint"><strong><span data-key="caller.windows_label">Windows:</span></strong> <span data-key="caller.windows_hint">Der Windows-Button lädt eine BAT-Datei herunter. Diese muss nur einmal gestartet werden; die ZIP wird dann automatisch geladen und nach Desktop\Caller entpackt.</span></p>
+  <p class="hint"><strong><span data-key="caller.other_label">Linux / macOS / Andere:</span></strong> <span data-key="caller.other_hint">ZIP direkt herunterladen und manuell entpacken.</span></p>
 
   <div class="btn-row" style="margin-top:12px; gap:10px; flex-wrap:wrap;">
     <button type="button" class="btn btn-primary" id="callerInstallPiBtn"><span data-key="caller.install_pi_btn">Auf diesem Raspberry installieren</span></button>
     <a href="{{ url_for('download_windows_caller_install_bat') }}" class="btn" id="callerInstallWindowsBtn" download><span data-key="caller.download_windows_btn">Windows Installer herunterladen</span></a>
+    <a href="https://github.com/Jumbo125/Autodarts-Webinterface-Installation/releases/download/V1/CALLER_ALL.zip" class="btn" id="callerInstallOtherBtn"><span data-key="caller.download_other_btn">Linux / macOS ZIP herunterladen</span></a>
   </div>
 
   <p class="hint" id="callerInstallerStatus" style="margin-top:10px;"></p>

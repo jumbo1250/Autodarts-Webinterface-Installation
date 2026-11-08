@@ -304,7 +304,7 @@ def camera_mode_start():
         if not is_autodarts_active():
             break
         time.sleep(0.4)
-    time.sleep(0.5)  # Extra-Puffer für Device-Freigabe
+    time.sleep(3.0)  # USB-Kamera-Devices brauchen ~3s zum Freigeben
 
     cameras = detect_camera_inventory(MAX_CAMERAS)
     slots = _normalize_camera_slots(cameras, cfg.get("camera_slots"))
