@@ -299,7 +299,12 @@ def camera_mode_start():
     # Erst stoppen damit Camera-Devices freigegeben werden, dann detecten
     subprocess.run(["/usr/local/bin/autodarts-userctl", "stop"], capture_output=True, text=True)
     subprocess.run(["pkill", "-f", "mjpg_streamer"], capture_output=True, text=True)
-    time.sleep(1.5)
+    # Warten bis Autodarts wirklich gestoppt ist (max 10 Sek)
+    for _ in range(25):
+        if not is_autodarts_active():
+            break
+        time.sleep(0.4)
+    time.sleep(0.5)  # Extra-Puffer für Device-Freigabe
 
     cameras = detect_camera_inventory(MAX_CAMERAS)
     slots = _normalize_camera_slots(cameras, cfg.get("camera_slots"))

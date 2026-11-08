@@ -5,7 +5,6 @@ import subprocess
 
 from webapp.config import (
     CAM_CONFIG_PATH,
-    CAMERA_MODE_SESSION,
     MAX_CAMERAS,
     MAX_VIDEO_INDEX,
 )
@@ -30,8 +29,6 @@ def _camera_mode_runtime_active(cfg: dict | None, autodarts_active: bool | None 
     cfg = cfg or {}
     if not bool(cfg.get("camera_mode", False)):
         return False
-    if str(cfg.get("camera_mode_session") or "") != CAMERA_MODE_SESSION:
-        return False
     if autodarts_active is True:
         return False
     return True
@@ -39,11 +36,8 @@ def _camera_mode_runtime_active(cfg: dict | None, autodarts_active: bool | None 
 
 def _set_camera_mode_state(cfg: dict, enabled: bool):
     cfg["camera_mode"] = bool(enabled)
-    if enabled:
-        cfg["camera_mode_session"] = CAMERA_MODE_SESSION
-    else:
+    if not enabled:
         cfg["camera_mode"] = False
-        cfg.pop("camera_mode_session", None)
 
 
 
