@@ -6347,7 +6347,8 @@ def admin_webpanel_update():
         msg = t("webpanel.latest_not_determined", "Webpanel: Konnte 'latest' nicht ermitteln – bitte zuerst 'Update prüfen'.")
         return redirect(url_for("index", admin="1", adminmsg=msg, adminok="0") + "#admin_details")
 
-    if installed and installed == latest:
+    _channel = str(load_settings().get("webpanel_channel") or "stable").strip().lower()
+    if _channel != "beta" and installed and installed == latest:
         msg = t("webpanel.no_update", "Webpanel: Kein Update verfügbar.")
         return redirect(url_for("index", admin="1", adminmsg=msg, adminok="1") + "#admin_details")
 
