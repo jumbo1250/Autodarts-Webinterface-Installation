@@ -1710,7 +1710,7 @@ document.addEventListener('DOMContentLoaded', function() {
 {% endif %}
 
 {% if release_info_html %}
-<div id="releaseInfoOverlay" style="display:flex;position:fixed;inset:0;z-index:9100;background:rgba(0,0,0,0.88);align-items:center;justify-content:center;" onclick="if(event.target===this)dismissReleaseInfo()">
+<div id="releaseInfoOverlay" style="display:none;position:fixed;inset:0;z-index:9100;background:rgba(0,0,0,0.88);align-items:center;justify-content:center;" onclick="if(event.target===this)dismissReleaseInfo()">
   <div style="position:relative;background:#1a1a1a;border:1px solid #00c864;border-radius:14px;padding:28px 24px 20px;max-width:520px;width:92vw;max-height:80vh;overflow-y:auto;" onclick="event.stopPropagation()">
     <button type="button" onclick="dismissReleaseInfo()"
       style="position:absolute;top:10px;right:14px;background:none;border:none;color:#aaa;font-size:1.4rem;cursor:pointer;">&times;</button>
@@ -1728,6 +1728,11 @@ function dismissReleaseInfo() {
   document.getElementById('releaseInfoOverlay').style.display = 'none';
   fetch('/api/release-info/dismiss', { method: 'POST', cache: 'no-store' }).catch(function(){});
 }
+// Popup erst nach 500ms zeigen – Seite muss stabil sein, kein Flackern bei Redirects
+setTimeout(function() {
+  var overlay = document.getElementById('releaseInfoOverlay');
+  if (overlay) overlay.style.display = 'flex';
+}, 500);
 </script>
 {% endif %}
 </body>
