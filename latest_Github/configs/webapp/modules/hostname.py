@@ -27,23 +27,19 @@ def get_hostname() -> str:
         return "unknown"
 
 
-def _cloud_init_disable_manage_hosts() -> bool:
-    """Sets manage_etc_hosts: false in cloud.cfg if needed. Returns True on success."""
-    cfg = "/etc/cloud/cloud.cfg"
+def _cloud_init_preserve_hostname() -> bool:
+    """
+    Schreibt /etc/cloud/cloud.cfg.d/99-autodarts-hostname.cfg mit
+    preserve_hostname: true  → cloud-init überschreibt den Hostname nach Reboot nicht mehr.
+    manage_etc_hosts: false  → /etc/hosts wird ebenfalls nicht zurückgesetzt.
+    """
+    override = "/etc/cloud/cloud.cfg.d/99-autodarts-hostname.cfg"
+    content = "preserve_hostname: true\nmanage_etc_hosts: false\n"
     try:
-        with open(cfg, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read()
-        if "manage_etc_hosts: false" in content:
-            return True
-        new_content = re.sub(
-            r"manage_etc_hosts:\s*\S+",
-            "manage_etc_hosts: false",
-            content,
-        )
-        if "manage_etc_hosts:" not in new_content:
-            new_content += "\nmanage_etc_hosts: false\n"
-        with open(cfg, "w", encoding="utf-8") as f:
-            f.write(new_content)
+        import os as _os
+        _os.makedirs("/etc/cloud/cloud.cfg.d", exist_ok=True)
+        with open(override, "w", encoding="utf-8") as f:
+            f.write(content)
         return True
     except Exception:
         return False
@@ -60,7 +56,7 @@ def set_hostname(new_name: str) -> tuple[bool, str]:
 
     new_name = new_name.lower()
 
-    _cloud_init_disable_manage_hosts()
+    _cloud_init_preserve_hostname()
 
     old_name = get_hostname()
 
