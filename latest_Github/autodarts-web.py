@@ -4708,6 +4708,62 @@ def admin_pi5_headless(mode):
 # Flag rule: the flag is written when the user CLICKS the button (in /api/v2-chain-fix),
 # NOT on render. This way a browser refresh before clicking does not eat the popup.
 
+_RELEASE_INFO_PATH = os.path.join(BASE_DIR, "Release_info.md")
+_RELEASE_INFO_SHOWN_FILE = "/var/lib/autodarts/release-info-shown.json"
+
+
+def _md_to_html(text: str) -> str:
+    """Minimal Markdown → HTML für Release-Notes (h2/h3, bold, lists, paragraphs)."""
+    import html as _html
+    lines = text.splitlines()
+    out = []
+    in_ul = False
+    for line in lines:
+        raw = line.rstrip()
+        if raw.startswith("### "):
+            if in_ul: out.append("</ul>"); in_ul = False
+            out.append(f"<h3>{_html.escape(raw[4:])}</h3>")
+        elif raw.startswith("## "):
+            if in_ul: out.append("</ul>"); in_ul = False
+            out.append(f"<h2>{_html.escape(raw[3:])}</h2>")
+        elif raw.startswith("# "):
+            if in_ul: out.append("</ul>"); in_ul = False
+            out.append(f"<h2>{_html.escape(raw[2:])}</h2>")
+        elif raw.startswith("- ") or raw.startswith("* "):
+            if not in_ul: out.append("<ul>"); in_ul = True
+            content = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', _html.escape(raw[2:]))
+            out.append(f"<li>{content}</li>")
+        elif raw == "":
+            if in_ul: out.append("</ul>"); in_ul = False
+            out.append("")
+        else:
+            if in_ul: out.append("</ul>"); in_ul = False
+            content = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', _html.escape(raw))
+            out.append(f"<p>{content}</p>")
+    if in_ul:
+        out.append("</ul>")
+    return "\n".join(out)
+
+
+def _load_release_info_html() -> str | None:
+    """Gibt HTML zurück wenn Release_info.md neu ist (noch nicht gezeigt), sonst None."""
+    try:
+        if not os.path.exists(_RELEASE_INFO_PATH):
+            return None
+        mtime = int(os.path.getmtime(_RELEASE_INFO_PATH))
+        try:
+            with open(_RELEASE_INFO_SHOWN_FILE, "r", encoding="utf-8") as f:
+                shown = json.load(f)
+            if int(shown.get("mtime", 0)) >= mtime:
+                return None
+        except Exception:
+            pass
+        content = Path(_RELEASE_INFO_PATH).read_text(encoding="utf-8", errors="ignore")
+        return _md_to_html(content.strip()) or None
+    except Exception:
+        return None
+
+
 def check_v2_welcome():
     """Returns True if the v2 welcome popup should be shown. Does NOT set the flag."""
     if os.path.exists(V2_WELCOME_FLAG_FILE):
@@ -4837,6 +4893,7 @@ def index():
 
     webpanel_version = get_webpanel_version()
     webpanel_check = load_webpanel_update_check()
+    release_info_html = _load_release_info_html()
     _wc = SETTINGS.get("webpanel_channel", "stable")
     webpanel_update_available = (_wc == "beta") or bool(webpanel_version and webpanel_check.get('latest') and webpanel_version != webpanel_check.get('latest'))
     webpanel_state = load_webpanel_update_state() if admin_unlocked else {}
@@ -4989,6 +5046,7 @@ def index():
         autodarts_v2_running=autodarts_v2_running,
         autodarts_ttyd_running=autodarts_ttyd_running,
         show_v2_welcome=check_v2_welcome(),
+        release_info_html=release_info_html,
     )
 
 
@@ -6241,6 +6299,19 @@ def api_webpanel_update_status():
         "result_code": result_code,
         "update_available": update_available,
     })
+
+
+@app.route("/api/release-info/dismiss", methods=["POST"])
+def api_release_info_dismiss():
+    try:
+        if os.path.exists(_RELEASE_INFO_PATH):
+            mtime = int(os.path.getmtime(_RELEASE_INFO_PATH))
+            os.makedirs(os.path.dirname(_RELEASE_INFO_SHOWN_FILE), exist_ok=True)
+            with open(_RELEASE_INFO_SHOWN_FILE, "w", encoding="utf-8") as f:
+                json.dump({"mtime": mtime}, f)
+    except Exception:
+        pass
+    return jsonify(ok=True)
 
 
 # V2-CHAIN-FIX: Einmalig nach Erstinstallation von autodarts 2.0 �?? setzt Version zurück

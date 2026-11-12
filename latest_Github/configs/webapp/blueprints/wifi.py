@@ -22,6 +22,7 @@ from flask import (
 
 from webapp.config import *
 from webapp.utils.i18n import t
+from webapp.modules.hostname import get_hostname, set_hostname, validate_hostname
 from webapp.modules.wifi import *
 from webapp.modules.wifi import (
     _get_default_route_interface,
@@ -33,6 +34,7 @@ from webapp.modules.wifi import (
     _trigger_legacy_ap_fix_async,
     _remove_wifi_reboot_state,
     _active_wifi_connection_name,
+    _iw_channel_freq,
     get_direct_connect_state,
 )
 
@@ -353,10 +355,14 @@ def wifi():
     # Aktuellen Status des WLAN-Dongles anzeigen
     ssid_cur, ip_cur = get_wifi_status()
     wifi_signal = get_wifi_signal_percent()
+    wifi_channel, _ = _iw_channel_freq(WIFI_INTERFACE)
+    channel_suffix = f" / Channel <strong>{wifi_channel}</strong>" if wifi_channel else ""
     if ssid_cur and ip_cur:
-        current_info = t("wifi.current_info_connected", "Aktuell verbunden mit <strong>{ssid}</strong> (IP {ip})", ssid=ssid_cur, ip=ip_cur) + (t("wifi.current_info_signal", " · Signal: <strong>{signal}%</strong>.", signal=wifi_signal) if wifi_signal is not None else ".")
+        signal_part = (t("wifi.current_info_signal", " · Signal: <strong>{signal}%</strong>", signal=wifi_signal) + channel_suffix + ".") if wifi_signal is not None else (channel_suffix + "." if wifi_channel else ".")
+        current_info = t("wifi.current_info_connected", "Aktuell verbunden mit <strong>{ssid}</strong> (IP {ip})", ssid=ssid_cur, ip=ip_cur) + signal_part
     elif ssid_cur and not ip_cur:
-        current_info = t("wifi.current_info_connected_no_ipv4", "WLAN verbunden mit <strong>{ssid}</strong>, aber es wurde keine IPv4-Adresse vergeben.", ssid=ssid_cur) + (t("wifi.current_info_signal_paren", " (Signal: <strong>{signal}%</strong>)", signal=wifi_signal) if wifi_signal is not None else "")
+        signal_part = (t("wifi.current_info_signal_paren", " (Signal: <strong>{signal}%</strong>)", signal=wifi_signal) + channel_suffix) if wifi_signal is not None else (f" ({channel_suffix.strip()})" if wifi_channel else "")
+        current_info = t("wifi.current_info_connected_no_ipv4", "WLAN verbunden mit <strong>{ssid}</strong>, aber es wurde keine IPv4-Adresse vergeben.", ssid=ssid_cur) + signal_part
     else:
         current_info = t("wifi.current_info_not_connected", "Der USB-Dongle ist aktuell mit keinem WLAN verbunden.")
 
@@ -537,6 +543,8 @@ def ap_config():
                 current_ssid = new_ssid
                 message = t("ap.renamed", "Access-Point-Name wurde geändert auf „{ssid}“.", ssid=new_ssid)
 
+    ap_channel, _ = _iw_channel_freq(AP_INTERFACE)
+
     return render_template(
         "ap_config.html",
         message=message,
@@ -545,6 +553,7 @@ def ap_config():
         ap_connection_name=AP_CONNECTION_NAME,
         ap_choices=ap_choices,
         selected_ssid=selected_ssid,
+        ap_channel=ap_channel,
     )
 
 
@@ -622,3 +631,22 @@ def api_wifi_ap_toggle():
     except Exception as e:
         return jsonify(ok=False, msg=str(e))
     return jsonify(ok=True, state=state)
+
+
+@network_bp.route("/api/hostname", methods=["GET"])
+def api_hostname_get():
+    return jsonify(ok=True, hostname=get_hostname())
+
+
+@network_bp.route("/api/hostname/set", methods=["POST"])
+def api_hostname_set():
+    data = request.get_json(silent=True) or {}
+    name = str(data.get("hostname") or "").strip()
+    err = validate_hostname(name)
+    if err:
+        return jsonify(ok=False, message=err), 400
+    ok, msg = set_hostname(name)
+    if not ok:
+        return jsonify(ok=False, message=msg), 500
+    return jsonify(ok=True, hostname=name.lower(),
+                   message=t("hostname.set_ok", "Gerätename gespeichert: {name}. Im Netzwerk als {name}.local erreichbar.", name=name.lower()))

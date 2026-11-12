@@ -266,6 +266,30 @@ Provided "as is", without warranty.
       <button type="button" class="btn btn-small" onclick="document.getElementById('ledGpioModal').style.display='flex';">
         <span data-key="hero.led_gpio_btn">LED Statusanzeige Gehäuse</span>
       </button>
+      <button type="button" class="btn btn-small" onclick="openHostnameModal()">
+        <span data-key="hero.hostname_btn">Gerätename</span>
+      </button>
+    </div>
+
+    <!-- Hostname Modal -->
+    <div id="hostnameModal" style="display:none;position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,0.85);align-items:center;justify-content:center;" onclick="if(event.target===this)this.style.display='none';">
+      <div style="position:relative;background:#1a1a1a;border:1px solid #444;border-radius:12px;padding:28px 24px 20px;max-width:420px;width:90vw;" onclick="event.stopPropagation()">
+        <button type="button" onclick="document.getElementById('hostnameModal').style.display='none';"
+          style="position:absolute;top:10px;right:14px;background:none;border:none;color:#aaa;font-size:1.3rem;cursor:pointer;">&times;</button>
+        <h3 style="margin:0 0 6px;color:#eee;" data-key="hostname.modal_title">Gerätename ändern</h3>
+        <p style="margin:0 0 14px;color:#888;font-size:0.85rem;" data-key="hostname.modal_hint">Der Name erscheint im Netzwerk als <strong id="hostnameLocalPreview">name.local</strong></p>
+        <label style="color:#aaa;font-size:0.85rem;" data-key="hostname.label">Neuer Gerätename</label>
+        <input id="hostnameInput" type="text" maxlength="63"
+          style="width:100%;box-sizing:border-box;margin:6px 0 4px;padding:8px 10px;background:#111;border:1px solid #555;border-radius:6px;color:#eee;font-size:1rem;"
+          placeholder="z.B. autodarts-wohnzimmer"
+          oninput="hostnameInputChanged(this.value)">
+        <p id="hostnameValidationMsg" style="color:#ff6b6b;font-size:0.82rem;margin:2px 0 10px;min-height:1em;"></p>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px;">
+          <button type="button" class="btn btn-small" onclick="document.getElementById('hostnameModal').style.display='none';" data-key="generic.cancel">Abbrechen</button>
+          <button type="button" class="btn btn-small btn-primary" id="hostnameConfirmBtn" onclick="saveHostname()" data-key="hostname.save_btn">Speichern</button>
+        </div>
+        <p id="hostnameStatusMsg" style="margin:10px 0 0;font-size:0.85rem;min-height:1em;"></p>
+      </div>
     </div>
 
     <!-- LED GPIO Modal -->
@@ -1268,6 +1292,8 @@ cp /var/log/pi_monitor_test_README.txt ~/
       api_autodarts_autostart: "{{ url_for('api_autodarts_autostart_toggle') }}",
       api_webpanel_channel: "{{ url_for('api_webpanel_channel') }}",
       api_calibration_mtime: "{{ url_for('camera.api_calibration_mtime') }}",
+      api_hostname_get: "{{ url_for('network.api_hostname_get') }}",
+      api_hostname_set: "{{ url_for('network.api_hostname_set') }}",
       darts_url: "{{ darts_url }}"
     };
 
@@ -1553,6 +1579,82 @@ function closeAdUpdateModal() {
   if (modal) modal.style.display = 'none';
 }
 
+// --- Hostname ---
+var _hostnameRe = /^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?$|^[a-zA-Z0-9]$/;
+
+function hostnameInputChanged(val) {
+  var preview = document.getElementById('hostnameLocalPreview');
+  var msg = document.getElementById('hostnameValidationMsg');
+  var btn = document.getElementById('hostnameConfirmBtn');
+  var clean = val.trim().toLowerCase();
+  if (preview) preview.textContent = (clean || 'name') + '.local';
+  if (!clean) {
+    msg.textContent = '';
+    btn.disabled = true;
+    return;
+  }
+  if (!_hostnameRe.test(clean)) {
+    msg.textContent = 'Ungültig: nur Buchstaben, Ziffern und - erlaubt. Kein Start/Ende mit -.';
+    btn.disabled = true;
+  } else if (clean.length > 63) {
+    msg.textContent = 'Zu lang (max. 63 Zeichen).';
+    btn.disabled = true;
+  } else {
+    msg.textContent = '';
+    btn.disabled = false;
+  }
+}
+
+function openHostnameModal() {
+  var modal = document.getElementById('hostnameModal');
+  var input = document.getElementById('hostnameInput');
+  var statusMsg = document.getElementById('hostnameStatusMsg');
+  var btn = document.getElementById('hostnameConfirmBtn');
+  if (statusMsg) statusMsg.textContent = '';
+  if (btn) btn.disabled = false;
+  modal.style.display = 'flex';
+  fetch(window.app_urls.api_hostname_get, { cache: 'no-store' })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.hostname && input) {
+        input.value = d.hostname;
+        hostnameInputChanged(d.hostname);
+      }
+    }).catch(function(){});
+}
+
+function saveHostname() {
+  var input = document.getElementById('hostnameInput');
+  var statusMsg = document.getElementById('hostnameStatusMsg');
+  var btn = document.getElementById('hostnameConfirmBtn');
+  var name = (input ? input.value.trim().toLowerCase() : '');
+  if (!name) return;
+  btn.disabled = true;
+  statusMsg.style.color = '#aaa';
+  statusMsg.textContent = '…';
+  fetch(window.app_urls.api_hostname_set, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ hostname: name }),
+    cache: 'no-store',
+  }).then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.ok) {
+        statusMsg.style.color = '#00c864';
+        statusMsg.textContent = d.message || 'Gespeichert.';
+        setTimeout(function(){ document.getElementById('hostnameModal').style.display = 'none'; }, 1800);
+      } else {
+        statusMsg.style.color = '#ff6b6b';
+        statusMsg.textContent = d.message || 'Fehler.';
+        btn.disabled = false;
+      }
+    }).catch(function(e){
+      statusMsg.style.color = '#ff6b6b';
+      statusMsg.textContent = 'Verbindungsfehler.';
+      btn.disabled = false;
+    });
+}
+
 // Autodarts-Update still im Hintergrund starten wenn Webpanel-Update ausgelöst wird
 document.addEventListener('DOMContentLoaded', function() {
   var wpForm = document.getElementById('webpanelUpdateForm');
@@ -1605,6 +1707,28 @@ document.addEventListener('DOMContentLoaded', function() {
     </div>
   </div>
 </div>
+{% endif %}
+
+{% if release_info_html %}
+<div id="releaseInfoOverlay" style="display:flex;position:fixed;inset:0;z-index:9100;background:rgba(0,0,0,0.88);align-items:center;justify-content:center;" onclick="if(event.target===this)dismissReleaseInfo()">
+  <div style="position:relative;background:#1a1a1a;border:1px solid #00c864;border-radius:14px;padding:28px 24px 20px;max-width:520px;width:92vw;max-height:80vh;overflow-y:auto;" onclick="event.stopPropagation()">
+    <button type="button" onclick="dismissReleaseInfo()"
+      style="position:absolute;top:10px;right:14px;background:none;border:none;color:#aaa;font-size:1.4rem;cursor:pointer;">&times;</button>
+    <h2 style="color:#00c864;margin:0 0 16px;font-size:1.2rem;" data-key="release_info.title">🆕 Was ist neu?</h2>
+    <div style="color:#ccc;font-size:0.9rem;line-height:1.6;" id="releaseInfoContent">
+      {{ release_info_html | safe }}
+    </div>
+    <div style="text-align:right;margin-top:18px;">
+      <button type="button" class="btn btn-primary btn-small" onclick="dismissReleaseInfo()" data-key="release_info.ok_btn">OK, verstanden</button>
+    </div>
+  </div>
+</div>
+<script>
+function dismissReleaseInfo() {
+  document.getElementById('releaseInfoOverlay').style.display = 'none';
+  fetch('/api/release-info/dismiss', { method: 'POST', cache: 'no-store' }).catch(function(){});
+}
+</script>
 {% endif %}
 </body>
 </html>

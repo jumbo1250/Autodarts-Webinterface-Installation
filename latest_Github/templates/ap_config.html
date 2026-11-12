@@ -32,7 +32,7 @@ Provided "as is", without warranty.
       {% if current_ssid %}
         <p>
           <span data-key="ap_config.current_ssid_label">Aktueller Access-Point-Name (SSID):</span>
-          <strong>{{ current_ssid }}</strong>
+          <strong>{{ current_ssid }}</strong>{% if ap_channel %} &nbsp;·&nbsp; <span data-key="ap_config.current_channel_label">WLAN-Kanal:</span> <strong>{{ ap_channel }}</strong>{% endif %}
         </p>
       {% else %}
         <p>
