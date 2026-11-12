@@ -114,6 +114,12 @@ install_webpanel_from_zip() {
   install -m 644 "${extract_dir}/autodarts-web.py" "${BIN_DIR}/autodarts-web.py"
   chmod 777 "${BIN_DIR}/autodarts-web.py" || true
 
+  if [[ -f "${extract_dir}/Release_info.md" ]]; then
+    install -m 644 "${extract_dir}/Release_info.md" "${BIN_DIR}/Release_info.md"
+    rm -f "/var/lib/autodarts/release-info-shown.json" 2>/dev/null || true
+    log "OK: Release_info.md installiert"
+  fi
+
   for dir_name in templates static theme configs; do
     if [[ -d "${extract_dir}/${dir_name}" ]]; then
       [[ -e "${BIN_DIR}/${dir_name}" ]] && { cp -a "${BIN_DIR}/${dir_name}" "${BIN_DIR}/${dir_name}.bak.${ts_now}" || true; rm -rf "${BIN_DIR:?}/${dir_name}"; }
