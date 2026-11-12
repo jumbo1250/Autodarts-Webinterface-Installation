@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# BUILD: WEBPANEL-UPDATER-SLIM-20261008-03
+# BUILD: WEBPANEL-UPDATER-SLIM-20261112-AP-CHANNEL
 set -euo pipefail
 
 REPO="jumbo1250/Autodarts-Webinterface-Installation"
@@ -14,6 +14,7 @@ else
 fi
 
 BIN_DIR="/usr/local/bin"
+LIB_DIR="/usr/local/lib/autodarts"
 DATA_DIR="/home/peter/autodarts-data"
 STATE_DIR="/var/lib/autodarts"
 LOG_FILE="/var/log/autodarts_webpanel_update.log"
@@ -40,6 +41,7 @@ FILES=(
   "autodarts-userctl|${BIN_DIR}/autodarts-userctl"
   "autodarts-tui-wrapper|${BIN_DIR}/autodarts-tui-wrapper"
   "autodarts-v2-migration.sh|${BIN_DIR}/autodarts-v2-migration.sh"
+  "modificat_AP_Channel.sh|${LIB_DIR}/modificat_AP_Channel.sh"
   "webpanel_AP_apply.sh|/usr/local/lib/autodarts/webpanel_AP_apply.sh"
   "91-webpanel_AP|/etc/NetworkManager/dispatcher.d/91-webpanel_AP"
 )
@@ -148,6 +150,28 @@ run_v2_migration_if_downloaded() {
   fi
 }
 
+# AP-Kanal-Migration (sicher bei laufender Partie: nur das gespeicherte Profil).
+run_ap_channel_mod_if_downloaded() {
+  local remote_name="modificat_AP_Channel.sh"
+  local script="${LIB_DIR}/${remote_name}"
+
+  if [[ -z "${DOWNLOADED[${remote_name}]+x}" ]]; then
+    log "INFO: AP-Kanal-Modifikation nicht geladen -> skip"
+    return 0
+  fi
+  if [[ ! -f "${script}" ]]; then
+    log "WARN: AP-Kanal-Modifikation nicht vorhanden -> skip"
+    return 0
+  fi
+
+  log "Starte AP-Kanal-Modifikation (gespeichertes Profil; kein AP-Neustart)"
+  if AP_CONN="Autodarts-AP" bash "${script}" >>"${LOG_FILE}" 2>&1; then
+    log "OK: AP-Kanal-Modifikation abgeschlossen"
+  else
+    log "WARN: AP-Kanal-Modifikation fehlgeschlagen (exit=$?) -> Update laeuft weiter"
+  fi
+}
+
 # --- MAIN ---
 # Hinweis: Die Revisionskette wird vom Runner (autodarts-webpanel-update-runner.sh) gesteuert.
 # Dieses Script installiert nur den aktuellen Stand aus latest/.
@@ -228,8 +252,13 @@ for entry in "${FILES[@]}"; do
   [[ -z "${DOWNLOADED[${src}]+x}" ]] && continue
   mkdir -p "$(dirname "${dst}")"
   backup_path "${dst}"
-  install -m 644 "${TMP_DIR}/${src}" "${dst}"
-  chmod 777 "${dst}" || true
+  if [[ "${src}" == "modificat_AP_Channel.sh" ]]; then
+    # Root-Script niemals world-writable installieren.
+    install -m 755 "${TMP_DIR}/${src}" "${dst}"
+  else
+    install -m 644 "${TMP_DIR}/${src}" "${dst}"
+    chmod 777 "${dst}" || true
+  fi
   UPDATED_ANY=1
 done
 
@@ -238,6 +267,7 @@ chmod 777 "${BIN_DIR}" "${DATA_DIR}" "${STATE_DIR}" 2>/dev/null || true
 find /etc/NetworkManager/dispatcher.d/ -maxdepth 1 -type f -exec chmod 755 {} + 2>/dev/null || true
 
 run_v2_migration_if_downloaded
+run_ap_channel_mod_if_downloaded
 
 if [[ "${UPDATED_ANY}" != "1" ]]; then
   log "Kein Updatepaket installiert."
