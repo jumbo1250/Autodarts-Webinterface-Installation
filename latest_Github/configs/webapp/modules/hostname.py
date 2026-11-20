@@ -84,6 +84,18 @@ def set_hostname(new_name: str) -> tuple[bool, str]:
     except Exception:
         pass
 
+    # Chromium SingletonLock entfernen – sonst startet Chromium nach Hostname-Wechsel nicht mehr
+    import glob as _glob
+    for pattern in [
+        "/home/*/.config/chromium/Singleton*",
+        "/root/.config/chromium/Singleton*",
+    ]:
+        for f in _glob.glob(pattern):
+            try:
+                os.remove(f)
+            except Exception:
+                pass
+
     # avahi-daemon neu starten → sofort im Netzwerk sichtbar
     try:
         subprocess.run(["systemctl", "restart", "avahi-daemon"], capture_output=True, timeout=5)
