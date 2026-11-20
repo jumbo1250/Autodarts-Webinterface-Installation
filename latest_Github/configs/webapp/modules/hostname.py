@@ -84,6 +84,23 @@ def set_hostname(new_name: str) -> tuple[bool, str]:
     except Exception:
         pass
 
+    # autodarts-start.sh patchen: Singleton-Cleanup vor jedem Chromium-Start einfügen (einmalig)
+    _start_sh = "/home/peter/bin/autodarts-start.sh"
+    _cleanup_line = 'rm -f "${HOME}/.config/chromium/Singleton"* 2>/dev/null || true\n'
+    try:
+        with open(_start_sh, "r", encoding="utf-8", errors="ignore") as _f:
+            _sh_content = _f.read()
+        if _cleanup_line not in _sh_content and "chromium " in _sh_content:
+            _sh_content = _sh_content.replace(
+                "chromium --new-window",
+                _cleanup_line + "chromium --new-window",
+                1,
+            )
+            with open(_start_sh, "w", encoding="utf-8") as _f:
+                _f.write(_sh_content)
+    except Exception:
+        pass
+
     # Chromium SingletonLock + .Xauthority entfernen – beide sind hostname-gebunden
     import glob as _glob
     for pattern in [
