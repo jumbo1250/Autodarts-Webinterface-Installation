@@ -84,11 +84,13 @@ def set_hostname(new_name: str) -> tuple[bool, str]:
     except Exception:
         pass
 
-    # Chromium SingletonLock entfernen – sonst startet Chromium nach Hostname-Wechsel nicht mehr
+    # Chromium SingletonLock + .Xauthority entfernen – beide sind hostname-gebunden
     import glob as _glob
     for pattern in [
         "/home/*/.config/chromium/Singleton*",
         "/root/.config/chromium/Singleton*",
+        "/home/*/.Xauthority",
+        "/root/.Xauthority",
     ]:
         for f in _glob.glob(pattern):
             try:
