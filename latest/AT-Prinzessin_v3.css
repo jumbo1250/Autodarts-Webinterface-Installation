@@ -1,0 +1,1372 @@
+:root {
+  /* ========================================================= */
+/* Autor: Peter Rottmann / Autodarts Layouts */
+/* Spielmodus: X01,Cricket,Gotcha,Bermuda... all included */
+/* Bildschirmauflösung: 1920x1080 */
+/* ZENTRALE STYLE-VARIABLEN*/
+/* Passwort: AT1234 */
+/*$Horizontal*/
+/* ========================================================= */
+/*
+
+/*GRUNDFARBEN*/
+    --theme-border-color: 165, 132, 72;
+    --theme-accent-color: 34, 197, 94;
+
+
+/*HINTERGRUNDBILDER*/
+/* Menü / Offgame */
+ --background-menu: url("https://rottmanninfo.at/autodarts/Bilder/AT-Prinzessin_Menue.webp");
+/* Normales Spiel - ab 2 Player */
+ --background-game-multi: url("https://rottmanninfo.at/autodarts/Bilder/AT-Prinzessin_Game.webp");
+/* Cricket */
+ --background-cricket: url("https://rottmanninfo.at/autodarts/Bilder/AT-Prinzessin_Game.webp");
+
+/* HOCHFORMAT BACKGROUND
+   initial = kein eigenes Hochformatbild -> normales Hintergrundbild verwenden
+   Für eigenes Bild z.B.:
+   --background-portrait: url("");
+*/
+ --background-portrait: initial;
+
+/* DARTBOARD SURROUND */
+--dartboard-surround-image: url("https://rottmanninfo.at/autodarts/Bilder/AT-Prinzessin_Surround4.webp");
+--dartboard-surround-scale: 1.6;
+
+/* Größe des freien Lochs in der Mitte */
+--dartboard-surround-hole: 20%;
+/* Surround-Ebene innerhalb des Dartboard-Zweiges: -1 = ganz hinten */
+--dartboard-surround-zindex: -1;
+
+/* DOM / LAYOUT - zentrale Werte */
+--player-row-margin-y: 4px;
+--horizontal-player-gap: 80px;
+--throws-scale: 1.180;
+
+--dartboard-scale: 0.8;
+
+
+
+/*OBERFLÄCHEN / HINTERGRÜNDE*/
+    --surface-default: rgba(0, 0, 0, 0.60);
+    --surface-player: rgba(40, 40, 40, 0.70);
+    --surface-active-player: linear-gradient(
+ 90deg,
+ rgba(var(--theme-accent-color), 0.8) 0%,
+ rgba(var(--theme-accent-color), 0.12) 85%,
+ rgba(0, 0, 0, 0.70) 100%
+) !important;
+--surface-cricket-inactive: rgba(40, 40, 40, 0.30);
+    --surface-score-table: rgba(40, 40, 40, 0.65);
+    --surface-nextbox: rgba(40, 40, 40, 0.40);
+    --surface-attribute-box: rgba(0, 0, 0, 0.55);
+    --surface-score-box: rgba(40, 40, 40, 0.65);
+
+/*BORDERS*/
+    --border-default: 1px solid rgb(var(--theme-border-color));
+    --border-attribute-box: 1px solid rgb(var(--theme-border-color));
+    --border-inactive-player: 1px solid rgba(var(--theme-border-color), 0.80);
+    --border-active-player: 2px solid rgb(var(--theme-accent-color));
+    --border-score-table-color: rgba(var(--theme-border-color), 0.45);
+
+/*SHADOWS*/
+    --shadow-default: 0 0 2px 2px rgb(var(--theme-border-color));
+    --shadow-inactive-player: 0 0 4px 3px rgba(var(--theme-border-color), 0.35);
+    --shadow-attribute-box: 0 0 5px 2px rgba(var(--theme-border-color), 0.35);
+
+/*PLAYER-GLOW*/
+    --player-glow-base: rgba(var(--theme-border-color), 0.20);
+    --player-glow-soft: rgba(var(--theme-accent-color), 0.45);
+    --player-glow-strong: rgba(var(--theme-accent-color), 0.95);
+    --player-glow-duration: 2.2s;
+
+/*RUNDUNGEN*/
+    --radius-player: 14px;
+    --radius-panel: 12px;
+    --radius-button: 10px;
+
+/*MENÜ-GRADIENT*/
+    --menu-gradient-start: rgba(10, 20, 40, 0.45);
+    --menu-gradient-end: rgba(0, 
+    0, 0, 0.45);
+
+/*AKTIVER GRADIENT*/
+    --active-gradient-start: #166534;
+    --active-gradient-middle: rgb(var(--theme-accent-color));
+    --active-gradient-end: #ffffff;
+
+/*DYNAMISCHE SCORE-TABELLE*/
+    --score-cell-variant-1: rgb(106, 22, 36);
+    --score-cell-variant-2: rgb(var(--theme-accent-color));
+    --score-cell-variant-3: rgba(27, 31, 41, 0.65);
+    --score-cell-variant-4: rgba(41, 44, 51, 0.65);
+}
+/*SCORETEXT*/
+/*Spielerscore und Würfe X01*/
+div.font-number.font-bold {
+ color: rgba(255, 255, 255, 1);
+ font-family: Helvetica, sans-serif;
+ overflow: visible;
+}
+/*Spielerscore Cricket*/
+span.font-number.font-bold.leading-none {
+ color: rgba(255, 255, 255, 1);
+ font-family: Helvetica, sans-serif;
+ overflow: visible;
+}
+/*Spielerscore Multi*/
+div.font-number.font-bold.text-5xl.text-mono-white.leading-none.flex.items-start.justify-center.overflow-hidden {
+ color: rgba(255, 255, 255, 1);
+ font-family: Helvetica, sans-serif;
+ overflow: visible;
+}
+/*Checkout Setup*/
+div.relative.flex.justify-center.items-center.min-w-0.font-number.font-bold.leading-none.text-checkout-setup {
+  color: rgba(var(--theme-accent-color), 0.60) !important;
+}
+/*Throws*/
+div.relative.flex.justify-center.items-center.min-w-0.font-number.font-bold.leading-none.cursor-pointer {
+  color: rgba(255, 255, 255, 1) !important;
+}
+/*Checkout Suggestion*/
+div.relative.flex.justify-center.items-center.min-w-0.font-number.font-bold.leading-none.text-checkout-suggestion {
+  -webkit-text-fill-color: rgb(var(--theme-accent-color)) !important;
+}
+/*Single Score*/
+div.relative.flex.justify-center.items-center.min-w-0.font-number.font-bold.leading-none {
+  color: rgb(var(--theme-border-color)) !important;
+}
+/*Checkout Suggestion small*/
+div.text-checkout-suggestion {
+  -webkit-text-fill-color: rgba(250, 250, 250, 1) !important;
+}
+/*SPIELERBOXEN SCHRIFT*/
+/*Spieler*/
+span.font-display {
+ color: rgba(255, 255, 255, 1);
+ font-family: "Arial Narrow", sans-serif;
+ font-weight: 600;
+ overflow: visible;
+}
+/*Legs*/
+span.font-number {
+  color: rgba(255, 255, 255, 1);
+ font-family: Helvetica, sans-serif;
+ overflow: visible;
+}
+/*Leg und Match*/
+span.font-body.text-mono-white.leading-none.font-medium {
+  color: rgba(255, 255, 255, 0.7);
+ font-family: Helvetica, sans-serif;
+ overflow: visible;
+}
+/*Avg Zahl*/
+span.font-body.text-mono-white.leading-none.font-bold {
+  color: rgba(255, 255, 255, 0.7);
+ font-family: Helvetica, sans-serif;
+ overflow: visible;
+}
+/*SCORELEISTE*/
+.py-3 > div[class*="rounded-2xl"][class*="bg-surface-surface"] {
+/* Hintergrundfarbe + Transparenz */
+ background: var(--surface-score-box) !important;
+/* Rahmen */
+ border: 2px solid rgba(255, 255, 255, 0.3) !important;
+ border-radius: 5px;
+/* Position */
+ position: relative !important;
+ left: 0px !important;
+ top: -22px !important;
+/* vorhandenen Schatten entfernen */
+ box-shadow: none !important;
+}
+
+/* ========================================================= */
+/* AUTODARTS DOM-ERKENNUNG                                   */
+/* ========================================================= */
+/*
+   CSS kann Selektoren nicht in Variablen speichern.
+   Deshalb werden die beiden bekannten DOM-Strukturen über
+   :has() erkannt und gemeinsame Regeln später mit :is()
+   zusammengefasst.
+
+   QUERFORMAT-DOM:
+   div.relative.flex.w-full
+   innerhalb des horizontalen Playerbereichs
+
+   HOCHFORMAT-DOM:
+   div.relative.isolate.overflow-hidden.flex.items-center.min-h-20
+*/
+
+/* Querformat */
+body:has(
+    div.relative.z-10.flex-1.min-h-0.flex.items-stretch.justify-center
+) {
+    --autodarts-dom-horizontal: 1;
+}
+
+/* Hochformat */
+body:has(
+    div.relative.isolate.overflow-hidden.flex.items-center.min-h-20
+) {
+    --autodarts-dom-vertical: 1;
+}
+
+
+/* ========================================================= */
+/* DARTBOARD SURROUND                                        */
+/* ========================================================= */
+
+/*
+   Der Surround hängt direkt am Wrapper der echten Dartscheibe.
+   Dadurch folgt er automatisch Position und Größe der Scheibe
+   in jedem Spielmodus.
+*/
+/* Wrapper der Dartscheibe */
+/* WICHTIG: hier KEIN z-index und KEIN isolation:isolate setzen.
+   So bleibt die bereits funktionierende Querformat-Logik erhalten. */
+div.relative:has(
+    > div[role="img"][aria-label="Dartboard"]
+) {
+    position: relative !important;
+    overflow: visible !important;
+}
+
+
+/* echte Dartscheibe vor Surround */
+div.relative:has(> div[role="img"][aria-label="Dartboard"])
+> div[role="img"][aria-label="Dartboard"] {
+    position: relative !important;
+    z-index: 1 !important;
+}
+
+/* Surround */
+div.relative:has(> div[role="img"][aria-label="Dartboard"])::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+
+    background-image: var(--dartboard-surround-image);
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: contain;
+
+    transform: scale(var(--dartboard-surround-scale));
+    transform-origin: center center;
+
+    -webkit-mask-image: radial-gradient(
+        circle closest-side at center,
+        transparent 0 var(--dartboard-surround-hole),
+        #000 calc(var(--dartboard-surround-hole) + 0.5%)
+    );
+
+    mask-image: radial-gradient(
+        circle closest-side at center,
+        transparent 0 var(--dartboard-surround-hole),
+        #000 calc(var(--dartboard-surround-hole) + 0.5%)
+    );
+
+    pointer-events: none;
+    z-index: var(--dartboard-surround-zindex);
+}
+
+/* ========================================================= */
+/* SURROUND IMMER HINTER SCORE / UI - STACKING FIX            */
+/* ========================================================= */
+/*
+   WICHTIG:
+   Die frühere V4-Regel verwendete sinngemäß
+
+       :has( > *:has(...) )
+
+   Das ist verschachteltes :has(). Verschachteltes :has() ist in CSS
+   nicht erlaubt; der Browser verwirft diesen Selektor komplett.
+
+   Hier deshalb nur gültige, nicht verschachtelte :has()-Selektoren
+   für die aktuell bekannten Autodarts-DOM-Strukturen.
+*/
+
+
+/* ========================================================= */
+/* QUERFORMAT / DESKTOP-DOM                                  */
+/* ========================================================= */
+
+/* gemeinsamer Gameplay-Container */
+div.\@container.flex-1.min-w-0.flex.flex-col.min-h-0:has(
+    div[role="img"][aria-label="Dartboard"]
+) {
+    isolation: isolate !important;
+}
+
+/* obere Scorebar IMMER vor dem Board-Zweig */
+div.\@container.flex-1.min-w-0.flex.flex-col.min-h-0:has(
+    div[role="img"][aria-label="Dartboard"]
+)
+> div.relative.z-10.px-4.mx-auto.w-full.max-w-150 {
+    position: relative !important;
+    z-index: 1000 !important;
+}
+
+/* Scorebar-Inhalt ebenfalls explizit vorne */
+div.\@container.flex-1.min-w-0.flex.flex-col.min-h-0:has(
+    div[role="img"][aria-label="Dartboard"]
+)
+> div.relative.z-10.px-4.mx-auto.w-full.max-w-150
+> div.py-3.flex.items-stretch {
+    position: relative !important;
+    z-index: 1001 !important;
+}
+
+/* kompletter Dartboard-Zweig darunter */
+div.\@container.flex-1.min-w-0.flex.flex-col.min-h-0:has(
+    div[role="img"][aria-label="Dartboard"]
+)
+> div.relative.z-10.flex-1.min-h-0.p-4 {
+    position: relative !important;
+    z-index: 0 !important;
+}
+
+/* untere Steuer-/Next-Leiste ebenfalls vor dem Board */
+div.\@container.flex-1.min-w-0.flex.flex-col.min-h-0:has(
+    div[role="img"][aria-label="Dartboard"]
+)
+> div.px-4.max-w-150.w-full.self-center {
+    position: relative !important;
+    z-index: 1000 !important;
+}
+
+
+/* ========================================================= */
+/* HOCHFORMAT-DOM                                            */
+/* ========================================================= */
+
+/* gemeinsamer Hochformat-Container */
+div.flex.flex-col.h-full.relative:has(
+    div[role="img"][aria-label="Dartboard"]
+) {
+    isolation: isolate !important;
+}
+
+/* oberer Bereich vor dem Board */
+div.flex.flex-col.h-full.relative:has(
+    div[role="img"][aria-label="Dartboard"]
+)
+> div.relative.overflow-hidden {
+    position: relative !important;
+    z-index: 1000 !important;
+}
+
+/* Dartboard-Bereich darunter */
+div.flex.flex-col.h-full.relative:has(
+    div[role="img"][aria-label="Dartboard"]
+)
+> div.relative.z-10.flex-1.min-h-0.px-4.pb-3 {
+    position: relative !important;
+    z-index: 0 !important;
+}
+
+/* untere Leiste vor dem Board */
+div.flex.flex-col.h-full.relative:has(
+    div[role="img"][aria-label="Dartboard"]
+)
+> div.px-4.self-center.w-full.max-w-150 {
+    position: relative !important;
+    z-index: 1000 !important;
+}
+
+
+/* ========================================================= */
+/* SURROUND INNERHALB DES BOARD-WRAPPERS                     */
+/* ========================================================= */
+/*
+   Die eigentliche Dartscheibe bleibt über dem Surround.
+   Der gesamte Board-Zweig liegt durch die Regeln oben unter
+   Scorebar und Steuerleisten.
+*/
+
+div.relative:has(
+    > div[role="img"][aria-label="Dartboard"]
+)
+> div[role="img"][aria-label="Dartboard"] {
+    position: relative !important;
+    z-index: 1 !important;
+}
+
+div.relative:has(
+    > div[role="img"][aria-label="Dartboard"]
+)::before {
+    z-index: var(--dartboard-surround-zindex) !important;
+}
+
+
+/* ========================================================= */
+/* INGAME BACKGROUND                                         */
+/* ========================================================= */
+
+/* CRICKET - Standard für Ingame */
+body:has(header.pointer-events-none) {
+    background-image: var(--background-cricket) !important;
+    background-repeat: no-repeat !important;
+    background-size: cover !important;
+    background-position: center !important;
+}
+
+/* ========================================================= */
+/* NORMALE SPIELMODI - AB 2 PLAYER                           */
+/* ========================================================= */
+body:has(header.pointer-events-none):has(div.relative.aspect-square.h-full.justify-self-center):has(
+    div.relative.z-10.flex-1.min-h-0.flex.items-stretch.justify-center
+    > div.flex.w-100.shrink-0.flex-col.justify-center.divide-y
+    ~ div.flex.w-100.shrink-0.flex-col.justify-center.divide-y
+) {
+    background-image: var(--background-game-multi) !important;
+    background-repeat: no-repeat !important;
+    background-size: cover !important;
+    background-position: center !important;
+}
+
+/* MENÜ / OFFGAME BACKGROUND */
+body:not(:has(header.pointer-events-none)) {
+ background-image: var(--background-menu);
+    background-repeat: no-repeat;
+    background-size: cover;
+    background-position: center;
+
+}
+
+/* ========================================================= */
+/* HOCHFORMAT BACKGROUND                                     */
+/* ========================================================= */
+/*
+   Wenn --background-portrait oben auf "initial" steht,
+   wird automatisch das jeweilige normale Hintergrundbild verwendet.
+
+   Sobald dort eine url(...) eingetragen ist, wird im Hochformat
+   dieses Bild für Menü, Cricket und normale Spielmodi verwendet.
+*/
+
+@media (orientation: portrait) {
+
+    /* Menü / Offgame */
+    body:not(:has(header.pointer-events-none)) {
+        background-image:
+            var(--background-portrait, var(--background-menu)) !important;
+    }
+
+    /* Cricket / Ingame-Standard */
+    body:has(header.pointer-events-none) {
+        background-image:
+            var(--background-portrait, var(--background-cricket)) !important;
+    }
+
+    /* Normale Spielmodi */
+    body:has(header.pointer-events-none):has(
+        div.relative.aspect-square.h-full.justify-self-center
+    ) {
+        background-image:
+            var(--background-portrait, var(--background-game-multi)) !important;
+    }
+
+    /* Alternative Seiten-/Menüstruktur */
+    body:has(main.flex-1.min-h-0.overflow-y-auto) {
+        background-image:
+            var(--background-portrait, var(--background-menu)) !important;
+    }
+}
+
+
+/*werbung 1+2 einblenden /ausblenden*/
+body:not(:has(header.pointer-events-none)) main > div > div > div > div > div.relative, main > div > div > div > div > a.relative{
+   opacity: 0.8;
+}
+/*ENDE*/
+
+/*Freundesliste*/
+aside.sticky.top-10.self-start {
+  border: var(--border-default); 
+  background-color: var(--surface-default);
+  box-shadow: var(--shadow-default)
+}
+
+/* play Buttons berabeiten*/
+button.flex.w-full.flex-col.gap-3{
+  background-color: var(--surface-default);
+  box-shadow: var(--shadow-default);
+}
+div.flex.w-full.flex-col.gap-3.px-4.py-5.text-left.transition.bg-black-85 {
+  background-color: var(--surface-default);
+  box-shadow: var(--shadow-default);
+}
+
+/*ENDE*/
+
+/* Beispielbutton ausblenden
+.grid > button:nth-of-type(...) {
+    display: none !important;
+}
+ENDE */ 
+
+/*MENU OBEN*/
+header.relative.px-6.bg-black-80.h-16.shrink-0.flex.items-center.justify-between {
+ border: var(--border-default) !important;
+ border-image: none !important;
+ background-color: var(--surface-default) !important;
+}
+/*STATS*/
+div.flex.flex-col.gap-6.rounded-2xl.bg-card.p-6, div.flex.min-w-0.flex-1.flex-col.items-center.gap-3.rounded-2xl.bg-card.p-5, div.bg-card.rounded-2xl.p-5.flex.flex-col.items-center.justify-end.gap-4.flex-1.min-w-0, div.flex.gap-4.rounded-2xl.bg-card.p-5, div.flex.flex-col.gap-2.rounded-2xl.bg-card.p-5,div.rounded-2xl.bg-card.px-5.divide-y.divide-border {
+ border: var(--border-default);
+ background-color: var(--surface-default);
+}
+/* LOGO ausblenden */
+img.pointer-events-none.absolute.-top-4.-right-20.w-110 {
+    display: none !important;
+}
+button {
+ border: 0px var(--border-default);
+}
+/*ENDE*/
+
+
+body:not(:has(header.pointer-events-none)) main > div > div > div > div > div.bg-black-80 { 
+  border: var(--border-default); 
+  background-color: var(--surface-default);
+  box-shadow: var(--shadow-default)
+}
+
+.from-mono-black\/40.pointer-events-none.absolute.inset-x-0.bottom-0.h-25.bg-linear-to-t.to-transparent > img {
+    display: none !important;
+}
+
+
+picture:has(img[src*="matchmaking_card"]),
+picture:has(img[src*="play_now_card"]) {
+    visibility: hidden !important;
+}
+
+button.group.relative.w-full.cursor-pointer.overflow-hidden{
+  border: var(--border-default); 
+  background-color: var(--surface-default);
+  box-shadow: var(--shadow-default)
+}
+
+/* Play Now + Matchmaking Text mittig */
+
+button:has(img[src*="play_now_card"]) > div.absolute:has(> p),
+button:has(img[src*="matchmaking_card"]) > div.absolute:has(> p) {
+    top: 50% !important;
+    left: 50% !important;
+    bottom: auto !important;
+
+    transform: translate(-50%, -50%) !important;
+
+    width: 100% !important;
+
+    align-items: center !important;
+    text-align: center !important;
+}
+
+
+/* Alle Texte mittig */
+
+button:has(img[src*="play_now_card"]) > div.absolute:has(> p) p,
+button:has(img[src*="matchmaking_card"]) > div.absolute:has(> p) p {
+    width: 100% !important;
+    text-align: center !important;
+}
+
+
+/* Überschrift größer */
+
+button:has(img[src*="play_now_card"]) > div.absolute:has(> p) p:first-child,
+button:has(img[src*="matchmaking_card"]) > div.absolute:has(> p) p:first-child {
+    font-size: 42px !important;
+    font-weight: 700 !important;
+}
+
+
+/* Untertext größer */
+
+button:has(img[src*="play_now_card"]) > div.absolute:has(> p) p:nth-child(2),
+button:has(img[src*="matchmaking_card"]) > div.absolute:has(> p) p:nth-child(2) {
+    font-size: 22px !important;
+}
+
+.bg-midnight-diagonal {
+    background: linear-gradient(
+        135deg,
+        var(--menu-gradient-start),
+        var(--menu-gradient-end)
+    ) !important;
+}
+
+button.bg-raspberry-slush-diagonal {
+    background: linear-gradient(
+        135deg,
+        var(--active-gradient-start) 0%,
+        var(--active-gradient-middle) 45%,
+        var(--active-gradient-end) 100%
+    ) !important;
+}
+
+/* Feld mit eigern statistik ganz oben mit AVR */
+div.\@container.relative.overflow-hidden
+> div[aria-hidden="true"].pointer-events-none.absolute.inset-0 {
+    opacity: 0.35 !important;
+  
+}
+
+div[data-slot="card"][role="button"] {
+    border: var(--border-default) !important;
+    box-shadow: var(--shadow-default) !important;
+    background-color: var(--surface-default)
+}
+
+div.\@container.relative.overflow-hidden.rounded-xl.border.border-border {
+    border: var(--border-default) !important;
+    box-shadow: var(--shadow-default) 
+}
+
+div[data-slot="card"] {
+    border: var(--border-default) !important;
+background-color: var(--surface-default)
+}
+
+/* ========================================================= */
+/* INGAME PLAYER - QUERFORMAT + HOCHFORMAT                   */
+/* ========================================================= */
+
+/*
+   Gemeinsame Player-Inhalte:
+   - Querformat: einzelne Playerzeile = div.relative.flex.w-full
+   - Hochformat: mehrere Player direkt in einem gemeinsamen
+                 div.relative.isolate...items-center.min-h-20
+
+   Die Farbregeln werden gemeinsam definiert.
+   Border/Glow bleiben dort, wo sie im jeweiligen DOM hingehören.
+*/
+
+
+/* --------------------------------------------------------- */
+/* PLAYER-INHALT - BEIDE DOMS                                */
+/* --------------------------------------------------------- */
+
+:is(
+    div.relative.flex.w-full,
+    div.relative.isolate.overflow-hidden.flex.items-center.min-h-20,
+    div.flex.shrink-0:has(
+        > div.relative.isolate.flex-1.flex.flex-col.items-center.\@container.min-h-36.bg-raspberry-slush-diagonal
+    )
+)
+> :is(
+    .bg-black-80.text-black-05,
+    .bg-raspberry-slush-diagonal
+) {
+    border-radius: var(--radius-player) !important;
+}
+
+
+/* Inaktiver Player - Hintergrund */
+:is(
+    div.relative.flex.w-full,
+    div.relative.isolate.overflow-hidden.flex.items-center.min-h-20,
+    div.flex.shrink-0:has(
+        > div.relative.isolate.flex-1.flex.flex-col.items-center.\@container.min-h-36.bg-raspberry-slush-diagonal
+    )
+)
+> .bg-black-80.text-black-05 {
+    background: var(--surface-player) !important;
+}
+
+
+/* Aktiver Player - Hintergrund */
+:is(
+    div.relative.flex.w-full,
+    div.relative.isolate.overflow-hidden.flex.items-center.min-h-20,
+    div.flex.shrink-0:has(
+        > div.relative.isolate.flex-1.flex.flex-col.items-center.\@container.min-h-36.bg-raspberry-slush-diagonal
+    )
+)
+> .bg-raspberry-slush-diagonal {
+    background: var(--surface-active-player) !important;
+}
+
+
+/* --------------------------------------------------------- */
+/* QUERFORMAT-DOM                                            */
+/* --------------------------------------------------------- */
+
+/* Einzelne Player-Zeile */
+div.relative.flex.w-full:has(
+    > :is(.bg-black-80.text-black-05, .bg-raspberry-slush-diagonal)
+) {
+    border-radius: var(--radius-player) !important;
+    overflow: visible !important;
+    margin-top: var(--player-row-margin-y) !important;
+    margin-bottom: var(--player-row-margin-y) !important;
+}
+
+
+/* Innerer Player im Querformat */
+div.relative.flex.w-full
+> :is(.bg-black-80.text-black-05, .bg-raspberry-slush-diagonal) {
+    overflow: hidden !important;
+}
+
+
+/* Inaktiver Player - Querformat */
+div.relative.flex.w-full:has(
+    > .bg-black-80.text-black-05
+) {
+    border: var(--border-inactive-player) !important;
+    box-shadow: var(--shadow-inactive-player) !important;
+}
+
+
+/* Aktiver Player - Querformat */
+div.relative.flex.w-full:has(
+    > .bg-raspberry-slush-diagonal
+) {
+    border: var(--border-active-player) !important;
+    animation:
+        playerGreenGlow
+        var(--player-glow-duration)
+        ease-in-out
+        infinite !important;
+}
+
+
+/* --------------------------------------------------------- */
+/* HOCHFORMAT-DOM                                            */
+/* --------------------------------------------------------- */
+
+/*
+   Im Hochformat gibt es KEINE einzelne relative.flex.w-full-
+   Playerzeile. Die Player sind direkte Kinder dieses Containers.
+*/
+div.relative.isolate.overflow-hidden.flex.items-center.min-h-20:has(
+    > :is(.bg-black-80.text-black-05, .bg-raspberry-slush-diagonal)
+) {
+    overflow: visible !important;
+}
+
+
+/* Inaktiver Player - Hochformat */
+div.relative.isolate.overflow-hidden.flex.items-center.min-h-20
+> .bg-black-80.text-black-05 {
+    border: var(--border-inactive-player) !important;
+    box-shadow: var(--shadow-inactive-player) !important;
+}
+
+
+/* Aktiver Player - Hochformat */
+div.relative.isolate.overflow-hidden.flex.items-center.min-h-20
+> .bg-raspberry-slush-diagonal {
+    border: var(--border-active-player) !important;
+    animation:
+        playerGreenGlow
+        var(--player-glow-duration)
+        ease-in-out
+        infinite !important;
+    z-index: 2 !important;
+}
+
+
+/* --------------------------------------------------------- */
+/* CRICKET - HOCHFORMAT: DRITTER PLAYER-DOM                  */
+/* --------------------------------------------------------- */
+/*
+   Cricket im Hochformat verwendet für die oberen Playerboxen:
+   div.flex.shrink-0
+   mit direkten Player-Kindern.
+   Diese Struktur existiert zusätzlich zu den normalen
+   Hochformat- und Querformat-DOMs.
+*/
+
+/* Inaktiver Player - Cricket Hochformat oben */
+div.flex.shrink-0:has(
+    > div.relative.isolate.flex-1.flex.flex-col.items-center.\@container.min-h-36.bg-raspberry-slush-diagonal
+)
+> .bg-black-80.text-black-05 {
+    background: var(--surface-player) !important;
+    border: var(--border-inactive-player) !important;
+    box-shadow: var(--shadow-inactive-player) !important;
+    border-radius: var(--radius-player) !important;
+}
+
+/* Aktiver Player - Cricket Hochformat oben */
+div.flex.shrink-0:has(
+    > div.relative.isolate.flex-1.flex.flex-col.items-center.\@container.min-h-36.bg-raspberry-slush-diagonal
+)
+> .bg-raspberry-slush-diagonal {
+    background: var(--surface-active-player) !important;
+    border: var(--border-active-player) !important;
+    border-radius: var(--radius-player) !important;
+
+    animation:
+        playerGreenGlow
+        var(--player-glow-duration)
+        ease-in-out
+        infinite !important;
+
+    z-index: 2 !important;
+}
+
+
+/* Ältere/alternative inaktive Player-DOM-Variante */
+div.relative.isolate.flex-1.flex.flex-col.items-center.pt-2.pb-2.overflow-clip.border-r.border-black-90.bg-black-80 {
+    background: var(--surface-player) !important;
+}
+
+
+/* --------------------------------------------------------- */
+/* PLAYER GLOW - EINMAL FÜR ALLE DOMS                        */
+/* --------------------------------------------------------- */
+
+@keyframes playerGreenGlow {
+    0%, 100% {
+        box-shadow:
+            0 0 4px 2px var(--player-glow-base),
+            0 0 3px 1px var(--player-glow-soft);
+    }
+
+    50% {
+        box-shadow:
+            0 0 4px 2px var(--player-glow-base),
+            0 0 5px 5px var(--player-glow-strong);
+    }
+}
+
+
+/* Attribut-Box links oben */
+div.flex.flex-wrap.items-center.gap-2.absolute.left-6.z-20 {
+    /* von oben nach unten */
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    align-items: flex-start !important;
+
+    /* Box um alle Attribute */
+    border: var(--border-attribute-box) !important;
+    border-radius: var(--radius-panel) !important;
+    padding: 10px 12px !important;
+
+    background: var(--surface-attribute-box) !important;
+    box-shadow: var(--shadow-attribute-box) !important;
+
+    /* nicht unnötig breit */
+    width: fit-content !important;
+    max-width: none !important;
+    transform: translate(90px, -51px) !important;
+    gap: 6px !important;
+}
+
+/* Game_Score  Table*/
+div.relative.grid.grid-cols-2.grid-rows-6.bg-black-80 {
+    background: var(--surface-score-table) !important;
+    border-color: var(--border-score-table-color) !important;
+}
+
+/*ENDE*/
+
+/* PLAYER-KÖPFE – cricket SPIELMODUS      */
+
+/*CRICKET - ALLE PLAYER*/
+
+
+div.grid.h-full > div.bg-black-60,
+div.grid.h-full > div.bg-raspberry-slush-diagonal {
+    background: var(--surface-player) !important;
+
+    border-radius: var(--radius-panel) !important;
+    overflow: visible !important;
+}
+
+
+
+/*CRICKET - INAKTIVE PLAYER*/
+
+
+div.grid.h-full > div.bg-black-60 {
+    border: var(--border-inactive-player) !important;
+
+    box-shadow:
+        var(--shadow-inactive-player) !important;
+}
+
+
+
+/*CRICKET - AKTIVER PLAYER*/
+
+div.grid.h-full > div.bg-raspberry-slush-diagonal {
+    background: var(--surface-active-player) !important;
+    border: var(--border-active-player) !important;
+    animation:
+        playerGreenGlow
+        var(--player-glow-duration)
+        ease-in-out
+        infinite !important;
+    z-index: 1;
+}
+
+/*DYNAMISCHE SCORE-TABELLE TRANSPARENT*/
+
+
+/* Dunkelrot #6A1624 */
+div.grid.h-full > div[class*="bg-[#6A1624]"] {
+    background-color: var(--score-cell-variant-1) !important;
+}
+
+
+/* Blau #0B55DF */
+div.grid.h-full > div[class*="bg-[#0B55DF]"] {
+    background-color: var(--score-cell-variant-2) !important;
+}
+
+
+/* Dunkelgrau #1B1F29 */
+div.grid.h-full > div[class*="bg-[#1B1F29]"] {
+    background-color: var(--score-cell-variant-3) !important;
+}
+
+
+/* Grau #292C33 */
+div.grid.h-full > div[class*="bg-[#292C33]"] {
+    background-color: var(--score-cell-variant-4) !important;
+}
+/* wuerfe groeßer dartssellen */
+div.flex-1.flex.items-stretch.rounded-2xl.overflow-hidden {
+    transform: scale(var(--throws-scale)) !important;
+    transform-origin: center center !important;
+}
+
+/*ansicht auseinaderschieben */
+div.relative.z-10.flex-1.min-h-0.flex.items-stretch.justify-center {
+    column-gap: var(--horizontal-player-gap) !important;
+}
+/* Playerboxen über den Surround heben */
+div.flex.w-100.shrink-0.flex-col.justify-center.divide-y {
+    position: relative !important;
+    z-index: 1 !important;
+}
+/* Score-Schrift */
+div.relative.grid.grid-cols-2.grid-rows-6
+> div.relative.flex.items-center.justify-center {
+    font-size: 1.75rem !important;
+}
+
+/* Feld um die Zahl */
+div.relative.grid.grid-cols-2.grid-rows-6
+span[class*="bg-[#343434]"] {
+    width: 64px !important;
+    min-height: 42px !important;
+    padding: 8px 12px !important;
+
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+
+/* Score-Feld als Bezugspunkt */
+div.relative.grid.grid-cols-2.grid-rows-6
+> div
+> span[class*="bg-[#343434]"] {
+    position: relative !important;
+}
+
+
+/* ALTE Scores:
+   nur wenn in einem späteren Grid-Feld noch ein Score vorhanden ist */
+div.relative.grid.grid-cols-2.grid-rows-6
+> div:has(~ div > span[class*="bg-[#343434]"])
+> span[class*="bg-[#343434]"]::after {
+
+    content: "";
+    position: absolute;
+
+    left: -8%;
+    top: 50%;
+
+    width: 116%;
+    height: 2px;
+
+    background: rgba(255, 255, 255, 0.8);
+
+    transform: rotate(-22deg);
+    transform-origin: center;
+
+    pointer-events: none;
+}
+/* NEXTBOX */
+div[class*="bg-[#042963]"] {
+ background: var(--surface-nextbox) !important;
+}
+/* Buttons innerhalb der Box */
+div[class*="bg-[#042963]"] button {
+ background-color: var(--surface-default) !important;
+ border-radius: var(--radius-player) !important;
+}
+/* Symbole / Pfeile in den Buttons: weiß */
+div[class*="bg-[#042963]"] button svg,
+div[class*="bg-[#042963]"] button svg * {
+ color: #ffffff !important;
+ fill: #ffffff !important;
+ stroke: #ffffff !important;
+}
+div[class*="bg-[#042963]"] button {
+ color: #ffffff !important;
+}
+/* TABLES */
+div.flex.flex-col.bg-drawer.text-sm.outline-none {
+ background-color: var(--surface-default) !important;
+}
+div.min-h-0.flex-1.overflow-y-auto.px-6.pb-6.flex.flex-col.gap-6 {
+ background-color: var(--surface-default) !important;
+}
+div.flex.shrink-0.flex-col.gap-2.border-t.border-border.pt-4.px-6.pb-6 {
+ background-color: var(--surface-default) !important;
+}
+/* Gesamten Playerbereich automatisch unter Berücksichtigung
+   der oberen Gameplay-Leiste zentrieren */
+
+div.relative.z-10.flex-1.min-h-0.flex.items-stretch.justify-center {
+    padding-top: calc(-2rem + var(--gameplay-bar-height)) !important;
+    padding-bottom: 1rem !important;
+    box-sizing: border-box !important;
+}
+
+/* ========================================================= */
+/* SCOREBAR IMMER ÜBER SURROUND                              */
+/* ========================================================= */
+
+/* obere X01 Scoreleiste */
+div.py-3.flex.items-stretch {
+    position: relative !important;
+    z-index: 9999 !important;
+}
+
+/* Inhalt der Scorebar */
+div.py-3.flex.items-stretch > div {
+    position: relative !important;
+    z-index: 10000 !important;
+}
+
+
+/* untere Steuerleiste ebenfalls */
+div.px-4.max-w-150.w-full.self-center {
+    position: relative !important;
+    z-index: 9999 !important;
+}
+/* ========================================================= */
+/* HOCHFORMAT - INGAME HEADER TRANSPARENT                    */
+/* ========================================================= */
+/*
+   Im Hochformat-Ingame hat der Header andere Klassen als
+   der Menü-Header (pointer-events-none statt relative/bg-black-80).
+   Ohne diese Regel bleibt er undurchsichtig.
+*/
+header.pointer-events-none.absolute.inset-x-0.top-0 {
+    background-color: transparent !important;
+}
+
+
+/* ========================================================= */
+/* HOCHFORMAT 3+ SPIELER - ÄUSSERER SPIELER-WRAPPER          */
+/* ========================================================= */
+/*
+   Bei mehr als 2 Spielern im Hochformat erscheint pro Spieler
+   ein zusätzlicher äußerer Wrapper (div.relative.bg-raspberry-slush-diagonal
+   bzw. div.relative.bg-black-80), der kein Kind der bekannten
+   min-h-20 Playerzeile ist und deshalb ohne eigene Regel
+   die Standard-Rosa-Farbe behält.
+*/
+
+/* Aktiver Spieler äußerer Wrapper */
+div.relative.overflow-hidden > div.relative.bg-raspberry-slush-diagonal {
+    background: var(--surface-active-player) !important;
+    border: var(--border-active-player) !important;
+    border-radius: var(--radius-player) !important;
+    overflow: visible !important;
+    animation:
+        playerGreenGlow
+        var(--player-glow-duration)
+        ease-in-out
+        infinite !important;
+}
+
+/* Inaktiver Spieler äußerer Wrapper */
+div.relative.overflow-hidden > div.relative.bg-black-80:not(.text-black-05) {
+    background: var(--surface-player) !important;
+    border: var(--border-inactive-player) !important;
+    box-shadow: var(--shadow-inactive-player) !important;
+    border-radius: var(--radius-player) !important;
+    overflow: visible !important;
+}
+/*Game Stats Player*/
+div.relative.w-full.overflow-clip {
+  background: var(--surface-active-player) !important;
+}
+span.font-number.text-lg.font-bold.text-foreground {
+  background: var(--surface-active-player) !important;
+}
+/* FIX: PLAYER-SPALTE VOR DARTBOARD / SURROUND   bei Querformat             */
+/* ========================================================= */
+
+/* gemeinsamer Bereich, der links Player und rechts Board enthält */
+div.flex.h-full.relative:has(
+    > div.\@container.flex-1.min-w-0.flex.flex-col.min-h-0
+) {
+    position: relative !important;
+    isolation: isolate !important;
+}
+
+/* Player-Spalte nach vorne */
+div.flex.h-full.relative:has(
+    > div.\@container.flex-1.min-w-0.flex.flex-col.min-h-0
+)
+div.relative.flex-1.min-w-0.overflow-auto.p-4 {
+
+    position: relative !important;
+    z-index: 50 !important;
+}
+
+/* Board-/Surround-Spalte darunter */
+div.flex.h-full.relative:has(
+    > div.\@container.flex-1.min-w-0.flex.flex-col.min-h-0
+)
+div.\@container.flex-1.min-w-0.flex.flex-col.min-h-0 {
+
+    position: relative !important;
+    z-index: 1 !important;
+}
+
+/* ========================================================= */
+/* SIMPLE STACKING FIX - SURROUND HINTEN, UI VORNE            */
+/* ========================================================= */
+
+/* Dartboard-Wrapper als Bezugspunkt */
+div.relative:has(> div[role="img"][aria-label="Dartboard"]) {
+    position: relative !important;
+    overflow: visible !important;
+    z-index: 0 !important;
+}
+
+/* Surround bleibt hinter der echten Scheibe */
+div.relative:has(> div[role="img"][aria-label="Dartboard"])::before {
+    z-index: -1 !important;
+    pointer-events: none !important;
+}
+
+/* echte Dartscheibe bleibt vor dem Surround */
+div.relative:has(> div[role="img"][aria-label="Dartboard"])
+> div[role="img"][aria-label="Dartboard"] {
+    position: relative !important;
+    z-index: 1 !important;
+}
+
+/* Querformat-Playerbereiche vor Surround */
+div.flex.w-100.shrink-0.flex-col.justify-center.divide-y {
+    position: relative !important;
+    z-index: 5 !important;
+}
+
+/* Hochformat-Playercontainer vor Surround */
+div.relative.isolate.overflow-hidden.flex.items-center.min-h-20 {
+    position: relative !important;
+    z-index: 5 !important;
+    overflow: visible !important;
+}
+
+
+/* Scorebar vor Surround */
+div.py-3.flex.items-stretch {
+    position: relative !important;
+    z-index: 5 !important;
+}
+
+/* ========================================================= */
+/* HOCHFORMAT-DOM: OBERER h-[...] BEREICH VOR SURROUND        */
+/* Keine Transparenz, keine Farben ändern                     */
+/* ========================================================= */
+
+/* gemeinsamer Hochformat-/Mobile-Stack */
+div.flex.h-full.relative:has(
+    > div.flex.flex-col.min-h-0[class*="h-["]
+) {
+    position: relative !important;
+    isolation: isolate !important;
+}
+
+/* oberer Bereich: Player / Cricket / Score vor Surround */
+div.flex.h-full.relative:has(
+    > div.flex.flex-col.min-h-0[class*="h-["]
+)
+> div.flex.flex-col.min-h-0[class*="h-["] {
+    position: relative !important;
+    z-index: 50 !important;
+}
+
+/* Dartboard-/Surround-Bereich darunter */
+div.flex.h-full.relative:has(
+    > div.flex.flex-col.min-h-0[class*="h-["]
+)
+> div.relative.z-10.flex-1.min-h-0 {
+    position: relative !important;
+    z-index: 0 !important;
+}
+
+/* Surround bleibt hinter echter Scheibe */
+div.relative:has(
+    > div[role="img"][aria-label="Dartboard"]
+)::before {
+    z-index: -1 !important;
+    pointer-events: none !important;
+}
+
+/* echte Scheibe bleibt über Surround */
+div.relative:has(
+    > div[role="img"][aria-label="Dartboard"]
+)
+> div[role="img"][aria-label="Dartboard"] {
+    position: relative !important;
+    z-index: 1 !important;
+}
+
+
+/* FIX: PLAYER-SPALTE VOR DARTBOARD / SURROUND   bei Querformat             */
+/* ========================================================= */
+
+/* gemeinsamer Bereich, der links Player und rechts Board enthält */
+div.flex.h-full.relative:has(
+    > div.\@container.flex-1.min-w-0.flex.flex-col.min-h-0
+) {
+    position: relative !important;
+    isolation: isolate !important;
+}
+
+/* Player-Spalte nach vorne */
+div.flex.h-full.relative:has(
+    > div.\@container.flex-1.min-w-0.flex.flex-col.min-h-0
+)
+div.relative.flex-1.min-w-0.overflow-auto.p-4 {
+
+    position: relative !important;
+    z-index: 50 !important;
+}
+
+/* Board-/Surround-Spalte darunter */
+div.flex.h-full.relative:has(
+    > div.\@container.flex-1.min-w-0.flex.flex-col.min-h-0
+)
+div.\@container.flex-1.min-w-0.flex.flex-col.min-h-0 {
+
+    position: relative !important;
+    z-index: 1 !important;
+}
+
+/* ========================================================= */
+/* SIMPLE STACKING FIX - SURROUND HINTEN, UI VORNE            */
+/* ========================================================= */
+
+/* Dartboard-Wrapper als Bezugspunkt */
+div.relative:has(> div[role="img"][aria-label="Dartboard"]) {
+    position: relative !important;
+    overflow: visible !important;
+    z-index: 0 !important;
+}
+
+/* Surround bleibt hinter der echten Scheibe */
+div.relative:has(> div[role="img"][aria-label="Dartboard"])::before {
+    z-index: -1 !important;
+    pointer-events: none !important;
+}
+
+/* echte Dartscheibe bleibt vor dem Surround */
+div.relative:has(> div[role="img"][aria-label="Dartboard"])
+> div[role="img"][aria-label="Dartboard"] {
+    position: relative !important;
+    z-index: 1 !important;
+}
+
+/* Querformat-Playerbereiche vor Surround */
+div.flex.w-100.shrink-0.flex-col.justify-center.divide-y {
+    position: relative !important;
+    z-index: 5 !important;
+}
+
+/* Hochformat-Playercontainer vor Surround */
+div.relative.isolate.overflow-hidden.flex.items-center.min-h-20 {
+    position: relative !important;
+    z-index: 5 !important;
+    overflow: visible !important;
+}
+
+/* Cricket-Hochformat-Player oben vor Surround */
+/* NICHT global div.flex.shrink-0 verwenden! */
+body:has(header.pointer-events-none)
+div.flex.shrink-0:has(
+    > div.relative.isolate.flex-1.flex.flex-col.items-center.\@container.min-h-36.bg-raspberry-slush-diagonal
+) {
+    position: relative !important;
+    z-index: 5 !important;
+}
+
+/* Scorebar vor Surround */
+div.py-3.flex.items-stretch {
+    position: relative !important;
+    z-index: 5 !important;
+}
+
+/* ========================================================= */
+/* HOCHFORMAT-DOM: OBERER h-[...] BEREICH VOR SURROUND        */
+/* Keine Transparenz, keine Farben ändern                     */
+/* ========================================================= */
+
+/* gemeinsamer Hochformat-/Mobile-Stack */
+div.flex.h-full.relative:has(
+    > div.flex.flex-col.min-h-0[class*="h-["]
+) {
+    position: relative !important;
+    isolation: isolate !important;
+}
+
+/* oberer Bereich: Player / Cricket / Score vor Surround */
+div.flex.h-full.relative:has(
+    > div.flex.flex-col.min-h-0[class*="h-["]
+)
+> div.flex.flex-col.min-h-0[class*="h-["] {
+    position: relative !important;
+    z-index: 50 !important;
+}
+
+/* Dartboard-/Surround-Bereich darunter */
+div.flex.h-full.relative:has(
+    > div.flex.flex-col.min-h-0[class*="h-["]
+)
+> div.relative.z-10.flex-1.min-h-0 {
+    position: relative !important;
+    z-index: 0 !important;
+}
+
+/* Surround bleibt hinter echter Scheibe */
+div.relative:has(
+    > div[role="img"][aria-label="Dartboard"]
+)::before {
+    z-index: -1 !important;
+    pointer-events: none !important;
+}
+
+/* echte Scheibe bleibt über Surround */
+div.relative:has(
+    > div[role="img"][aria-label="Dartboard"]
+)
+> div[role="img"][aria-label="Dartboard"] {
+    position: relative !important;
+    z-index: 1 !important;
+}
+
+
+/* Nur Dartscheibe verkleinern */
+div.relative:has(> div[role="img"][aria-label="Dartboard"])
+> div[role="img"][aria-label="Dartboard"] {
+    transform: scale(0.95) !important;
+    transform-origin: center center !important;
+}
