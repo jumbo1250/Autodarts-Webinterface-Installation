@@ -30,8 +30,8 @@
  --background-portrait: initial;
 
 /* DARTBOARD SURROUND */
---dartboard-surround-image: url("https://rottmanninfo.at/autodarts/Bilder/AT-Prinzessin_Surround4.webp");
---dartboard-surround-scale: 1.6;
+--dartboard-surround-image: url("https://rottmanninfo.at/autodarts/Bilder/AT-Prinzessin_Surround5.webp");
+--dartboard-surround-scale: 1.5;
 
 /* Größe des freien Lochs in der Mitte */
 --dartboard-surround-hole: 20%;
@@ -1367,6 +1367,6 @@ div.relative:has(
 /* Nur Dartscheibe verkleinern */
 div.relative:has(> div[role="img"][aria-label="Dartboard"])
 > div[role="img"][aria-label="Dartboard"] {
-    transform: scale(0.95) !important;
+    transform: scale(0.93) !important;
     transform-origin: center center !important;
 }
